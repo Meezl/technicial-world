@@ -1,0 +1,7 @@
+/* Frontend App CSS - For Public Pages Only */
+@import './variables.css';
+@import './frontend.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

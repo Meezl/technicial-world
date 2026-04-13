@@ -1,0 +1,7 @@
+/* Base CSS Variables - Shared across all components */
+@import './variables.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
