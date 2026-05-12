@@ -1,35 +1,6 @@
 <template>
     <div class="dashboard-container">
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <h2 class="logo">TECHNICIAN WORLD</h2>
-            </div>
-            <nav class="sidebar-nav">
-                <Link href="/admin/dashboard" class="nav-item">
-                    <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
-                </Link>
-                <Link href="/admin/projects/dashboard" class="nav-item">
-                    <i class="fas fa-chart-line"></i><span>PM Dashboard</span>
-                </Link>
-                <Link href="/admin/projects" class="nav-item">
-                    <i class="fas fa-list"></i><span>Projects</span>
-                </Link>
-                <Link href="/admin/projects/timesheets" class="nav-item active">
-                    <i class="fas fa-clock"></i><span>Timesheets</span>
-                </Link>
-                <Link href="/admin/rfq" class="nav-item">
-                    <i class="fas fa-file-alt"></i><span>RFQ</span>
-                </Link>
-                <Link href="/admin/jobs" class="nav-item">
-                    <i class="fas fa-tasks"></i><span>Jobs</span>
-                </Link>
-            </nav>
-            <div class="sidebar-footer">
-                <Link href="/logout" class="nav-item" method="post">
-                    <i class="fas fa-sign-out-alt"></i><span>Log Out</span>
-                </Link>
-            </div>
-        </aside>
+        <AdminSidebar current-page="projects" />
 
         <main class="main-content">
             <header class="main-header">
@@ -183,6 +154,7 @@
 </template>
 
 <script setup>
+import AdminSidebar from '../../../Components/AdminSidebar.vue'
 import { Link, router } from '@inertiajs/vue3'
 import { reactive } from 'vue'
 import { format } from 'date-fns'

@@ -149,6 +149,13 @@
                                         <i class="fas fa-coins"></i>
                                         <span>Cash</span>
                                     </button>
+                                    <button
+                                        @click="selectPaymentMethod('bank_deposit')"
+                                        :class="['payment-method-btn', { active: selectedPaymentMethod === 'bank_deposit' }]"
+                                    >
+                                        <i class="fas fa-university"></i>
+                                        <span>Bank Deposit</span>
+                                    </button>
                                 </div>
 
                                 <!-- M-Pesa Payment Form -->
@@ -188,6 +195,30 @@
                                         >
                                     </div>
                                     <div class="form-group">
+                                        <label><i class="fas fa-paperclip"></i> Proof of Payment <span class="required-badge">Required</span></label>
+                                        <div class="evidence-upload-area" @click="chequeEvidenceFileInput.click()">
+                                            <div v-if="!chequeForm.evidence" class="evidence-placeholder">
+                                                <i class="fas fa-upload"></i>
+                                                <span>Click to upload a photo or scan of the cheque</span>
+                                                <small>JPG, PNG or PDF · Max 10 MB</small>
+                                            </div>
+                                            <div v-else class="evidence-selected">
+                                                <i class="fas fa-check-circle" style="color:#10b981;"></i>
+                                                <span>{{ chequeForm.evidence.name }}</span>
+                                                <button type="button" class="remove-evidence-btn" @click.stop="chequeForm.evidence = null; chequeEvidenceFileInput.value = ''">
+                                                    <i class="fas fa-times"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <input
+                                            ref="chequeEvidenceFileInput"
+                                            type="file"
+                                            accept="image/jpeg,image/png,application/pdf"
+                                            style="display:none"
+                                            @change="handleChequeEvidenceFile"
+                                        />
+                                    </div>
+                                    <div class="form-group">
                                         <label><i class="fas fa-sticky-note"></i> Notes (Optional):</label>
                                         <textarea
                                             v-model="chequeForm.notes"
@@ -199,7 +230,7 @@
                                     <button
                                         @click="submitOfflinePayment('cheque')"
                                         class="btn btn-primary btn-block"
-                                        :disabled="!chequeForm.cheque_number || processingPayment"
+                                        :disabled="!chequeForm.cheque_number || !chequeForm.evidence || processingPayment"
                                     >
                                         <i class="fas fa-check"></i>
                                         {{ processingPayment ? 'Processing...' : 'Submit Cheque Details' }}
@@ -230,6 +261,50 @@
                                     </button>
                                     <p class="payment-instruction">
                                         Please pay the amount at our office. Payment will be confirmed by our team.
+                                    </p>
+                                </div>
+
+                                <!-- Bank Deposit Payment Form -->
+                                <div v-if="selectedPaymentMethod === 'bank_deposit'" class="payment-form bank-form">
+                                    <div class="form-group">
+                                        <label><i class="fas fa-hashtag"></i> Bank Reference / Transaction ID:</label>
+                                        <input
+                                            v-model="bankForm.bank_reference"
+                                            type="text"
+                                            class="form-control"
+                                            placeholder="Enter bank reference number"
+                                        >
+                                    </div>
+                                    <div class="form-group">
+                                        <label><i class="fas fa-file-upload"></i> Upload Evidence (Deposit Slip / Screenshot):</label>
+                                        <input
+                                            type="file"
+                                            ref="evidenceFileInput"
+                                            @change="handleEvidenceFile"
+                                            accept=".jpg,.jpeg,.png,.pdf"
+                                            class="form-control"
+                                        >
+                                        <small>Accepted formats: JPG, PNG, PDF (max 10MB)</small>
+                                    </div>
+                                    <div class="form-group">
+                                        <label><i class="fas fa-sticky-note"></i> Notes (Optional):</label>
+                                        <textarea
+                                            v-model="bankForm.notes"
+                                            class="form-control"
+                                            rows="2"
+                                            placeholder="Bank name, branch, or any other details..."
+                                        ></textarea>
+                                    </div>
+                                    <button
+                                        @click="submitBankDeposit"
+                                        class="btn btn-primary btn-block"
+                                        :disabled="!bankForm.bank_reference || !bankForm.evidence || processingPayment"
+                                    >
+                                        <i class="fas fa-upload"></i>
+                                        {{ processingPayment ? 'Uploading...' : 'Submit Bank Deposit' }}
+                                    </button>
+                                    <p class="payment-instruction">
+                                        Please upload proof of your bank deposit. Payment will be verified by our admin team.
                                     </p>
                                 </div>
                             </div>
@@ -550,12 +625,31 @@ const mpesaForm = reactive({
 
 const chequeForm = reactive({
     cheque_number: '',
-    notes: ''
+    notes: '',
+    evidence: null
 })
+
+const chequeEvidenceFileInput = ref(null)
+
+const handleChequeEvidenceFile = (e) => {
+    chequeForm.evidence = e.target.files[0] || null
+}
 
 const cashForm = reactive({
     notes: ''
 })
+
+const bankForm = reactive({
+    bank_reference: '',
+    notes: '',
+    evidence: null
+})
+
+const evidenceFileInput = ref(null)
+
+const handleEvidenceFile = (e) => {
+    bankForm.evidence = e.target.files[0] || null
+}
 
 // Computed properties for payment requests
 const pendingPaymentRequest = computed(() => {
@@ -851,6 +945,39 @@ const pollPaymentStatus = async () => {
     setTimeout(checkStatus, 5000) // Start checking after 5 seconds
 }
 
+const submitBankDeposit = async () => {
+    if (!pendingPaymentRequest.value) return
+    if (!bankForm.bank_reference || !bankForm.evidence) {
+        alert('Please provide bank reference and upload evidence.')
+        return
+    }
+
+    processingPayment.value = true
+
+    try {
+        const formData = new FormData()
+        formData.append('payment_method', 'bank_deposit')
+        formData.append('bank_reference', bankForm.bank_reference)
+        formData.append('evidence', bankForm.evidence)
+        if (bankForm.notes) formData.append('notes', bankForm.notes)
+
+        const response = await axios.post(
+            `/client/payments/${pendingPaymentRequest.value.id}/offline`,
+            formData,
+            { headers: { 'Content-Type': 'multipart/form-data' } }
+        )
+
+        alert(response.data.message || 'Bank deposit recorded successfully!')
+        window.location.reload()
+    } catch (error) {
+        console.error('Bank deposit error:', error)
+        const message = error.response?.data?.error || error.response?.data?.message || error.message || 'Error recording payment.'
+        alert(message)
+    } finally {
+        processingPayment.value = false
+    }
+}
+
 const submitOfflinePayment = async (method) => {
     if (!pendingPaymentRequest.value) return
 
@@ -866,8 +993,22 @@ const submitOfflinePayment = async (method) => {
                 alert('Please enter the cheque number')
                 return
             }
-            body.cheque_number = chequeForm.cheque_number
-            body.notes = chequeForm.notes
+            if (!chequeForm.evidence) {
+                alert('Please upload proof of payment')
+                return
+            }
+            const formData = new FormData()
+            formData.append('payment_method', 'cheque')
+            formData.append('cheque_number', chequeForm.cheque_number)
+            formData.append('evidence', chequeForm.evidence)
+            if (chequeForm.notes) formData.append('notes', chequeForm.notes)
+            const response = await axios.post(`/client/payments/${pendingPaymentRequest.value.id}/offline`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            })
+            const data = response.data
+            alert(data.message || 'Payment recorded successfully!')
+            window.location.reload()
+            return
         } else {
             body.notes = cashForm.notes
         }
@@ -1242,6 +1383,88 @@ defineOptions({
     padding: 1rem;
     font-size: 1rem;
     font-weight: 600;
+}
+
+.required-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.5rem;
+    background: #fee2e2;
+    color: #b91c1c;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-left: 0.25rem;
+}
+
+.evidence-upload-area {
+    border: 2px dashed #d1d5db;
+    border-radius: 10px;
+    padding: 1.25rem;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    background: #f9fafb;
+}
+
+.evidence-upload-area:hover {
+    border-color: var(--primary-color, #0f6c8f);
+    background: #f0f9ff;
+}
+
+.evidence-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    color: #6b7280;
+    text-align: center;
+}
+
+.evidence-placeholder i {
+    font-size: 1.5rem;
+    color: #9ca3af;
+}
+
+.evidence-placeholder span {
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.evidence-placeholder small {
+    font-size: 0.78rem;
+    color: #9ca3af;
+}
+
+.evidence-selected {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.9rem;
+    color: #065f46;
+    font-weight: 500;
+}
+
+.evidence-selected span {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.remove-evidence-btn {
+    background: none;
+    border: none;
+    color: #dc2626;
+    cursor: pointer;
+    padding: 0.2rem;
+    border-radius: 4px;
+    line-height: 1;
+}
+
+.remove-evidence-btn:hover {
+    background: #fee2e2;
 }
 
 .payment-instruction {

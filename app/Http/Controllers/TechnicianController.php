@@ -7,7 +7,12 @@ use Inertia\Inertia;
 use Inertia\Response;
 use App\Models\ServiceSubTask;
 use App\Models\ServiceRequest;
+use App\Models\Technician;
+use App\Models\TechnicianDocument;
 use App\Models\Tool;
+use App\Services\ProgressService;
+use App\Services\ReportingService;
+use Carbon\Carbon;
 
 class TechnicianController extends Controller
 {
@@ -21,8 +26,13 @@ class TechnicianController extends Controller
 
         $incomingJobs = collect();
         $activeJobs = collect();
+        $earnings = null;
 
         if ($technician) {
+            $reportingService = app(ReportingService::class);
+            $earnings = $reportingService->getTechnicianEarnings($technician->id);
+            $jobEarnings = collect($earnings['by_job'] ?? [])->keyBy('service_request_id');
+
             // Incoming: assigned but not yet started
             $incomingJobs = ServiceRequest::where('technician_id', $technician->id)
                 ->where('status', 'assigned')
@@ -59,6 +69,16 @@ class TechnicianController extends Controller
                 $incomingJobs = $incomingJobs->merge($subTaskIncoming)->unique('id');
                 $activeJobs = $activeJobs->merge($subTaskActive)->unique('id');
             }
+
+            $incomingJobs = $incomingJobs->map(function ($job) use ($jobEarnings) {
+                $job->setAttribute('compensation_summary', $jobEarnings->get($job->id));
+                return $job;
+            })->values();
+
+            $activeJobs = $activeJobs->map(function ($job) use ($jobEarnings) {
+                $job->setAttribute('compensation_summary', $jobEarnings->get($job->id));
+                return $job;
+            })->values();
         }
 
         return Inertia::render('Technician/Dashboard', [
@@ -66,6 +86,11 @@ class TechnicianController extends Controller
             'incomingJobs' => $incomingJobs->values(),
             'activeJobs' => $activeJobs->values(),
             'completedJobsCount' => $this->calculateCompletedJobs($technician),
+            'earningsSummary' => $earnings ? [
+                'total_paid' => (float) ($earnings['total_paid'] ?? 0),
+                'total_outstanding' => (float) ($earnings['total_outstanding'] ?? 0),
+                'job_count' => (int) ($earnings['job_count'] ?? 0),
+            ] : null,
         ]);
     }
 
@@ -104,8 +129,13 @@ class TechnicianController extends Controller
         $technician = $user->technician;
 
         $jobs = collect();
+        $earnings = null;
 
         if ($technician) {
+            $reportingService = app(ReportingService::class);
+            $earnings = $reportingService->getTechnicianEarnings($technician->id);
+            $jobEarnings = collect($earnings['by_job'] ?? [])->keyBy('service_request_id');
+
             // Direct assignments
             $directJobs = ServiceRequest::where('technician_id', $technician->id)
                 ->with(['user', 'serviceCategory', 'subTasks'])
@@ -132,12 +162,21 @@ class TechnicianController extends Controller
                     ];
                     return $statusOrder[$job->status] ?? 5;
                 })
+                ->map(function ($job) use ($jobEarnings) {
+                    $job->setAttribute('compensation_summary', $jobEarnings->get($job->id));
+                    return $job;
+                })
                 ->values();
         }
 
         return Inertia::render('Technician/Jobs', [
             'technician' => $technician,
             'jobs' => $jobs,
+            'earningsSummary' => $earnings ? [
+                'total_paid' => (float) ($earnings['total_paid'] ?? 0),
+                'total_outstanding' => (float) ($earnings['total_outstanding'] ?? 0),
+                'job_count' => (int) ($earnings['job_count'] ?? 0),
+            ] : null,
         ]);
     }
 
@@ -161,11 +200,27 @@ class TechnicianController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
-        $serviceRequest->load(['user', 'serviceCategory', 'subTasks.technician.user', 'tools']);
+        $serviceRequest->load([
+            'user',
+            'serviceCategory',
+            'subTasks.technician.user',
+            'tools',
+            'progressReports.technician.user',
+            'progressReports.submitter',
+            'progressReports.validator',
+            'progressReports.subTask',
+            'progressReports.photos',
+        ]);
+
+        $reportingService = app(ReportingService::class);
+        $earnings = $reportingService->getTechnicianEarnings($technician->id);
+        $compensationSummary = collect($earnings['by_job'] ?? [])
+            ->firstWhere('service_request_id', $serviceRequest->id);
 
         return Inertia::render('Technician/JobDetails', [
             'technician' => $technician,
             'job' => $serviceRequest,
+            'compensationSummary' => $compensationSummary,
         ]);
     }
 
@@ -212,9 +267,180 @@ class TechnicianController extends Controller
         $user = auth()->user();
         $technician = $user->technician;
 
+        $jobStats = [];
+        $documents = [];
+        $recentJobs = [];
+
+        if ($technician) {
+            $technician->load(['user', 'documents']);
+
+            // Job statistics
+            $assignedJobs = \App\Models\ServiceRequest::where('technician_id', $technician->id);
+            $jobStats = [
+                'total' => (clone $assignedJobs)->count(),
+                'completed' => (clone $assignedJobs)->whereIn('status', ['closed', 'archived'])->count(),
+                'in_progress' => (clone $assignedJobs)->where('status', 'in_progress')->count(),
+                'assigned' => (clone $assignedJobs)->whereIn('status', ['assigned', 'queued'])->count(),
+                'suspended' => (clone $assignedJobs)->where('status', 'suspended')->count(),
+            ];
+
+            // Recent jobs (last 5)
+            $recentJobs = \App\Models\ServiceRequest::where('technician_id', $technician->id)
+                ->with(['serviceCategory:id,name'])
+                ->orderBy('updated_at', 'desc')
+                ->limit(5)
+                ->get(['id', 'request_id', 'status', 'service_category_id', 'location', 'updated_at']);
+
+            $documents = $technician->documents ?? [];
+        }
+
         return Inertia::render('Technician/Profile', [
             'technician' => $technician,
+            'jobStats' => $jobStats,
+            'documents' => $documents,
+            'recentJobs' => $recentJobs,
+            'documentTypes' => TechnicianDocument::documentTypes(),
+            'requiredDocumentTypes' => [
+                TechnicianDocument::TYPE_NCA_LICENSE,
+                TechnicianDocument::TYPE_TERTIARY_CERT,
+                TechnicianDocument::TYPE_ID_CARD,
+                TechnicianDocument::TYPE_PASSPORT_PHOTO,
+                TechnicianDocument::TYPE_PIN_CERT,
+            ],
+            'trades' => Technician::trades(),
         ]);
+    }
+
+    /**
+     * Display the technician's earnings.
+     */
+    public function earnings(Request $request): Response
+    {
+        $user = auth()->user();
+        $technician = $user->technician;
+
+        if (!$technician) {
+            abort(403, 'Technician profile not found');
+        }
+
+        $reportingService = app(ReportingService::class);
+
+        $from = $request->from ? Carbon::parse($request->from) : null;
+        $to = $request->to ? Carbon::parse($request->to) : null;
+
+        $earnings = $reportingService->getTechnicianEarnings($technician->id, $from, $to);
+
+        return Inertia::render('Technician/Earnings', [
+            'technician' => $technician,
+            'earnings' => $earnings,
+            'filters' => [
+                'from' => $from?->toDateString(),
+                'to' => $to?->toDateString(),
+            ],
+        ]);
+    }
+
+    /**
+     * Update technician profile details.
+     */
+    public function updateProfile(Request $request)
+    {
+        $user = auth()->user();
+        $technician = $user->technician;
+
+        if (!$technician) {
+            return back()->with('error', 'Technician profile not found');
+        }
+
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'phone' => 'nullable|string|max:20',
+            'location' => 'nullable|string|max:255',
+            'trade' => 'nullable|in:' . implode(',', array_keys(Technician::trades())),
+            'specialization' => 'nullable|string|max:255',
+            'bio' => 'nullable|string|max:1000',
+            'experience_narrative' => 'nullable|string|max:2000',
+            'skills' => 'nullable|array',
+            'profile_photo' => 'nullable|file|mimes:jpg,jpeg,png|max:3072',
+        ]);
+
+        // Update user details
+        $user->update([
+            'name' => $request->name,
+            'phone' => $request->phone,
+        ]);
+
+        // Update technician details
+        $techData = [
+            'location' => $request->location,
+            'trade' => $request->trade,
+            'specialization' => $request->specialization,
+            'bio' => $request->bio,
+            'experience_narrative' => $request->experience_narrative,
+            'skills' => $request->skills,
+        ];
+
+        // Handle profile photo upload
+        if ($request->hasFile('profile_photo')) {
+            if ($technician->profile_photo_path) {
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($technician->profile_photo_path);
+            }
+            $techData['profile_photo_path'] = $request->file('profile_photo')->store('technician-photos/' . $technician->id, 'public');
+        }
+
+        $technician->update($techData);
+
+        return back()->with('success', 'Profile updated successfully.');
+    }
+
+    /**
+     * Upload a document from the technician portal.
+     */
+    public function uploadDocument(Request $request)
+    {
+        $user = auth()->user();
+        $technician = $user->technician;
+
+        if (!$technician) {
+            return back()->with('error', 'Technician profile not found');
+        }
+
+        $request->validate([
+            'document_type' => 'required|in:nca_license,tertiary_cert,id_card,passport_photo,pin_cert,technical_cert,vetting_form,other',
+        ]);
+
+        $documentRule = $request->input('document_type') === 'passport_photo'
+            ? 'required|file|mimes:jpg,jpeg,png|max:3072'
+            : 'required|file|mimes:pdf,jpg,jpeg,png|max:5120';
+
+        $request->validate([
+            'document' => $documentRule,
+        ]);
+
+        $file = $request->file('document');
+        $path = $file->store('technician-documents/' . $technician->id, 'public');
+
+        // Replace existing document of the same type
+        $existing = $technician->documents()->where('document_type', $request->document_type)->first();
+        if ($existing) {
+            \Illuminate\Support\Facades\Storage::disk('public')->delete($existing->file_path);
+            $existing->update([
+                'file_path' => $path,
+                'file_name' => $file->getClientOriginalName(),
+                'verified' => false,
+                'verified_by' => null,
+                'verified_at' => null,
+            ]);
+        } else {
+            \App\Models\TechnicianDocument::create([
+                'technician_id' => $technician->id,
+                'document_type' => $request->document_type,
+                'file_path' => $path,
+                'file_name' => $file->getClientOriginalName(),
+            ]);
+        }
+
+        return back()->with('success', 'Document uploaded successfully.');
     }
 
     /**
@@ -238,6 +464,61 @@ class TechnicianController extends Controller
         ]);
 
         return back()->with('success', 'Availability updated');
+    }
+
+    /**
+     * Submit a progress report with optional site photos.
+     */
+    public function submitProgressReport(Request $request, ServiceRequest $serviceRequest)
+    {
+        $user = auth()->user();
+        $technician = $user->technician;
+
+        if (!$technician) {
+            return back()->with('error', 'Technician profile not found');
+        }
+
+        $isAssigned = $serviceRequest->technician_id === $technician->id;
+        $isSubTaskAssignee = $serviceRequest->subTasks()->where('technician_id', $technician->id)->exists();
+
+        if (!$isAssigned && !$isSubTaskAssignee) {
+            return back()->with('error', 'Unauthorized');
+        }
+
+        $request->validate([
+            'percent_complete' => 'required|integer|min:0|max:100',
+            'notes' => 'nullable|string|max:2000',
+            'report_date' => 'nullable|date',
+            'service_sub_task_id' => 'nullable|exists:service_sub_tasks,id',
+            'photos' => 'nullable|array|max:6',
+            'photos.*' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+        ]);
+
+        if ($request->filled('service_sub_task_id')) {
+            $subTask = $serviceRequest->subTasks()->where('id', $request->service_sub_task_id)->first();
+
+            if (!$subTask) {
+                return back()->withErrors([
+                    'service_sub_task_id' => 'Selected sub-task does not belong to this job.',
+                ]);
+            }
+
+            $canReportSubTask = $subTask->technician_id === $technician->id || $serviceRequest->lead_technician_id === $technician->id;
+
+            if (!$canReportSubTask) {
+                return back()->with('error', 'Unauthorized sub-task selection.');
+            }
+        }
+
+        app(ProgressService::class)->submitReport(
+            $serviceRequest,
+            $technician->id,
+            $user->id,
+            $request->only(['percent_complete', 'notes', 'report_date', 'service_sub_task_id']),
+            $request->file('photos', [])
+        );
+
+        return back()->with('success', 'Progress report submitted successfully.');
     }
 
     /**

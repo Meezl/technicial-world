@@ -1,41 +1,6 @@
 <template>
     <div class="dashboard-container">
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <h2 class="logo">TECHNICIAN WORLD</h2>
-            </div>
-            <nav class="sidebar-nav">
-                <Link href="/admin/dashboard" class="nav-item">
-                    <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
-                </Link>
-                <Link href="/admin/projects/dashboard" class="nav-item">
-                    <i class="fas fa-project-diagram"></i><span>Project Management</span>
-                </Link>
-                <Link href="/admin/rfq" class="nav-item">
-                    <i class="fas fa-file-alt"></i><span>RFQ Management</span>
-                </Link>
-                <Link href="/admin/technicians" class="nav-item">
-                    <i class="fas fa-hard-hat"></i><span>Technicians</span>
-                </Link>
-                <Link href="/admin/users" class="nav-item active">
-                    <i class="fas fa-users"></i><span>User Management</span>
-                </Link>
-                <Link href="/admin/jobs" class="nav-item">
-                    <i class="fas fa-tasks"></i><span>Jobs Monitoring</span>
-                </Link>
-                <Link href="/admin/tools" class="nav-item">
-                    <i class="fas fa-tools"></i><span>Tools Management</span>
-                </Link>
-                <Link href="/admin/payments" class="nav-item">
-                    <i class="fas fa-credit-card"></i><span>Payments</span>
-                </Link>
-            </nav>
-            <div class="sidebar-footer">
-                <Link href="/logout" class="nav-item" method="post">
-                    <i class="fas fa-sign-out-alt"></i><span>Log Out</span>
-                </Link>
-            </div>
-        </aside>
+        <AdminSidebar current-page="users" />
 
         <main class="main-content">
             <header class="main-header">
@@ -414,6 +379,7 @@
 </template>
 
 <script setup>
+import AdminSidebar from '../../Components/AdminSidebar.vue'
 import { Link, router } from '@inertiajs/vue3'
 import { ref, reactive, watch } from 'vue'
 import debounce from 'lodash/debounce'

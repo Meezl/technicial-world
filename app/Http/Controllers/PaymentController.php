@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Payment;
 use App\Models\PaymentRequest;
+use App\Models\ServiceRequest;
 use App\Services\MpesaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -125,6 +126,16 @@ class PaymentController extends Controller
             'paid_at' => now(),
         ]);
 
+        // Transition the service request status to ready_for_assignment
+        $serviceRequest = $paymentRequest->serviceRequest;
+        if ($serviceRequest && in_array($serviceRequest->status, [
+            ServiceRequest::STATUS_AWAITING_PAYMENT,
+            ServiceRequest::STATUS_PAYMENT_PENDING_APPROVAL,
+            'pending',
+        ])) {
+            $serviceRequest->update(['status' => ServiceRequest::STATUS_READY_FOR_ASSIGNMENT]);
+        }
+
         Log::info('M-Pesa payment completed', [
             'payment_request_id' => $paymentRequest->id,
             'receipt' => $result['mpesa_receipt_number'],
@@ -187,9 +198,11 @@ class PaymentController extends Controller
     public function recordOfflinePayment(Request $request, PaymentRequest $paymentRequest)
     {
         $request->validate([
-            'payment_method' => 'required|in:cash,cheque',
+            'payment_method' => 'required|in:cash,cheque,bank_deposit',
             'cheque_number' => 'required_if:payment_method,cheque|nullable|string|max:50',
+            'bank_reference' => 'required_if:payment_method,bank_deposit|nullable|string|max:100',
             'notes' => 'nullable|string|max:500',
+            'evidence' => 'required_if:payment_method,bank_deposit|required_if:payment_method,cheque|nullable|file|mimes:jpg,jpeg,png,pdf|max:10240',
         ]);
 
         // Verify the payment request belongs to the authenticated user
@@ -208,20 +221,30 @@ class PaymentController extends Controller
 
         $paymentMethod = $request->payment_method;
 
-        // Update payment request
-        $paymentRequest->update([
+        $updateData = [
             'payment_method' => $paymentMethod,
             'cheque_number' => $request->cheque_number,
+            'bank_reference' => $request->bank_reference,
             'notes' => $request->notes,
-        ]);
+        ];
 
-        // For cash/cheque, we mark it as awaiting confirmation
-        // Admin will need to confirm the payment
+        // Handle evidence file upload for bank deposit
+        if ($request->hasFile('evidence')) {
+            $path = $request->file('evidence')->store('payment-evidence', 'public');
+            $updateData['evidence_path'] = $path;
+        }
+
+        $paymentRequest->update($updateData);
+
+        $messages = [
+            'cheque' => 'Cheque payment recorded. Please submit the cheque to our office for confirmation.',
+            'cash' => 'Cash payment recorded. Please make the payment at our office for confirmation.',
+            'bank_deposit' => 'Bank deposit recorded. Payment will be confirmed once we verify the deposit.',
+        ];
+
         return response()->json([
             'success' => true,
-            'message' => $paymentMethod === 'cheque'
-                ? 'Cheque payment recorded. Please submit the cheque to our office for confirmation.'
-                : 'Cash payment recorded. Please make the payment at our office for confirmation.',
+            'message' => $messages[$paymentMethod] ?? 'Payment recorded successfully.',
         ]);
     }
 
@@ -261,6 +284,16 @@ class PaymentController extends Controller
             'paid_at' => now(),
             'notes' => 'Offline payment confirmed by admin',
         ]);
+
+        // Transition the service request status to ready_for_assignment
+        $serviceRequest = $paymentRequest->serviceRequest;
+        if ($serviceRequest && in_array($serviceRequest->status, [
+            ServiceRequest::STATUS_AWAITING_PAYMENT,
+            ServiceRequest::STATUS_PAYMENT_PENDING_APPROVAL,
+            'pending',
+        ])) {
+            $serviceRequest->update(['status' => ServiceRequest::STATUS_READY_FOR_ASSIGNMENT]);
+        }
 
         return response()->json([
             'success' => true,

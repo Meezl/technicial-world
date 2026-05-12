@@ -13,6 +13,7 @@ class TechnicianPayment extends Model
         'payment_id',
         'technician_id',
         'service_request_id',
+        'progress_report_id',
         'category',
         'amount',
         'status',
@@ -35,5 +36,10 @@ class TechnicianPayment extends Model
     public function serviceRequest()
     {
         return $this->belongsTo(ServiceRequest::class);
+    }
+
+    public function progressReport()
+    {
+        return $this->belongsTo(ProgressReport::class);
     }
 }

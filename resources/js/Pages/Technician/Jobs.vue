@@ -8,6 +8,17 @@
         </header>
 
         <main class="pwa-content">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                <div class="pwa-card" style="text-align: center; padding: 1rem 0.75rem; margin-bottom: 0;">
+                    <h3 style="margin: 0; font-size: 1.15rem; color: var(--success-color);">{{ formatCurrency(earningsSummary?.total_paid || 0) }}</h3>
+                    <p style="margin: 0; font-size: 0.8rem; color: var(--light-text);">Paid So Far</p>
+                </div>
+                <div class="pwa-card" style="text-align: center; padding: 1rem 0.75rem; margin-bottom: 0;">
+                    <h3 style="margin: 0; font-size: 1.15rem; color: var(--warning-color);">{{ formatCurrency(earningsSummary?.total_outstanding || 0) }}</h3>
+                    <p style="margin: 0; font-size: 0.8rem; color: var(--light-text);">Still Owed</p>
+                </div>
+            </div>
+
             <div class="pwa-card" style="padding: 0.5rem;">
                 <input 
                     type="text" 
@@ -44,6 +55,21 @@
                         <p style="font-size: 0.8rem; color: var(--light-text);">
                             <i class="far fa-calendar" style="margin-right: 5px;"></i> {{ formatDate(job.created_at) }}
                         </p>
+
+                        <div v-if="job.compensation_summary" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem; margin-top: 0.85rem;">
+                            <div style="background: #F8FAFC; padding: 0.65rem; border-radius: 10px;">
+                                <span style="display: block; font-size: 0.7rem; color: var(--light-text); margin-bottom: 0.2rem;">Agreed</span>
+                                <strong style="font-size: 0.8rem;">{{ formatCurrency(job.compensation_summary.agreed_compensation) }}</strong>
+                            </div>
+                            <div style="background: #ECFDF5; padding: 0.65rem; border-radius: 10px;">
+                                <span style="display: block; font-size: 0.7rem; color: var(--light-text); margin-bottom: 0.2rem;">Paid</span>
+                                <strong style="font-size: 0.8rem; color: var(--success-color);">{{ formatCurrency(job.compensation_summary.paid_to_date) }}</strong>
+                            </div>
+                            <div style="background: #FFF7ED; padding: 0.65rem; border-radius: 10px;">
+                                <span style="display: block; font-size: 0.7rem; color: var(--light-text); margin-bottom: 0.2rem;">Owed</span>
+                                <strong style="font-size: 0.8rem; color: #c2410c;">{{ formatCurrency(job.compensation_summary.outstanding_balance) }}</strong>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -66,6 +92,7 @@ import TechnicianBottomNav from '@/Components/TechnicianBottomNav.vue';
 const props = defineProps({
     technician: Object,
     jobs: Array,
+    earningsSummary: Object,
 });
 
 const searchQuery = ref('');
@@ -124,6 +151,13 @@ const formatDate = (dateString) => {
         month: 'short', day: 'numeric', year: 'numeric'
     });
 };
+
+const formatCurrency = (amount) => {
+    return 'KES ' + Number(amount || 0).toLocaleString('en-KE', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    })
+}
 
 defineOptions({ layout: null });
 </script>

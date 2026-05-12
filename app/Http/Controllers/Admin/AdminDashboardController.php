@@ -17,10 +17,15 @@ use App\Notifications\PaymentRequestNotification;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\JobAssigned;
 use App\Mail\TechnicianAssigned;
+use App\Models\JobAssignment;
 use App\Models\ServiceSubTask;
 use App\Models\Payment;
+use App\Models\ProgressReport;
 use App\Models\TechnicianPayment;
+use App\Models\TechnicianPaymentEntry;
 use App\Models\Expenditure;
+use App\Services\ProgressService;
+use Illuminate\Validation\ValidationException;
 
 class AdminDashboardController extends Controller
 {
@@ -46,10 +51,11 @@ class AdminDashboardController extends Controller
 
     public function technicians()
     {
-        $technicians = Technician::with('user')->orderBy('created_at', 'desc')->get();
+        $technicians = Technician::with(['user', 'documents'])->orderBy('created_at', 'desc')->get();
 
         return Inertia::render('Admin/Technicians', [
-            'technicians' => $technicians
+            'technicians' => $technicians,
+            'documentTypes' => \App\Models\TechnicianDocument::documentTypes(),
         ]);
     }
 
@@ -96,11 +102,18 @@ class AdminDashboardController extends Controller
             'technician.user',
             'leadTechnician.user',
             'subTasks.technician.user',
+            'jobAssignments.technician.user',
             'budget',
             'technicianPayments.technician.user',
             'expenditures',
             'payments',
             'paymentRequests',
+            'milestones',
+            'progressReports.technician.user',
+            'progressReports.submitter',
+            'progressReports.validator',
+            'progressReports.subTask',
+            'progressReports.photos',
         ]);
 
         $technicians = Technician::with('user')
@@ -152,6 +165,23 @@ class AdminDashboardController extends Controller
         ]);
     }
 
+    public function validateProgress(Request $request, ProgressReport $progressReport)
+    {
+        $request->validate([
+            'validated_percent' => 'required|integer|min:0|max:100',
+            'validation_notes' => 'nullable|string|max:2000',
+            'remove_photo_ids' => 'nullable|array',
+        ]);
+
+        app(ProgressService::class)->validate($progressReport, auth()->id(), $request->only([
+            'validated_percent',
+            'validation_notes',
+            'remove_photo_ids',
+        ]));
+
+        return back()->with('success', 'Progress validated.');
+    }
+
     public function storeTechnician(Request $request)
     {
         $request->validate([
@@ -164,6 +194,18 @@ class AdminDashboardController extends Controller
             'availability' => 'required|in:available,busy,on_leave',
             'bio' => 'nullable|string',
             'skills' => 'nullable|array',
+            // Mandatory documents
+            'doc_nca_license' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120',
+            'doc_tertiary_cert' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120',
+            'doc_id_card' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120',
+            'doc_passport_photo' => 'required|file|mimes:jpg,jpeg,png|max:3072',
+            'doc_kra_pin' => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120',
+        ], [
+            'doc_nca_license.required' => 'NCA License is required.',
+            'doc_tertiary_cert.required' => 'Tertiary education certificate is required.',
+            'doc_id_card.required' => 'ID Card is required.',
+            'doc_passport_photo.required' => 'Passport size photo is required.',
+            'doc_kra_pin.required' => 'KRA PIN Certificate is required.',
         ]);
 
         // Create user first
@@ -179,7 +221,7 @@ class AdminDashboardController extends Controller
         $technicianId = $request->technician_id ?: 'TECH-' . str_pad(rand(1, 999), 3, '0', STR_PAD_LEFT);
 
         // Create technician
-        Technician::create([
+        $technician = Technician::create([
             'user_id' => $user->id,
             'technician_id' => $technicianId,
             'specialization' => $request->specialization,
@@ -190,6 +232,28 @@ class AdminDashboardController extends Controller
             'rating' => 0,
             'total_jobs' => 0,
         ]);
+
+        // Store mandatory documents
+        $documentMap = [
+            'doc_nca_license' => 'nca_license',
+            'doc_tertiary_cert' => 'tertiary_cert',
+            'doc_id_card' => 'id_card',
+            'doc_passport_photo' => 'passport_photo',
+            'doc_kra_pin' => 'pin_cert',
+        ];
+
+        foreach ($documentMap as $inputName => $docType) {
+            if ($request->hasFile($inputName)) {
+                $file = $request->file($inputName);
+                $path = $file->store('technician-documents/' . $technician->id, 'public');
+                \App\Models\TechnicianDocument::create([
+                    'technician_id' => $technician->id,
+                    'document_type' => $docType,
+                    'file_path' => $path,
+                    'file_name' => $file->getClientOriginalName(),
+                ]);
+            }
+        }
 
         return redirect()->route('admin.technicians')->with('success', 'Technician created successfully!');
     }
@@ -243,10 +307,81 @@ class AdminDashboardController extends Controller
         return redirect()->route('admin.technicians')->with('success', 'Technician deleted successfully!');
     }
 
+    /**
+     * Upload a document for a technician.
+     */
+    public function uploadTechnicianDocument(Request $request, Technician $technician)
+    {
+        $request->validate([
+            'document_type' => 'required|in:nca_license,tertiary_cert,id_card,passport_photo,pin_cert,technical_cert,vetting_form,other',
+        ]);
+
+        $documentRule = $request->input('document_type') === 'passport_photo'
+            ? 'required|file|mimes:jpg,jpeg,png|max:3072'
+            : 'required|file|mimes:pdf,jpg,jpeg,png|max:5120';
+
+        $request->validate([
+            'document' => $documentRule,
+        ]);
+
+        $file = $request->file('document');
+        $path = $file->store('technician-documents/' . $technician->id, 'public');
+
+        // Replace existing document of the same type if it exists
+        $existing = $technician->documents()->where('document_type', $request->document_type)->first();
+        if ($existing) {
+            \Illuminate\Support\Facades\Storage::disk('public')->delete($existing->file_path);
+            $existing->update([
+                'file_path' => $path,
+                'file_name' => $file->getClientOriginalName(),
+                'verified' => false,
+                'verified_by' => null,
+                'verified_at' => null,
+            ]);
+        } else {
+            \App\Models\TechnicianDocument::create([
+                'technician_id' => $technician->id,
+                'document_type' => $request->document_type,
+                'file_path' => $path,
+                'file_name' => $file->getClientOriginalName(),
+            ]);
+        }
+
+        return back()->with('success', 'Document uploaded successfully.');
+    }
+
+    /**
+     * Verify/approve a technician document.
+     */
+    public function verifyTechnicianDocument(Request $request, \App\Models\TechnicianDocument $document)
+    {
+        $request->validate([
+            'action' => 'required|in:approve,reject',
+        ]);
+
+        if ($request->action === 'approve') {
+            $document->update([
+                'verified' => true,
+                'verified_by' => auth()->id(),
+                'verified_at' => now(),
+            ]);
+        } else {
+            $document->update([
+                'verified' => false,
+                'verified_by' => auth()->id(),
+                'verified_at' => now(),
+            ]);
+        }
+
+        return back()->with('success', 'Document ' . $request->action . 'd successfully.');
+    }
+
     public function assignTechnician(Request $request, ServiceRequest $serviceRequest)
     {
         $request->validate([
-            'technician_id' => 'required|exists:technicians,id'
+            'technician_id' => 'required|exists:technicians,id',
+            'agreed_compensation' => 'required|numeric|min:0',
+            'compensation_notes' => 'nullable|string|max:1000',
         ]);
 
         // Block direct assignment when sub-tasks exist
@@ -256,10 +391,18 @@ class AdminDashboardController extends Controller
 
         // Check if RFQ has been approved (if RFQ workflow is enabled)
         if ($serviceRequest->rfq_status && $serviceRequest->rfq_status !== ServiceRequest::RFQ_STATUS_APPROVED) {
-            return redirect()->route('admin.jobs')->with('error', 'Cannot assign technician until RFQ is approved by client.');
+            return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', 'Cannot assign technician until RFQ is approved by client.');
         }
 
         $technician = Technician::findOrFail($request->technician_id);
+        $currentTechnicianId = $serviceRequest->technician_id;
+        $existingAssignment = $this->findActivePrimaryAssignment($serviceRequest, $currentTechnicianId);
+
+        $this->ensureLaborBudgetCapacity(
+            $serviceRequest,
+            (float) $request->agreed_compensation,
+            excludeAssignmentId: $existingAssignment?->id
+        );
 
         // Update service request
         $serviceRequest->update([
@@ -267,6 +410,15 @@ class AdminDashboardController extends Controller
             'status' => 'assigned',
             'assigned_at' => now()
         ]);
+
+        $this->syncPrimaryAssignment(
+            $serviceRequest,
+            currentTechnicianId: $currentTechnicianId,
+            technician: $technician,
+            agreedCompensation: (float) $request->agreed_compensation,
+            compensationNotes: $request->compensation_notes,
+            reassignmentReason: 'Admin reassigned technician from job details.'
+        );
 
         // Update technician availability if they become busy
         if ($technician->availability === 'available') {
@@ -283,7 +435,265 @@ class AdminDashboardController extends Controller
             Mail::to($serviceRequest->user->email)->send(new TechnicianAssigned($serviceRequest, $technician));
         }
 
-        return redirect()->route('admin.jobs')->with('success', 'Technician assigned successfully!');
+        return redirect()->route('admin.jobs.show', $serviceRequest)->with('success', 'Technician assigned successfully!');
+    }
+
+    public function assignLeadTechnician(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'technician_id' => 'required|exists:technicians,id',
+            'agreed_compensation' => 'required|numeric|min:0',
+            'compensation_notes' => 'nullable|string|max:1000',
+        ]);
+
+        $technician = Technician::findOrFail($request->technician_id);
+        $currentLeadTechnicianId = $serviceRequest->lead_technician_id;
+        $existingAssignment = $this->findActivePrimaryAssignment($serviceRequest, $currentLeadTechnicianId);
+
+        $this->ensureLaborBudgetCapacity(
+            $serviceRequest,
+            (float) $request->agreed_compensation,
+            excludeAssignmentId: $existingAssignment?->id
+        );
+
+        $serviceRequest->update([
+            'lead_technician_id' => $technician->id,
+        ]);
+
+        // If the job isn't assigned yet, also set it as assigned
+        if (in_array($serviceRequest->status, ['pending', 'ready_for_assignment'])) {
+            $serviceRequest->update([
+                'status' => 'assigned',
+                'assigned_at' => now(),
+            ]);
+        }
+
+        if ($technician->availability === 'available') {
+            $technician->update(['availability' => 'busy']);
+        }
+
+        $this->syncPrimaryAssignment(
+            $serviceRequest,
+            currentTechnicianId: $currentLeadTechnicianId,
+            technician: $technician,
+            agreedCompensation: (float) $request->agreed_compensation,
+            compensationNotes: $request->compensation_notes,
+            reassignmentReason: 'Admin changed the lead technician from job details.'
+        );
+
+        if ($technician->user && $technician->user->email) {
+            Mail::to($technician->user->email)->send(new JobAssigned($serviceRequest));
+        }
+
+        return redirect()->route('admin.jobs.show', $serviceRequest)->with('success', 'Lead technician assigned successfully!');
+    }
+
+    protected function findActivePrimaryAssignment(ServiceRequest $serviceRequest, ?int $technicianId = null): ?JobAssignment
+    {
+        if (!$technicianId) {
+            return null;
+        }
+
+        return $serviceRequest->jobAssignments()
+            ->whereNull('service_sub_task_id')
+            ->where('technician_id', $technicianId)
+            ->whereIn('status', [
+                JobAssignment::STATUS_PENDING,
+                JobAssignment::STATUS_ACCEPTED,
+                JobAssignment::STATUS_COMPLETED,
+            ])
+            ->latest('id')
+            ->first();
+    }
+
+    protected function findActiveSubTaskAssignment(ServiceSubTask $serviceSubTask): ?JobAssignment
+    {
+        return JobAssignment::where('service_sub_task_id', $serviceSubTask->id)
+            ->whereIn('status', [
+                JobAssignment::STATUS_PENDING,
+                JobAssignment::STATUS_ACCEPTED,
+                JobAssignment::STATUS_COMPLETED,
+            ])
+            ->latest('id')
+            ->first();
+    }
+
+    protected function getLaborAllocationSummary(
+        ServiceRequest $serviceRequest,
+        ?int $excludeAssignmentId = null,
+        ?int $excludeSubTaskId = null
+    ): array {
+        $budgeted = (float) ($serviceRequest->budget?->labor_budget ?? 0);
+
+        $directAllocation = (float) $serviceRequest->jobAssignments()
+            ->whereNull('service_sub_task_id')
+            ->whereIn('status', [
+                JobAssignment::STATUS_PENDING,
+                JobAssignment::STATUS_ACCEPTED,
+                JobAssignment::STATUS_COMPLETED,
+            ])
+            ->when($excludeAssignmentId, fn ($query) => $query->where('id', '!=', $excludeAssignmentId))
+            ->sum('agreed_compensation');
+
+        $subTaskAllocation = (float) $serviceRequest->subTasks()
+            ->whereNotNull('technician_id')
+            ->when($excludeSubTaskId, fn ($query) => $query->where('id', '!=', $excludeSubTaskId))
+            ->sum('agreed_compensation');
+
+        $allocated = $directAllocation + $subTaskAllocation;
+
+        return [
+            'budgeted' => $budgeted,
+            'allocated' => $allocated,
+            'remaining' => $budgeted - $allocated,
+        ];
+    }
+
+    protected function ensureLaborBudgetCapacity(
+        ServiceRequest $serviceRequest,
+        float $agreedCompensation,
+        ?int $excludeAssignmentId = null,
+        ?int $excludeSubTaskId = null
+    ): void {
+        if (!$serviceRequest->budget) {
+            throw ValidationException::withMessages([
+                'agreed_compensation' => 'Set the labor budget before assigning technician dues.',
+            ]);
+        }
+
+        $allocation = $this->getLaborAllocationSummary($serviceRequest, $excludeAssignmentId, $excludeSubTaskId);
+
+        if ($allocation['budgeted'] <= 0) {
+            throw ValidationException::withMessages([
+                'agreed_compensation' => 'The labor budget must be greater than zero before assigning technician dues.',
+            ]);
+        }
+
+        if ($agreedCompensation > ($allocation['remaining'] + 0.0001)) {
+            throw ValidationException::withMessages([
+                'agreed_compensation' => 'This assignment exceeds the remaining labor budget. Up to KSH '
+                    . number_format(max($allocation['remaining'], 0), 2)
+                    . ' is still available for technician dues on this job.',
+            ]);
+        }
+    }
+
+    protected function syncPrimaryAssignment(
+        ServiceRequest $serviceRequest,
+        ?int $currentTechnicianId,
+        Technician $technician,
+        float $agreedCompensation,
+        ?string $compensationNotes,
+        string $reassignmentReason
+    ): JobAssignment {
+        $existingAssignment = $this->findActivePrimaryAssignment($serviceRequest, $currentTechnicianId);
+
+        if ($existingAssignment && (int) $existingAssignment->technician_id === (int) $technician->id) {
+            $existingAssignment->update([
+                'agreed_compensation' => $agreedCompensation,
+                'compensation_notes' => $compensationNotes,
+                'assigned_by' => auth()->id(),
+                'status' => JobAssignment::STATUS_PENDING,
+            ]);
+
+            return $existingAssignment->fresh();
+        }
+
+        if ($existingAssignment) {
+            $existingAssignment->update([
+                'status' => JobAssignment::STATUS_REASSIGNED,
+                'reassignment_reason' => $reassignmentReason,
+                'actual_end' => now(),
+            ]);
+        }
+
+        return JobAssignment::create([
+            'service_request_id' => $serviceRequest->id,
+            'technician_id' => $technician->id,
+            'assigned_by' => auth()->id(),
+            'agreed_compensation' => $agreedCompensation,
+            'compensation_notes' => $compensationNotes,
+            'status' => JobAssignment::STATUS_PENDING,
+            'reassigned_from' => $existingAssignment?->technician_id,
+        ]);
+    }
+
+    protected function syncSubTaskAssignment(
+        ServiceSubTask $serviceSubTask,
+        Technician $technician,
+        float $agreedCompensation,
+        ?string $compensationNotes
+    ): JobAssignment {
+        $existingAssignment = $this->findActiveSubTaskAssignment($serviceSubTask);
+
+        if ($existingAssignment && (int) $existingAssignment->technician_id === (int) $technician->id) {
+            $existingAssignment->update([
+                'agreed_compensation' => $agreedCompensation,
+                'compensation_notes' => $compensationNotes,
+                'assigned_by' => auth()->id(),
+                'status' => JobAssignment::STATUS_PENDING,
+            ]);
+
+            return $existingAssignment->fresh();
+        }
+
+        if ($existingAssignment) {
+            $existingAssignment->update([
+                'status' => JobAssignment::STATUS_REASSIGNED,
+                'reassignment_reason' => 'Admin reassigned the technician for this sub-task.',
+                'actual_end' => now(),
+            ]);
+        }
+
+        return JobAssignment::create([
+            'service_request_id' => $serviceSubTask->service_request_id,
+            'service_sub_task_id' => $serviceSubTask->id,
+            'technician_id' => $technician->id,
+            'assigned_by' => auth()->id(),
+            'agreed_compensation' => $agreedCompensation,
+            'compensation_notes' => $compensationNotes,
+            'status' => JobAssignment::STATUS_PENDING,
+            'reassigned_from' => $existingAssignment?->technician_id,
+        ]);
+    }
+
+    public function storeMilestone(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'progress_step' => 'required|integer|min:1|max:100',
+            'amount' => 'required|numeric|min:0',
+            'notes' => 'nullable|string|max:500',
+        ]);
+
+        $serviceRequest->milestones()->create([
+            'progress_step' => $request->progress_step,
+            'amount' => $request->amount,
+            'notes' => $request->notes,
+            'status' => 'pending',
+        ]);
+
+        return back()->with('success', 'Milestone added successfully.');
+    }
+
+    public function updateMilestone(Request $request, \App\Models\PaymentMilestone $milestone)
+    {
+        $request->validate([
+            'progress_step' => 'required|integer|min:1|max:100',
+            'amount' => 'required|numeric|min:0',
+            'notes' => 'nullable|string|max:500',
+            'status' => 'nullable|in:pending,reached,paid',
+        ]);
+
+        $milestone->update($request->only(['progress_step', 'amount', 'notes', 'status']));
+
+        return back()->with('success', 'Milestone updated.');
+    }
+
+    public function destroyMilestone(\App\Models\PaymentMilestone $milestone)
+    {
+        $milestone->delete();
+
+        return back()->with('success', 'Milestone deleted.');
     }
 
     public function tools()
@@ -512,23 +922,61 @@ class AdminDashboardController extends Controller
         ]);
     }
 
-    public function rfq()
+    public function rfq(Request $request)
     {
-        $rfqs = ServiceRequest::with(['user', 'serviceCategory', 'technician.user'])
-            ->orderBy('created_at', 'desc')
-            ->get();
+        $query = ServiceRequest::with(['user', 'serviceCategory', 'technician.user', 'assignedPm']);
 
-        // Calculate RFQ statistics
+        // Search filter
+        if ($search = $request->input('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('request_id', 'like', "%{$search}%")
+                  ->orWhere('description', 'like', "%{$search}%")
+                  ->orWhere('location', 'like', "%{$search}%")
+                  ->orWhereHas('user', function ($uq) use ($search) {
+                      $uq->where('name', 'like', "%{$search}%")
+                         ->orWhere('email', 'like', "%{$search}%");
+                  })
+                  ->orWhereHas('serviceCategory', function ($cq) use ($search) {
+                      $cq->where('name', 'like', "%{$search}%");
+                  });
+            });
+        }
+
+        // Status filter
+        if ($status = $request->input('status')) {
+            if ($status !== 'all') {
+                $query->where('rfq_status', $status);
+            }
+        }
+
+        // Sort order
+        $sortOrder = $request->input('sort', 'newest');
+        $query->orderBy('created_at', $sortOrder === 'newest' ? 'desc' : 'asc');
+
+        // Paginate
+        $perPage = (int) $request->input('per_page', 15);
+        $perPage = in_array($perPage, [10, 15, 25, 50]) ? $perPage : 15;
+        $rfqs = $query->paginate($perPage)->withQueryString();
+
+        // Calculate RFQ statistics (always unfiltered)
         $stats = [
             'pending' => ServiceRequest::where('rfq_status', 'pending')->count(),
             'quoted' => ServiceRequest::where('rfq_status', 'quoted')->count(),
             'approved' => ServiceRequest::where('rfq_status', 'approved')->count(),
-            'totalValue' => ServiceRequest::where('rfq_status', 'approved')->sum('quote_amount')
+            'rejected' => ServiceRequest::where('rfq_status', 'rejected')->count(),
+            'total' => ServiceRequest::count(),
+            'totalValue' => ServiceRequest::where('rfq_status', 'approved')->sum('quote_amount'),
         ];
 
         return Inertia::render('Admin/RFQ', [
             'rfqs' => $rfqs,
-            'stats' => $stats
+            'stats' => $stats,
+            'filters' => [
+                'search' => $request->input('search', ''),
+                'status' => $request->input('status', 'all'),
+                'sort' => $sortOrder,
+                'per_page' => $perPage,
+            ],
         ]);
     }
 
@@ -555,14 +1003,25 @@ class AdminDashboardController extends Controller
             $filePath = $file->storeAs('quotes', $fileName, 'public');
         }
 
-        $serviceRequest->update([
+        $updateData = [
             'rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED,
             'quote_amount' => $request->total_amount,
             'quote_materials' => $request->materials,
             'quote_labor_cost' => $request->labor_cost,
             'quote_notes' => $request->notes,
             'quote_materials_file_path' => $filePath,
-        ]);
+        ];
+
+        // Transition status to awaiting_quote_approval
+        if (in_array($serviceRequest->status, [
+            ServiceRequest::STATUS_AWAITING_QUOTE_GENERATION,
+            ServiceRequest::STATUS_PENDING,
+            'pending',
+        ])) {
+            $updateData['status'] = ServiceRequest::STATUS_AWAITING_QUOTE_APPROVAL;
+        }
+
+        $serviceRequest->update($updateData);
 
         // Send email notification to client
         Mail::to($serviceRequest->user->email)->send(new QuotationSent($serviceRequest));
@@ -636,6 +1095,14 @@ class AdminDashboardController extends Controller
             'skills' => 'nullable|array'
         ]);
 
+        if ($request->role === 'technician') {
+            return back()
+                ->withErrors([
+                    'role' => 'Create technicians from Technician Management so the required onboarding documents can be uploaded.',
+                ])
+                ->withInput();
+        }
+
         // Create user
         $user = User::create([
             'name' => $request->name,
@@ -679,6 +1146,14 @@ class AdminDashboardController extends Controller
             'bio' => 'nullable|string',
             'skills' => 'nullable|array'
         ]);
+
+        if ($request->role === 'technician' && !$user->technician) {
+            return back()
+                ->withErrors([
+                    'role' => 'Convert or create technicians from Technician Management so the required onboarding documents are captured.',
+                ])
+                ->withInput();
+        }
 
         // Update user
         $user->update([
@@ -866,7 +1341,9 @@ class AdminDashboardController extends Controller
     public function assignSubTaskTechnician(Request $request, ServiceSubTask $serviceSubTask)
     {
         $request->validate([
-            'technician_id' => 'required|exists:technicians,id'
+            'technician_id' => 'required|exists:technicians,id',
+            'agreed_compensation' => 'required|numeric|min:0',
+            'compensation_notes' => 'nullable|string|max:1000',
         ]);
 
         $technician = Technician::findOrFail($request->technician_id);
@@ -877,12 +1354,27 @@ class AdminDashboardController extends Controller
             return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', 'Cannot assign technician until RFQ is approved by client.');
         }
 
+        $this->ensureLaborBudgetCapacity(
+            $serviceRequest,
+            (float) $request->agreed_compensation,
+            excludeSubTaskId: $serviceSubTask->id
+        );
+
         // Assign technician to sub-task
         $serviceSubTask->update([
             'technician_id' => $technician->id,
             'status' => ServiceSubTask::STATUS_ASSIGNED,
             'assigned_at' => now(),
+            'agreed_compensation' => (float) $request->agreed_compensation,
+            'compensation_notes' => $request->compensation_notes,
         ]);
+
+        $this->syncSubTaskAssignment(
+            $serviceSubTask,
+            $technician,
+            (float) $request->agreed_compensation,
+            $request->compensation_notes
+        );
 
         // Determine if this is the first assigned technician (becomes lead)
         $isFirstAssignment = !$serviceRequest->lead_technician_id;
@@ -910,5 +1402,357 @@ class AdminDashboardController extends Controller
         }
 
         return redirect()->route('admin.jobs.show', $serviceRequest)->with('success', 'Technician assigned to sub-task successfully!');
+    }
+
+    /**
+     * Assign a PM to an RFQ.
+     */
+    public function assignPm(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'pm_id' => 'required|exists:users,id',
+        ]);
+
+        $pm = User::findOrFail($request->pm_id);
+        if ($pm->role !== 'project_manager') {
+            return redirect()->back()->with('error', 'Selected user is not a Project Manager.');
+        }
+
+        $serviceRequest->update([
+            'assigned_pm_id' => $pm->id,
+            'status' => ServiceRequest::STATUS_AWAITING_TECH_AVAILABILITY,
+        ]);
+
+        \App\Models\AuditLog::log(
+            \App\Models\AuditLog::ACTION_ASSIGNMENT,
+            $serviceRequest,
+            null,
+            ['assigned_pm_id' => $pm->id, 'pm_name' => $pm->name]
+        );
+
+        return redirect()->back()->with('success', "RFQ assigned to PM: {$pm->name}");
+    }
+
+    /**
+     * View audit logs.
+     */
+    public function auditLogs(Request $request)
+    {
+        $logs = \App\Models\AuditLog::with('user')
+            ->when($request->action, fn($q, $a) => $q->where('action', $a))
+            ->when($request->user_id, fn($q, $u) => $q->where('user_id', $u))
+            ->orderBy('created_at', 'desc')
+            ->paginate(50);
+
+        return Inertia::render('Admin/AuditLogs', [
+            'logs' => $logs,
+            'filters' => $request->only(['action', 'user_id']),
+        ]);
+    }
+
+    /**
+     * View technician leads.
+     */
+    public function technicianLeads(Request $request)
+    {
+        $leads = \App\Models\TechnicianLead::orderBy('created_at', 'desc')->paginate(20);
+
+        return Inertia::render('Admin/TechnicianLeads', [
+            'leads' => $leads,
+        ]);
+    }
+
+    /**
+     * Reports page.
+     */
+    public function reports(Request $request)
+    {
+        $reportingService = app(\App\Services\ReportingService::class);
+
+        $from = $request->from ? \Carbon\Carbon::parse($request->from) : now()->startOfMonth();
+        $to = $request->to ? \Carbon\Carbon::parse($request->to) : now();
+
+        $revenueReport = $reportingService->getRevenueReport($from, $to);
+
+        return Inertia::render('Admin/Reports', [
+            'report' => $revenueReport,
+            'filters' => ['from' => $from->toDateString(), 'to' => $to->toDateString()],
+        ]);
+    }
+
+    public function rfqRevenueReport(Request $request)
+    {
+        $reportingService = app(\App\Services\ReportingService::class);
+
+        $from = $request->from ? \Carbon\Carbon::parse($request->from) : now()->startOfMonth();
+        $to = $request->to ? \Carbon\Carbon::parse($request->to) : now();
+        $clientId = $request->client_id ? (int) $request->client_id : null;
+
+        return Inertia::render('Admin/ReportRfqRevenue', [
+            'report' => $reportingService->getRfqRevenueReport($from, $to, null, $clientId),
+            'filters' => ['from' => $from->toDateString(), 'to' => $to->toDateString(), 'client_id' => $clientId],
+        ]);
+    }
+
+    public function clientRevenueReport(Request $request)
+    {
+        $reportingService = app(\App\Services\ReportingService::class);
+
+        $from = $request->from ? \Carbon\Carbon::parse($request->from) : now()->startOfMonth();
+        $to = $request->to ? \Carbon\Carbon::parse($request->to) : now();
+
+        return Inertia::render('Admin/ReportClientRevenue', [
+            'report' => $reportingService->getClientRevenueReport($from, $to),
+            'filters' => ['from' => $from->toDateString(), 'to' => $to->toDateString()],
+        ]);
+    }
+
+    public function exportRfqRevenueReport(Request $request, string $format)
+    {
+        [$from, $to] = $this->resolveReportRange($request);
+        $reportingService = app(\App\Services\ReportingService::class);
+        $clientId = $request->client_id ? (int) $request->client_id : null;
+
+        return $this->exportRevenueBreakdown(
+            report: $reportingService->getRfqRevenueReport($from, $to, null, $clientId),
+            variant: 'rfq',
+            format: $format,
+            scopeLabel: 'Admin',
+        );
+    }
+
+    public function exportClientRevenueReport(Request $request, string $format)
+    {
+        [$from, $to] = $this->resolveReportRange($request);
+        $reportingService = app(\App\Services\ReportingService::class);
+
+        return $this->exportRevenueBreakdown(
+            report: $reportingService->getClientRevenueReport($from, $to),
+            variant: 'client',
+            format: $format,
+            scopeLabel: 'Admin',
+        );
+    }
+
+    /**
+     * Approve technician vetting.
+     */
+    public function approveTechnician(Technician $technician)
+    {
+        $technician->update([
+            'vetting_status' => 'approved',
+            'vetted_by' => auth()->id(),
+            'vetted_at' => now(),
+        ]);
+
+        \App\Models\AuditLog::log(\App\Models\AuditLog::ACTION_APPROVAL, $technician);
+
+        return redirect()->back()->with('success', 'Technician approved.');
+    }
+
+    private function resolveReportRange(Request $request): array
+    {
+        $from = $request->from ? \Carbon\Carbon::parse($request->from) : now()->startOfMonth();
+        $to = $request->to ? \Carbon\Carbon::parse($request->to) : now();
+
+        return [$from, $to];
+    }
+
+    private function exportRevenueBreakdown(array $report, string $variant, string $format, string $scopeLabel)
+    {
+        $format = strtolower($format);
+
+        abort_unless(in_array($format, ['pdf', 'excel'], true), 404);
+
+        $viewData = [
+            'report' => $report,
+            'variant' => $variant,
+            'scopeLabel' => $scopeLabel,
+            'generatedAt' => now(),
+        ];
+
+        $filename = $this->buildRevenueExportFilename($variant, $format, $report['period'] ?? []);
+
+        if ($format === 'pdf') {
+            $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.revenue-breakdown', $viewData)
+                ->setPaper('a4', 'landscape');
+
+            return $pdf->download($filename);
+        }
+
+        $html = view('exports.revenue-breakdown-excel', $viewData)->render();
+
+        return response($html, 200, [
+            'Content-Type' => 'application/vnd.ms-excel; charset=UTF-8',
+            'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+            'Cache-Control' => 'max-age=0',
+        ]);
+    }
+
+    private function buildRevenueExportFilename(string $variant, string $format, array $period): string
+    {
+        $from = $period['from'] ?? now()->toDateString();
+        $to = $period['to'] ?? now()->toDateString();
+        $extension = $format === 'pdf' ? 'pdf' : 'xls';
+        $label = $variant === 'rfq' ? 'rfq-revenue-report' : 'client-revenue-report';
+
+        return "{$label}-{$from}-to-{$to}.{$extension}";
+    }
+
+    /**
+     * Reject technician vetting.
+     */
+    public function rejectTechnician(Technician $technician)
+    {
+        $technician->update([
+            'vetting_status' => 'rejected',
+            'vetted_by' => auth()->id(),
+            'vetted_at' => now(),
+        ]);
+
+        \App\Models\AuditLog::log(\App\Models\AuditLog::ACTION_UPDATED, $technician, null, ['vetting_status' => 'rejected']);
+
+        return redirect()->back()->with('success', 'Technician rejected.');
+    }
+
+    public function technicianReport(Technician $technician)
+    {
+        $technician->load('user');
+
+        // Direct payments to technician (labor, materials, other)
+        $directPayments = TechnicianPayment::where('technician_id', $technician->id)
+            ->with('serviceRequest:id,request_id,job_reference,status,quote_amount')
+            ->orderBy('paid_at', 'desc')
+            ->get();
+
+        // Payment sheet entries for this technician
+        $sheetEntries = TechnicianPaymentEntry::where('technician_id', $technician->id)
+            ->with([
+                'serviceRequest:id,request_id,job_reference,status,quote_amount',
+                'paymentSheet:id,sheet_reference,period_start,period_end,status',
+            ])
+            ->orderBy('id', 'desc')
+            ->get();
+
+        // Service requests this technician is assigned to (with milestones)
+        $serviceRequests = ServiceRequest::where('technician_id', $technician->id)
+            ->orWhere('lead_technician_id', $technician->id)
+            ->with(['serviceCategory:id,name', 'milestones', 'budget'])
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        // Build per-service-request payment summary
+        $jobPayments = $serviceRequests->map(function ($sr) use ($technician, $directPayments, $sheetEntries) {
+            $srDirectPayments = $directPayments->where('service_request_id', $sr->id);
+            $srSheetEntries = $sheetEntries->where('service_request_id', $sr->id);
+
+            $totalDirectPaid = (float) $srDirectPayments->where('status', 'completed')->sum('amount');
+            $totalSheetPaid = (float) $srSheetEntries->whereIn('status', ['approved', 'paid'])->sum('current_period_payable');
+            $totalPaid = $totalDirectPaid + $totalSheetPaid;
+
+            $agreedCompensation = (float) ($srSheetEntries->first()?->agreed_compensation ?? 0);
+            $latestProgress = (int) ($srSheetEntries->first()?->cumulative_progress_pct ?? 0);
+
+            return [
+                'id' => $sr->id,
+                'request_id' => $sr->request_id,
+                'job_reference' => $sr->job_reference ?? $sr->request_id,
+                'service_name' => $sr->serviceCategory->name ?? 'N/A',
+                'status' => $sr->status,
+                'quote_amount' => (float) ($sr->quote_amount ?? 0),
+                'agreed_compensation' => $agreedCompensation,
+                'cumulative_progress' => $latestProgress,
+                'total_paid' => $totalPaid,
+                'is_lead' => $sr->lead_technician_id === $technician->id,
+                'milestones' => $sr->milestones->map(fn ($m) => [
+                    'id' => $m->id,
+                    'progress_step' => $m->progress_step,
+                    'amount' => (float) $m->amount,
+                    'status' => $m->status,
+                    'notes' => $m->notes,
+                ]),
+                'direct_payments' => $srDirectPayments->map(fn ($p) => [
+                    'id' => $p->id,
+                    'payment_id' => $p->payment_id,
+                    'category' => $p->category,
+                    'amount' => (float) $p->amount,
+                    'status' => $p->status,
+                    'payment_method' => $p->payment_method,
+                    'paid_at' => $p->paid_at?->toDateString(),
+                    'notes' => $p->notes,
+                ])->values(),
+                'sheet_entries' => $srSheetEntries->map(fn ($e) => [
+                    'id' => $e->id,
+                    'sheet_reference' => $e->paymentSheet?->sheet_reference,
+                    'period' => $e->paymentSheet
+                        ? $e->paymentSheet->period_start . ' - ' . $e->paymentSheet->period_end
+                        : 'N/A',
+                    'agreed_compensation' => (float) $e->agreed_compensation,
+                    'cumulative_progress_pct' => (int) $e->cumulative_progress_pct,
+                    'cumulative_amount_due' => (float) $e->cumulative_amount_due,
+                    'previous_cumulative_paid' => (float) $e->previous_cumulative_paid,
+                    'current_period_payable' => (float) $e->current_period_payable,
+                    'status' => $e->status,
+                ])->values(),
+            ];
+        });
+
+        // Summary
+        $totalEarned = $jobPayments->sum('total_paid');
+        $totalAgreed = $jobPayments->sum('agreed_compensation');
+
+        return Inertia::render('Admin/TechnicianReport', [
+            'technician' => $technician,
+            'jobPayments' => $jobPayments,
+            'summary' => [
+                'total_earned' => (float) $totalEarned,
+                'total_agreed' => (float) $totalAgreed,
+                'total_jobs' => $jobPayments->count(),
+                'active_jobs' => $jobPayments->whereIn('status', ['assigned', 'in_progress'])->count(),
+                'completed_jobs' => $jobPayments->whereIn('status', ['completed', 'closed'])->count(),
+            ],
+        ]);
+    }
+
+    /**
+     * Approve compensation amendment.
+     */
+    public function approveCompensationAmendment(\App\Models\CompensationAmendment $amendment)
+    {
+        $amendment->update([
+            'status' => 'approved',
+            'reviewed_by' => auth()->id(),
+            'reviewed_at' => now(),
+        ]);
+
+        // Apply the amendment to the job assignment
+        $assignment = \App\Models\JobAssignment::where('service_request_id', $amendment->service_request_id)
+            ->where('technician_id', $amendment->technician_id)
+            ->first();
+
+        if ($assignment) {
+            $assignment->update(['agreed_compensation' => $amendment->proposed_amount]);
+        }
+
+        \App\Models\AuditLog::log(\App\Models\AuditLog::ACTION_APPROVAL, $amendment);
+
+        return redirect()->back()->with('success', 'Compensation amendment approved.');
+    }
+
+    /**
+     * Reject compensation amendment.
+     */
+    public function rejectCompensationAmendment(Request $request, \App\Models\CompensationAmendment $amendment)
+    {
+        $amendment->update([
+            'status' => 'rejected',
+            'reviewed_by' => auth()->id(),
+            'reviewed_at' => now(),
+            'review_notes' => $request->review_notes,
+        ]);
+
+        \App\Models\AuditLog::log(\App\Models\AuditLog::ACTION_UPDATED, $amendment, null, ['status' => 'rejected']);
+
+        return redirect()->back()->with('success', 'Compensation amendment rejected.');
     }
 }

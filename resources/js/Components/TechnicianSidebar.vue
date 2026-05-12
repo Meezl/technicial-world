@@ -1,33 +1,27 @@
 <template>
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h2 class="logo">TECHNICIAN WORLD</h2>
-        </div>
-        <nav class="sidebar-nav">
-            <Link href="/technician/dashboard" :class="['nav-item', { active: currentPage === 'dashboard' }]">
-                <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
-            </Link>
-            <!-- Add more technician specific links here as they become available -->
-        </nav>
-        <div class="sidebar-footer">
-            <Link href="/logout" class="nav-item" method="post" as="button">
-                <i class="fas fa-sign-out-alt"></i><span>Log Out</span>
-            </Link>
-        </div>
-    </aside>
+    <AppSidebar
+        role-label="Technician Portal"
+        role-hint="Stay on top of assigned jobs, earnings, tools, and your profile."
+        :current-page="currentPage"
+        :items="navItems"
+    />
 </template>
 
 <script setup>
-import { Link } from '@inertiajs/vue3'
+import AppSidebar from './AppSidebar.vue'
 
 defineProps({
     currentPage: {
         type: String,
-        default: 'dashboard'
-    }
+        default: 'dashboard',
+    },
 })
-</script>
 
-<style>
-@import url('../../css/dashboard-app.css');
-</style>
+const navItems = [
+    { key: 'dashboard', href: '/technician/dashboard', icon: 'fas fa-tachometer-alt', label: 'Dashboard', caption: 'Daily overview' },
+    { key: 'jobs', href: '/technician/jobs', icon: 'fas fa-clipboard-list', label: 'Jobs', caption: 'Assignments and status' },
+    { key: 'earnings', href: '/technician/earnings', icon: 'fas fa-money-bill-wave', label: 'Earnings', caption: 'Payments and totals' },
+    { key: 'tools', href: '/technician/tools', icon: 'fas fa-tools', label: 'Tools', caption: 'Issued equipment' },
+    { key: 'profile', href: '/technician/profile', icon: 'fas fa-user-circle', label: 'Profile', caption: 'Account and details' },
+]
+</script>

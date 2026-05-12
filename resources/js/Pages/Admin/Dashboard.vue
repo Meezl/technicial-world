@@ -1,50 +1,12 @@
 <template>
     <div class="dashboard-container">
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <h2 class="logo">TECHNICIAN WORLD</h2>
-            </div>
-            <nav class="sidebar-nav">
-                <Link href="/admin/dashboard" class="nav-item active">
-                    <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
-                </Link>
-                <Link href="/admin/projects/dashboard" class="nav-item">
-                    <i class="fas fa-project-diagram"></i><span>Project Management</span>
-                </Link>
-                <Link href="/admin/rfq" class="nav-item">
-                    <i class="fas fa-file-alt"></i><span>RFQ Management</span>
-                </Link>
-                <Link href="/admin/technicians" class="nav-item">
-                    <i class="fas fa-hard-hat"></i><span>Technicians</span>
-                </Link>
-                <Link href="/admin/users" class="nav-item">
-                    <i class="fas fa-users"></i><span>User Management</span>
-                </Link>
-                <Link href="/admin/jobs" class="nav-item">
-                    <i class="fas fa-tasks"></i><span>Jobs Monitoring</span>
-                </Link>
-                <Link href="/admin/tools" class="nav-item">
-                    <i class="fas fa-tools"></i><span>Tools Management</span>
-                </Link>
-                <Link href="/admin/payments" class="nav-item">
-                    <i class="fas fa-credit-card"></i><span>Payments</span>
-                </Link>
-                <Link href="/admin/requisitions" class="nav-item">
-                    <i class="fas fa-boxes"></i><span>Requisitions</span>
-                </Link>
-            </nav>
-            <div class="sidebar-footer">
-                <Link href="/logout" class="nav-item" method="post">
-                    <i class="fas fa-sign-out-alt"></i><span>Log Out</span>
-                </Link>
-            </div>
-        </aside>
+        <AdminSidebar current-page="dashboard" />
 
         <main class="main-content">
             <header class="main-header">
                 <h1>Dashboard Overview</h1>
                 <div class="header-actions">
-                    <Link href="/admin/rfq/create" class="btn btn-primary">
+                    <Link href="/admin/rfq" class="btn btn-primary">
                         <i class="fas fa-plus"></i> Create Manual RFQ
                     </Link>
                 </div>
@@ -147,6 +109,7 @@
 </template>
 
 <script setup>
+import AdminSidebar from '../../Components/AdminSidebar.vue'
 import { Link } from '@inertiajs/vue3'
 import { ref, onMounted, nextTick } from 'vue'
 import Chart from 'chart.js/auto'

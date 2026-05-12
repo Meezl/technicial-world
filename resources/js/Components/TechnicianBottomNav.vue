@@ -1,19 +1,23 @@
 <template>
     <nav class="pwa-nav">
         <Link href="/technician/dashboard" :class="['nav-link', { active: currentPage === 'dashboard' }]">
-            <i class="fas fa-th-large"></i>
+            <span class="nav-icon-wrap"><i class="fas fa-th-large"></i></span>
             <span>Dashboard</span>
         </Link>
         <Link href="/technician/jobs" :class="['nav-link', { active: currentPage === 'jobs' }]">
-            <i class="fas fa-clipboard-list"></i>
+            <span class="nav-icon-wrap"><i class="fas fa-clipboard-list"></i></span>
             <span>Jobs</span>
         </Link>
+        <Link href="/technician/earnings" :class="['nav-link', { active: currentPage === 'earnings' }]">
+            <span class="nav-icon-wrap"><i class="fas fa-money-bill-wave"></i></span>
+            <span>Earnings</span>
+        </Link>
         <Link href="/technician/tools" :class="['nav-link', { active: currentPage === 'tools' }]">
-            <i class="fas fa-tools"></i>
+            <span class="nav-icon-wrap"><i class="fas fa-tools"></i></span>
             <span>Tools</span>
         </Link>
         <Link href="/technician/profile" :class="['nav-link', { active: currentPage === 'profile' }]">
-            <i class="fas fa-user-circle"></i>
+            <span class="nav-icon-wrap"><i class="fas fa-user-circle"></i></span>
             <span>Profile</span>
         </Link>
     </nav>

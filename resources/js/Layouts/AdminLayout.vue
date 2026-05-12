@@ -1,50 +1,11 @@
 <template>
     <div class="dashboard-container">
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <h2 class="logo">TECHNICIAN WORLD</h2>
-            </div>
-            <nav class="sidebar-nav">
-                <Link href="/admin/dashboard" class="nav-item" :class="{ 'active': $page.url === '/admin/dashboard' }">
-                    <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
-                </Link>
-                <Link href="/admin/projects/dashboard" class="nav-item" :class="{ 'active': $page.url.startsWith('/admin/projects') }">
-                    <i class="fas fa-project-diagram"></i><span>Project Management</span>
-                </Link>
-                <Link href="/admin/rfq" class="nav-item" :class="{ 'active': $page.url.startsWith('/admin/rfq') }">
-                    <i class="fas fa-file-alt"></i><span>RFQ Management</span>
-                </Link>
-                <Link href="/admin/technicians" class="nav-item" :class="{ 'active': $page.url.startsWith('/admin/technicians') && !$page.url.startsWith('/admin/technician-performance') }">
-                    <i class="fas fa-hard-hat"></i><span>Technicians</span>
-                </Link>
-                <Link href="/admin/technician-performance" class="nav-item" :class="{ 'active': $page.url.startsWith('/admin/technician-performance') }">
-                    <i class="fas fa-chart-line"></i><span>Technician Performance</span>
-                </Link>
-                <Link href="/admin/pm-performance" class="nav-item" :class="{ 'active': $page.url.startsWith('/admin/pm-performance') }">
-                    <i class="fas fa-chart-bar"></i><span>PM Performance</span>
-                </Link>
-                <Link href="/admin/users" class="nav-item" :class="{ 'active': $page.url.startsWith('/admin/users') }">
-                    <i class="fas fa-users"></i><span>User Management</span>
-                </Link>
-                <Link href="/admin/jobs" class="nav-item" :class="{ 'active': $page.url.startsWith('/admin/jobs') }">
-                    <i class="fas fa-tasks"></i><span>Jobs Monitoring</span>
-                </Link>
-                <Link href="/admin/tools" class="nav-item" :class="{ 'active': $page.url.startsWith('/admin/tools') }">
-                    <i class="fas fa-tools"></i><span>Tools Management</span>
-                </Link>
-                <Link href="/admin/payments" class="nav-item" :class="{ 'active': $page.url.startsWith('/admin/payments') }">
-                    <i class="fas fa-credit-card"></i><span>Payments</span>
-                </Link>
-                <Link href="/admin/requisitions" class="nav-item" :class="{ 'active': $page.url.startsWith('/admin/requisitions') }">
-                    <i class="fas fa-boxes"></i><span>Requisitions</span>
-                </Link>
-            </nav>
-            <div class="sidebar-footer">
-                <a href="#" @click.prevent="handleLogout" class="nav-item">
-                    <i class="fas fa-sign-out-alt"></i><span>Log Out</span>
-                </a>
-            </div>
-        </aside>
+        <AppSidebar
+            role-label="Administrator"
+            role-hint="Monitor operations, performance, and financial activity from one control center."
+            :current-page="currentPage"
+            :items="navItems"
+        />
 
         <main class="main-content">
             <!-- Header Slot -->
@@ -59,16 +20,41 @@
 </template>
 
 <script setup>
-import { Link, router } from '@inertiajs/vue3';
-import axios from 'axios';
+import { computed } from 'vue'
+import { usePage } from '@inertiajs/vue3'
+import AppSidebar from '../Components/AppSidebar.vue'
 
-const handleLogout = () => {
-    // Send logout request via axios, then force a hard reload
-    // ensuring no CSS pollution from dashboard remains
-    axios.post(route('logout')).then(() => {
-        window.location.href = '/'; 
-    });
-};
+const page = usePage()
+
+const navItems = [
+    { key: 'dashboard', href: '/admin/dashboard', icon: 'fas fa-tachometer-alt', label: 'Dashboard', caption: 'Overall activity' },
+    { key: 'projects', href: '/admin/projects/dashboard', icon: 'fas fa-project-diagram', label: 'Projects', caption: 'Delivery and schedules' },
+    { key: 'rfq', href: '/admin/rfq', icon: 'fas fa-file-alt', label: 'RFQ Management', caption: 'Quotes and approvals' },
+    { key: 'technicians', href: '/admin/technicians', icon: 'fas fa-hard-hat', label: 'Technicians', caption: 'Field teams and profiles' },
+    { key: 'technician-performance', href: '/admin/technician-performance', icon: 'fas fa-chart-line', label: 'Technician Performance', caption: 'Ratings and analytics' },
+    { key: 'pm-performance', href: '/admin/pm-performance', icon: 'fas fa-chart-bar', label: 'PM Performance', caption: 'Manager delivery metrics' },
+    { key: 'users', href: '/admin/users', icon: 'fas fa-users', label: 'Users', caption: 'Accounts and permissions' },
+    { key: 'jobs', href: '/admin/jobs', icon: 'fas fa-tasks', label: 'Jobs', caption: 'Execution monitoring' },
+    { key: 'tools', href: '/admin/tools', icon: 'fas fa-tools', label: 'Tools', caption: 'Assets and inventory' },
+    { key: 'payments', href: '/admin/payments', icon: 'fas fa-credit-card', label: 'Payments', caption: 'Collections and payouts' },
+    { key: 'requisitions', href: '/admin/requisitions', icon: 'fas fa-boxes', label: 'Requisitions', caption: 'Procurement workflow' },
+]
+
+const currentPage = computed(() => {
+    const url = page.url || ''
+
+    if (url.startsWith('/admin/projects')) return 'projects'
+    if (url.startsWith('/admin/rfq')) return 'rfq'
+    if (url.startsWith('/admin/technician-performance')) return 'technician-performance'
+    if (url.startsWith('/admin/pm-performance')) return 'pm-performance'
+    if (url.startsWith('/admin/technicians')) return 'technicians'
+    if (url.startsWith('/admin/users')) return 'users'
+    if (url.startsWith('/admin/jobs')) return 'jobs'
+    if (url.startsWith('/admin/tools')) return 'tools'
+    if (url.startsWith('/admin/payments')) return 'payments'
+    if (url.startsWith('/admin/requisitions')) return 'requisitions'
+    return 'dashboard'
+})
 </script>
 
 <style>

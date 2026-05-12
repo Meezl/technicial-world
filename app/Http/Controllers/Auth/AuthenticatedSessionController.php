@@ -33,19 +33,23 @@ class AuthenticatedSessionController extends Controller
 
         $request->session()->regenerate();
 
-        // Role-based redirect
+        // Role-based redirect — always go to the correct dashboard for the role
         $user = Auth::user();
         $requisitionRoles = ['foreman', 'office', 'procurement', 'accounts'];
 
-        if ($user->role === 'admin') {
-            return redirect()->intended(route('admin.dashboard', absolute: false));
-        } elseif (in_array($user->role, $requisitionRoles)) {
-            return redirect()->intended(route('admin.requisitions.index', absolute: false));
-        } elseif ($user->role === 'technician') {
-            return redirect()->intended(route('technician.dashboard', absolute: false));
-        }
+        $destination = match (true) {
+            $user->role === 'admin' => route('admin.dashboard', absolute: false),
+            $user->role === 'project_manager' => route('pm.dashboard', absolute: false),
+            $user->role === 'technician' => route('technician.dashboard', absolute: false),
+            $user->role === 'client' => route('client.dashboard', absolute: false),
+            in_array($user->role, $requisitionRoles) => route('admin.requisitions.index', absolute: false),
+            default => route('dashboard', absolute: false),
+        };
 
-        return redirect()->intended(route('dashboard', absolute: false));
+        // Clear any stale intended URL that might point to a different role's route
+        $request->session()->forget('url.intended');
+
+        return redirect()->to($destination);
     }
 
     /**

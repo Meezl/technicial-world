@@ -1,143 +1,231 @@
 <template>
     <div class="dashboard-container">
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <h2 class="logo">TECHNICIAN WORLD</h2>
-            </div>
-            <nav class="sidebar-nav">
-                <Link href="/admin/dashboard" class="nav-item">
-                    <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
-                </Link>
-                <Link href="/admin/projects/dashboard" class="nav-item">
-                    <i class="fas fa-project-diagram"></i><span>Project Management</span>
-                </Link>
-                <Link href="/admin/rfq" class="nav-item active">
-                    <i class="fas fa-file-alt"></i><span>RFQ Management</span>
-                </Link>
-                <Link href="/admin/technicians" class="nav-item">
-                    <i class="fas fa-hard-hat"></i><span>Technicians</span>
-                </Link>
-                <Link href="/admin/users" class="nav-item">
-                    <i class="fas fa-users"></i><span>User Management</span>
-                </Link>
-                <Link href="/admin/jobs" class="nav-item">
-                    <i class="fas fa-tasks"></i><span>Jobs Monitoring</span>
-                </Link>
-                <Link href="/admin/tools" class="nav-item">
-                    <i class="fas fa-tools"></i><span>Tools Management</span>
-                </Link>
-                <Link href="/admin/payments" class="nav-item">
-                    <i class="fas fa-credit-card"></i><span>Payments</span>
-                </Link>
-            </nav>
-            <div class="sidebar-footer">
-                <Link href="/logout" class="nav-item" method="post">
-                    <i class="fas fa-sign-out-alt"></i><span>Log Out</span>
-                </Link>
-            </div>
-        </aside>
+        <AdminSidebar current-page="rfq" />
 
-        <main class="main-content">
-            <header class="main-header">
-                <h1>RFQ Management</h1>
-                <div class="header-actions">
-                    <select v-model="statusFilter" @change="filterRFQs" class="status-filter">
-                        <option value="all">All Requests</option>
-                        <option value="pending">Pending Review</option>
-                        <option value="quoted">Awaiting Client Approval</option>
-                        <option value="approved">Approved</option>
-                        <option value="rejected">Rejected</option>
-                    </select>
+        <main class="main-content rfq-page">
+            <!-- Hero Section -->
+            <section class="rfq-hero">
+                <div class="hero-copy">
+                    <span class="hero-kicker">RFQ Management</span>
+                    <h1>Review requests, quotations, and approvals with less clutter</h1>
+                    <p>Track incoming service requests, respond faster, and keep payment follow-up visible from one cleaner workspace.</p>
+                    <div class="hero-pills">
+                        <span class="hero-pill">
+                            <i class="fas fa-inbox"></i>
+                            {{ stats.total || 0 }} total RFQs
+                        </span>
+                        <span class="hero-pill muted">
+                            <i class="fas fa-clock"></i>
+                            {{ stats.pending || 0 }} pending review
+                        </span>
+                        <span class="hero-pill muted">
+                            <i class="fas fa-check-circle"></i>
+                            {{ stats.approved || 0 }} approved
+                        </span>
+                    </div>
                 </div>
-            </header>
 
-            <!-- RFQ Statistics Cards -->
-            <section class="rfq-stats">
-                <div class="stat-card">
-                    <h4>Pending Review</h4>
-                    <p class="stat-value">{{ stats.pending || '0' }}</p>
-                    <span class="stat-icon pending"><i class="fas fa-clock"></i></span>
-                </div>
-                <div class="stat-card">
-                    <h4>Quoted</h4>
-                    <p class="stat-value">{{ stats.quoted || '0' }}</p>
-                    <span class="stat-icon quoted"><i class="fas fa-file-invoice"></i></span>
-                </div>
-                <div class="stat-card">
-                    <h4>Approved</h4>
-                    <p class="stat-value">{{ stats.approved || '0' }}</p>
-                    <span class="stat-icon approved"><i class="fas fa-check-circle"></i></span>
-                </div>
-                <div class="stat-card">
-                    <h4>Total Value</h4>
-                    <p class="stat-value">KSH {{ formatCurrency(stats.totalValue || 0) }}</p>
-                    <span class="stat-icon value"><i class="fas fa-money-bill-wave"></i></span>
+                <div class="hero-action-card">
+                    <div class="hero-action-copy">
+                        <span class="section-kicker">Queue Health</span>
+                        <h3>{{ rfqs.total }} request{{ rfqs.total === 1 ? '' : 's' }} matched</h3>
+                        <p>{{ heroSummaryText }}</p>
+                    </div>
+
+                    <div class="hero-action-grid">
+                        <div class="hero-action-tile">
+                            <span>Awaiting quote</span>
+                            <strong>{{ stats.pending || 0 }}</strong>
+                        </div>
+                        <div class="hero-action-tile">
+                            <span>On this page</span>
+                            <strong>{{ rfqs.data.length }}</strong>
+                        </div>
+                    </div>
+
+                    <div class="hero-action-note">
+                        <span>Current page</span>
+                        <strong>{{ rfqs.last_page ? `${rfqs.current_page} / ${rfqs.last_page}` : '0 / 0' }}</strong>
+                    </div>
                 </div>
             </section>
 
-            <!-- RFQ List -->
-            <section class="rfq-list-section">
-                <div class="panel-card">
-                    <div class="card-header">
-                        <h3>Service Requests</h3>
-                        <div class="header-controls" style="display: flex; gap: 1rem; align-items: center;">
-                            <select v-model="sortOrder" class="status-filter" style="padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px;">
+            <!-- Stats Cards -->
+            <section class="rfq-stats">
+                <article class="stat-card tone-amber">
+                    <div class="stat-topline">
+                        <span class="stat-tag">Pending</span>
+                        <span class="stat-icon pending"><i class="fas fa-clock"></i></span>
+                    </div>
+                    <h4>Pending Review</h4>
+                    <p class="stat-value">{{ stats.pending || 0 }}</p>
+                    <span class="stat-footnote">Requests waiting for quotation work.</span>
+                </article>
+
+                <article class="stat-card tone-blue">
+                    <div class="stat-topline">
+                        <span class="stat-tag">Quoted</span>
+                        <span class="stat-icon quoted"><i class="fas fa-file-invoice"></i></span>
+                    </div>
+                    <h4>Awaiting Approval</h4>
+                    <p class="stat-value">{{ stats.quoted || 0 }}</p>
+                    <span class="stat-footnote">Quotes already sent to clients for review.</span>
+                </article>
+
+                <article class="stat-card tone-green">
+                    <div class="stat-topline">
+                        <span class="stat-tag">Approved</span>
+                        <span class="stat-icon approved"><i class="fas fa-check-circle"></i></span>
+                    </div>
+                    <h4>Approved RFQs</h4>
+                    <p class="stat-value">{{ stats.approved || 0 }}</p>
+                    <span class="stat-footnote">Ready for follow-up, assignment, or payment action.</span>
+                </article>
+
+                <article class="stat-card tone-slate">
+                    <div class="stat-topline">
+                        <span class="stat-tag">Value</span>
+                        <span class="stat-icon value"><i class="fas fa-money-bill-wave"></i></span>
+                    </div>
+                    <h4>Approved Value</h4>
+                    <p class="stat-value">KSH {{ formatCurrency(stats.totalValue || 0) }}</p>
+                    <span class="stat-footnote">Approved quotation value across the RFQ pipeline.</span>
+                </article>
+            </section>
+
+            <!-- Toolbar / Filters -->
+            <section class="rfq-toolbar-section">
+                <div class="panel-card toolbar-shell">
+                    <div class="toolbar-header">
+                        <div>
+                            <span class="section-kicker">Filters</span>
+                            <h3>Find the right request faster</h3>
+                            <p>Search by client, request ID, service, description, or location, then refine the list with filters and page size.</p>
+                        </div>
+                    </div>
+
+                    <div class="toolbar-grid">
+                        <label class="search-shell toolbar-field toolbar-field-wide">
+                            <i class="fas fa-search"></i>
+                            <input
+                                v-model="localSearch"
+                                type="text"
+                                placeholder="Search by client, request ID, service, location..."
+                                @keyup.enter="applyFilters"
+                            >
+                        </label>
+
+                        <label class="toolbar-field">
+                            <span>Status</span>
+                            <select v-model="localStatus" @change="applyFilters" class="status-filter">
+                                <option value="all">All Requests</option>
+                                <option value="pending">Pending Review</option>
+                                <option value="quoted">Awaiting Client Approval</option>
+                                <option value="approved">Approved</option>
+                                <option value="rejected">Rejected</option>
+                            </select>
+                        </label>
+
+                        <label class="toolbar-field">
+                            <span>Sort</span>
+                            <select v-model="localSort" @change="applyFilters" class="status-filter">
                                 <option value="newest">Newest First</option>
                                 <option value="oldest">Oldest First</option>
                             </select>
-                            <div class="search-box">
-                                <i class="fas fa-search"></i>
-                                <input v-model="searchTerm" type="text" placeholder="Search by name, service...">
-                            </div>
+                        </label>
+
+                        <label class="toolbar-field">
+                            <span>Rows per page</span>
+                            <select v-model.number="localPerPage" @change="applyFilters" class="status-filter">
+                                <option :value="10">10</option>
+                                <option :value="15">15</option>
+                                <option :value="25">25</option>
+                                <option :value="50">50</option>
+                            </select>
+                        </label>
+                    </div>
+
+                    <div v-if="activeFilterChips.length" class="filter-chip-row">
+                        <span v-for="chip in activeFilterChips" :key="chip" class="filter-chip">{{ chip }}</span>
+                        <button @click="clearFilters" class="clear-chip-btn">Clear filters</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- RFQ Table -->
+            <section class="rfq-list-section">
+                <div class="panel-card table-shell">
+                    <div class="table-shell-header">
+                        <div>
+                            <span class="section-kicker">Requests</span>
+                            <h3>RFQ workspace</h3>
+                            <p>{{ paginationSummary }}</p>
+                        </div>
+                        <div class="table-summary-chips">
+                            <span class="summary-chip">Pending: {{ stats.pending || 0 }}</span>
+                            <span class="summary-chip muted">Quoted: {{ stats.quoted || 0 }}</span>
                         </div>
                     </div>
-                    
-                    <div class="rfq-table">
+
+                    <!-- Desktop Table -->
+                    <div v-if="rfqs.data.length" class="rfq-table desktop-table">
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Request ID</th>
+                                    <th>Request</th>
                                     <th>Client</th>
                                     <th>Service</th>
-                                    <th>Date</th>
+                                    <th>Submitted</th>
+                                    <th>Assigned PM</th>
                                     <th>Status</th>
                                     <th>Quote Amount</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
-
-                                <tr v-for="rfq in paginatedRFQs" :key="rfq.id">
+                                <tr v-for="rfq in rfqs.data" :key="rfq.id" @click="viewRFQ(rfq)" class="table-row-clickable">
                                     <td>
-                                        <strong>{{ rfq.request_id || `REQ-${rfq.id}` }}</strong>
+                                        <div class="request-cell">
+                                            <strong>{{ rfq.request_id || `REQ-${rfq.id}` }}</strong>
+                                            <span class="cell-subtext">{{ rfq.location || 'Location not specified' }}</span>
+                                        </div>
                                     </td>
                                     <td>
                                         <div class="client-info">
                                             <strong>{{ rfq.user?.name || 'N/A' }}</strong>
-                                            <br>
-                                            <small>{{ rfq.user?.email || 'No email' }}</small>
+                                            <span class="cell-subtext">{{ rfq.user?.email || 'No email' }}</span>
                                         </div>
                                     </td>
                                     <td>
                                         <div class="service-info">
                                             <strong>{{ rfq.service_category?.name || 'General Service' }}</strong>
-                                            <br>
-                                            <small>{{ truncateText(rfq.description, 50) }}</small>
+                                            <span class="cell-subtext">{{ truncateText(rfq.description, 72) || 'No description provided' }}</span>
                                         </div>
                                     </td>
-                                    <td>{{ formatDate(rfq.created_at) }}</td>
+                                    <td>
+                                        <div class="request-cell">
+                                            <strong>{{ formatDate(rfq.created_at) }}</strong>
+                                            <span class="cell-subtext">{{ getDaysOpenLabel(rfq.created_at) }}</span>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <span v-if="rfq.assigned_pm" class="pm-badge">
+                                            <i class="fas fa-user-tie"></i> {{ rfq.assigned_pm.name }}
+                                        </span>
+                                        <span v-else class="no-pm">Unassigned</span>
+                                    </td>
                                     <td>
                                         <span :class="['status-badge', rfq.rfq_status || 'pending']">
                                             {{ getStatusLabel(rfq.rfq_status || 'pending') }}
                                         </span>
                                     </td>
                                     <td>
-                                        <span v-if="rfq.quote_amount" class="quote-amount">
+                                        <span v-if="rfq.quote_amount" class="quote-amount-text">
                                             KSH {{ formatCurrency(rfq.quote_amount) }}
                                         </span>
-                                        <span v-else class="no-quote">-</span>
+                                        <span v-else class="no-quote">Not quoted</span>
                                     </td>
-                                    <td>
+                                    <td @click.stop>
                                         <div class="action-buttons">
                                             <button @click="viewRFQ(rfq)" class="btn btn-sm btn-info" title="View Details">
                                                 <i class="fas fa-eye"></i>
@@ -148,53 +236,125 @@
                                             <button v-if="rfq.rfq_status === 'approved'" @click="initiatePaymentRequest(rfq)" class="btn btn-sm btn-success" title="Request Payment">
                                                 <i class="fas fa-hand-holding-usd"></i>
                                             </button>
-                                            <button v-if="rfq.rfq_status === 'quoted'" @click="viewQuote(rfq)" class="btn btn-sm btn-success" title="View Quote">
+                                            <button v-if="rfq.rfq_status === 'quoted'" @click="viewRFQ(rfq)" class="btn btn-sm btn-success" title="View Quote">
                                                 <i class="fas fa-receipt"></i>
                                             </button>
-
                                         </div>
                                     </td>
                                 </tr>
                             </tbody>
                         </table>
-                        
-                        <div v-if="filteredRFQs.length > itemsPerPage" class="pagination-controls" style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; border-top: 1px solid #dee2e6;">
-                            <div class="pagination-info">
-                                Showing {{ ((currentPage - 1) * itemsPerPage) + 1 }} - {{ Math.min(currentPage * itemsPerPage, filteredRFQs.length) }} of {{ filteredRFQs.length }}
+                    </div>
+
+                    <!-- Mobile Cards -->
+                    <div v-if="rfqs.data.length" class="mobile-rfq-list">
+                        <article v-for="rfq in rfqs.data" :key="rfq.id" class="mobile-rfq-card">
+                            <div class="mobile-card-top">
+                                <div>
+                                    <h4>{{ rfq.request_id || `REQ-${rfq.id}` }}</h4>
+                                    <p>{{ rfq.service_category?.name || 'General Service' }}</p>
+                                </div>
+                                <span :class="['status-badge', rfq.rfq_status || 'pending']">
+                                    {{ getStatusLabel(rfq.rfq_status || 'pending') }}
+                                </span>
                             </div>
-                            <div class="pagination-buttons" style="display: flex; gap: 0.5rem;">
-                                <button 
-                                    @click="currentPage--" 
-                                    :disabled="currentPage === 1"
-                                    class="btn-pagination"
-                                    style="padding: 0.5rem 1rem; border: 1px solid #dee2e6; background: white; border-radius: 4px; cursor: pointer;"
-                                    :style="{ opacity: currentPage === 1 ? '0.5' : '1' }"
-                                >
-                                    Previous
+
+                            <div class="mobile-rfq-grid">
+                                <div>
+                                    <span>Client</span>
+                                    <strong>{{ rfq.user?.name || 'N/A' }}</strong>
+                                </div>
+                                <div>
+                                    <span>Submitted</span>
+                                    <strong>{{ formatDate(rfq.created_at) }}</strong>
+                                </div>
+                                <div>
+                                    <span>Location</span>
+                                    <strong>{{ rfq.location || 'Not specified' }}</strong>
+                                </div>
+                                <div>
+                                    <span>Quote</span>
+                                    <strong>{{ rfq.quote_amount ? `KSH ${formatCurrency(rfq.quote_amount)}` : 'Not quoted' }}</strong>
+                                </div>
+                            </div>
+
+                            <p class="mobile-description">{{ truncateText(rfq.description, 120) || 'No description provided.' }}</p>
+
+                            <div class="action-buttons mobile-actions">
+                                <button @click="viewRFQ(rfq)" class="btn btn-sm btn-info">
+                                    <i class="fas fa-eye"></i> View
                                 </button>
-                                <button 
-                                    @click="currentPage++" 
-                                    :disabled="currentPage === totalPages"
-                                    class="btn-pagination"
-                                    style="padding: 0.5rem 1rem; border: 1px solid #dee2e6; background: white; border-radius: 4px; cursor: pointer;"
-                                    :style="{ opacity: currentPage === totalPages ? '0.5' : '1' }"
-                                >
-                                    Next
+                                <button v-if="rfq.rfq_status === 'pending'" @click="reviewRFQ(rfq)" class="btn btn-sm btn-primary">
+                                    <i class="fas fa-file-invoice-dollar"></i> Quote
+                                </button>
+                                <button v-if="rfq.rfq_status === 'approved'" @click="initiatePaymentRequest(rfq)" class="btn btn-sm btn-success">
+                                    <i class="fas fa-hand-holding-usd"></i> Payment
                                 </button>
                             </div>
+                        </article>
+                    </div>
+
+                    <!-- Server-side Pagination -->
+                    <div v-if="rfqs.data.length && rfqs.last_page > 1" class="pagination-shell">
+                        <div class="pagination-info">
+                            {{ paginationSummary }}
                         </div>
 
-                        <div v-if="filteredRFQs.length === 0" class="no-data">
-                            <i class="fas fa-inbox"></i>
-                            <p>No RFQ requests found</p>
+                        <div class="pagination-controls">
+                            <button
+                                @click="goToPage(1)"
+                                :disabled="rfqs.current_page === 1"
+                                class="btn-pagination"
+                            >
+                                <i class="fas fa-angle-double-left"></i>
+                            </button>
+                            <button
+                                @click="goToPage(rfqs.current_page - 1)"
+                                :disabled="rfqs.current_page === 1"
+                                class="btn-pagination"
+                            >
+                                <i class="fas fa-angle-left"></i> Prev
+                            </button>
+
+                            <div class="page-number-row">
+                                <button
+                                    v-for="page in visiblePageNumbers"
+                                    :key="page"
+                                    @click="goToPage(page)"
+                                    :class="['page-number-btn', { active: page === rfqs.current_page }]"
+                                >
+                                    {{ page }}
+                                </button>
+                            </div>
+
+                            <button
+                                @click="goToPage(rfqs.current_page + 1)"
+                                :disabled="rfqs.current_page === rfqs.last_page"
+                                class="btn-pagination"
+                            >
+                                Next <i class="fas fa-angle-right"></i>
+                            </button>
+                            <button
+                                @click="goToPage(rfqs.last_page)"
+                                :disabled="rfqs.current_page === rfqs.last_page"
+                                class="btn-pagination"
+                            >
+                                <i class="fas fa-angle-double-right"></i>
+                            </button>
                         </div>
+                    </div>
+
+                    <!-- Empty State -->
+                    <div v-if="rfqs.data.length === 0" class="no-data">
+                        <i class="fas fa-inbox"></i>
+                        <p>No RFQ requests found</p>
+                        <span>Try clearing one or more filters to widen the list.</span>
                     </div>
                 </div>
             </section>
         </main>
 
-
-    <!-- View RFQ Details Modal -->
+        <!-- View RFQ Details Modal -->
         <div v-if="showViewModal" class="modal-overlay" @click="closeViewModal">
             <div class="modal-content large" @click.stop>
                 <div class="modal-header">
@@ -206,7 +366,6 @@
 
                 <div class="modal-body">
                     <div class="view-grid">
-                        <!-- Request Information -->
                         <div class="info-section">
                             <h4>Request Information</h4>
                             <div class="info-grid">
@@ -247,34 +406,29 @@
                             </div>
                         </div>
 
-                        <!-- Attached Files (if any) -->
-                        <div v-if="selectedRFQ?.files && selectedRFQ.files.length > 0" class="files-section" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #eee;">
-                            <h4 style="margin-bottom: 1rem; color: #444; font-size: 1rem;">Attached Files</h4>
-                            <div class="files-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem;">
-                                <div v-for="(file, index) in selectedRFQ.files" :key="index" class="file-card" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px;">
-                                    <div class="file-icon" style="font-size: 1.5rem; color: var(--primary-color);">
+                        <!-- Attached Files -->
+                        <div v-if="selectedRFQ?.files && selectedRFQ.files.length > 0" class="info-section">
+                            <h4>Attached Files</h4>
+                            <div class="files-grid">
+                                <div v-for="(file, index) in selectedRFQ.files" :key="index" class="file-card">
+                                    <div class="file-icon">
                                         <i class="fas fa-file-image" v-if="file.mime_type?.includes('image')"></i>
                                         <i class="fas fa-file-pdf" v-else-if="file.mime_type?.includes('pdf')"></i>
-                                        <i class="fas fa-file-word" v-else-if="file.mime_type?.includes('word') || file.mime_type?.includes('doc')"></i>
                                         <i class="fas fa-file-alt" v-else></i>
                                     </div>
-                                    <div class="file-info" style="flex: 1; min-width: 0;">
-                                        <div class="file-name" style="font-weight: 500; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" :title="file.name">
-                                            {{ file.name || 'Attachment' }}
-                                        </div>
-                                        <a :href="`/storage/${file.path}`" target="_blank" download class="file-action" style="font-size: 0.8rem; color: var(--primary-color); text-decoration: none;">
-                                            Download
-                                        </a>
+                                    <div class="file-info">
+                                        <div class="file-name" :title="file.name">{{ file.name || 'Attachment' }}</div>
+                                        <a :href="`/storage/${file.path}`" target="_blank" download class="file-action">Download</a>
                                     </div>
                                 </div>
                             </div>
                         </div>
 
-                        <!-- Quote Information (if exists) -->
+                        <!-- Quote Information -->
                         <div v-if="selectedRFQ?.rfq_status === 'quoted' || selectedRFQ?.rfq_status === 'approved'" class="quote-section">
                             <h4>Quotation Details</h4>
                             <div class="quote-display">
-                                <div class="quote-amount">
+                                <div class="quote-amount-bar">
                                     <span class="label">Total Amount:</span>
                                     <span class="amount">KSH {{ formatCurrency(selectedRFQ?.quote_amount) }}</span>
                                 </div>
@@ -284,7 +438,7 @@
                                     <div class="materials-list-view">
                                         <div v-for="material in selectedRFQ.quote_materials" :key="material.name" class="material-item-view">
                                             <span class="name">{{ material.name }}</span>
-                                            <span class="details">{{ material.quantity }} × KSH {{ formatCurrency(material.unit_price) }} = KSH {{ formatCurrency(material.quantity * material.unit_price) }}</span>
+                                            <span class="details">{{ material.quantity }} x KSH {{ formatCurrency(material.unit_price) }} = KSH {{ formatCurrency(material.quantity * material.unit_price) }}</span>
                                         </div>
                                     </div>
                                     <div v-if="selectedRFQ?.quote_materials_file_path" style="margin-top: 0.75rem;">
@@ -308,7 +462,7 @@
                             </div>
                         </div>
 
-                        <!-- Rejection Reason (if rejected) -->
+                        <!-- Rejection Reason -->
                         <div v-if="selectedRFQ?.rfq_status === 'rejected'" class="rejection-section">
                             <h4>Rejection Information</h4>
                             <div class="rejection-display">
@@ -338,7 +492,6 @@
                 </div>
 
                 <div class="modal-body">
-                    <!-- Request Summary -->
                     <div class="request-summary">
                         <div class="summary-card">
                             <h4><i class="fas fa-user"></i> {{ selectedRFQ?.user?.name }}</h4>
@@ -348,10 +501,8 @@
                         </div>
                     </div>
 
-                    <!-- Quotation Form -->
                     <div class="quotation-form-section">
                         <form @submit.prevent="submitQuote">
-                            <!-- Materials Section -->
                             <div class="form-section">
                                 <h4><i class="fas fa-boxes"></i> Materials Required</h4>
                                 <div class="materials-container">
@@ -372,19 +523,13 @@
                                 </div>
                                 <div class="form-group" style="margin-top: 1rem;">
                                     <label><i class="fas fa-file-upload"></i> Upload Materials List (Optional)</label>
-                                    <input 
-                                        type="file" 
-                                        @change="e => quotationForm.materials_file = e.target.files[0]" 
-                                        accept=".pdf,.docx,.xlsx,.xls"
-                                        class="form-control"
-                                    >
+                                    <input type="file" @change="e => quotationForm.materials_file = e.target.files[0]" accept=".pdf,.docx,.xlsx,.xls" class="form-control">
                                     <small style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.25rem; display: block;">
                                         Upload PDF, DOCX, or Excel file if materials list is too long (Max 10MB)
                                     </small>
                                 </div>
                             </div>
 
-                            <!-- Labor & Notes Section -->
                             <div class="form-section">
                                 <div class="form-row">
                                     <div class="form-group">
@@ -398,7 +543,6 @@
                                 </div>
                             </div>
 
-                            <!-- Cost Summary -->
                             <div class="cost-summary-section">
                                 <div class="cost-summary-card">
                                     <h4><i class="fas fa-calculator"></i> Cost Summary</h4>
@@ -426,9 +570,7 @@
                     <button type="button" @click="rejectRFQ" class="btn btn-danger">
                         <i class="fas fa-times"></i> Reject Request
                     </button>
-                    <button @click="closeReviewModal" class="btn btn-secondary">
-                        Cancel
-                    </button>
+                    <button @click="closeReviewModal" class="btn btn-secondary">Cancel</button>
                     <button @click="submitQuote" class="btn btn-success" :disabled="!canSubmitQuote">
                         <i class="fas fa-paper-plane"></i> Send Quotation
                     </button>
@@ -445,55 +587,56 @@
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
-                
+
                 <form @submit.prevent="submitPaymentRequest">
                     <div class="modal-body">
-                        <div class="alert alert-info">
-                            <i class="fas fa-info-circle"></i>
-                            Requesting payment for RFQ <strong>{{ selectedRFQ?.request_id }}</strong>
-                            (Total: KSH {{ formatCurrency(selectedRFQ?.quote_amount) }})
+                        <div class="payment-request-info">
+                            <div class="info-row">
+                                <span class="label">Request ID:</span>
+                                <span class="value">{{ selectedRFQ?.request_id }}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Client:</span>
+                                <span class="value">{{ selectedRFQ?.user?.name }}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Total Quote Amount:</span>
+                                <span class="value highlight">KSH {{ formatCurrency(selectedRFQ?.quote_amount) }}</span>
+                            </div>
                         </div>
 
                         <div class="form-group">
                             <label>Payment Percentage (%)</label>
-                            <input 
-                                v-model.number="paymentRequestForm.percentage" 
-                                type="number" 
-                                min="1" 
-                                max="100" 
-                                class="form-control" 
+                            <input
+                                v-model.number="paymentRequestForm.percentage"
+                                type="number"
+                                min="1"
+                                max="100"
+                                class="form-control"
                                 required
-                                @input="calculatePaymentAmount"
                             >
                         </div>
 
-                        <div class="form-group">
-                            <label>Amount to Request (KSH)</label>
-                            <input 
-                                :value="formatCurrency(paymentRequestForm.amount)"
-                                type="text" 
-                                class="form-control" 
-                                readonly
-                                disabled
-                                style="background-color: #f3f4f6;"
-                            >
+                        <div class="calculated-amount" v-if="paymentRequestForm.percentage > 0">
+                            <span class="label">Amount to Request:</span>
+                            <span class="amount">KSH {{ formatCurrency(calculatedPaymentAmount) }}</span>
                         </div>
-                        
+
                         <div class="form-group">
-                            <label>Notes for Client</label>
-                            <textarea 
-                                v-model="paymentRequestForm.notes" 
-                                class="form-control" 
-                                rows="3" 
+                            <label>Notes for Client (Optional)</label>
+                            <textarea
+                                v-model="paymentRequestForm.notes"
+                                class="form-control"
+                                rows="3"
                                 placeholder="E.g., 50% deposit required before work begins..."
                             ></textarea>
                         </div>
                     </div>
-                    
+
                     <div class="modal-footer">
                         <button type="button" @click="closePaymentModal" class="btn btn-secondary">Cancel</button>
-                        <button type="submit" class="btn btn-success">
-                            <i class="fas fa-paper-plane"></i> Send Request
+                        <button type="submit" class="btn btn-success" :disabled="!canSubmitPaymentRequest || isSubmittingPayment">
+                            <i class="fas fa-paper-plane"></i> {{ isSubmittingPayment ? 'Sending...' : 'Send Payment Request' }}
                         </button>
                     </div>
                 </form>
@@ -525,984 +668,443 @@
                 </div>
             </div>
         </div>
-
-        <!-- Payment Request Modal -->
-        <div v-if="showPaymentRequestModal" class="modal-overlay" @click="closePaymentRequestModal">
-            <div class="modal-content" @click.stop>
-                <div class="modal-header">
-                    <h3>Request Payment</h3>
-                    <button @click="closePaymentRequestModal" class="modal-close">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-
-                <div class="modal-body">
-                    <div class="payment-request-info">
-                        <div class="info-row">
-                            <span class="label">Request ID:</span>
-                            <span class="value">{{ selectedRFQ?.request_id }}</span>
-                        </div>
-                        <div class="info-row">
-                            <span class="label">Client:</span>
-                            <span class="value">{{ selectedRFQ?.user?.name }}</span>
-                        </div>
-                        <div class="info-row">
-                            <span class="label">Total Quote Amount:</span>
-                            <span class="value highlight">KSH {{ formatCurrency(selectedRFQ?.quote_amount) }}</span>
-                        </div>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Payment Percentage (%):</label>
-                        <input
-                            v-model="paymentRequestForm.percentage"
-                            type="number"
-                            min="1"
-                            max="100"
-                            class="form-control"
-                            placeholder="Enter percentage (e.g., 50 for 50%)"
-                        >
-                        <small class="form-help">Enter the percentage of the total amount to request from the client.</small>
-                    </div>
-
-                    <div class="calculated-amount" v-if="paymentRequestForm.percentage > 0">
-                        <span class="label">Amount to Request:</span>
-                        <span class="amount">KSH {{ formatCurrency(calculatedPaymentAmount) }}</span>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Notes (Optional):</label>
-                        <textarea
-                            v-model="paymentRequestForm.notes"
-                            class="form-control"
-                            rows="3"
-                            placeholder="Any additional notes for the client..."
-                        ></textarea>
-                    </div>
-                </div>
-
-                <div class="modal-footer">
-                    <button @click="closePaymentRequestModal" class="btn btn-secondary">Cancel</button>
-                    <button
-                        @click="submitPaymentRequest"
-                        class="btn btn-success"
-                        :disabled="!canSubmitPaymentRequest || isSubmittingPayment"
-                    >
-                        <i class="fas fa-paper-plane"></i> {{ isSubmittingPayment ? 'Sending...' : 'Send Payment Request' }}
-                    </button>
-                </div>
-            </div>
-        </div>
     </div>
 </template>
 
 <script setup>
-import { Link } from '@inertiajs/vue3'
-import { ref, computed, onMounted, watch } from 'vue'
+import AdminSidebar from '../../Components/AdminSidebar.vue'
+import { ref, computed } from 'vue'
 import { router } from '@inertiajs/vue3'
 import axios from 'axios'
 
 const props = defineProps({
-    rfqs: {
-        type: Array,
-        default: () => []
-    },
-    stats: {
-        type: Object,
-        default: () => ({
-            pending: 0,
-            quoted: 0,
-            approved: 0,
-            totalValue: 0
-        })
-    }
+    rfqs: { type: Object, default: () => ({ data: [], current_page: 1, last_page: 1, total: 0, from: 0, to: 0 }) },
+    stats: { type: Object, default: () => ({ pending: 0, quoted: 0, approved: 0, rejected: 0, total: 0, totalValue: 0 }) },
+    filters: { type: Object, default: () => ({ search: '', status: 'all', sort: 'newest', per_page: 15 }) },
 })
 
-const searchTerm = ref('')
-const statusFilter = ref('all')
+// Local filter state (bound to inputs)
+const localSearch = ref(props.filters.search || '')
+const localStatus = ref(props.filters.status || 'all')
+const localSort = ref(props.filters.sort || 'newest')
+const localPerPage = ref(props.filters.per_page || 15)
+
+// Modal state
 const showViewModal = ref(false)
 const showReviewModal = ref(false)
 const showRejectModal = ref(false)
-const showPaymentRequestModal = ref(false)
+const showPaymentModal = ref(false)
 const selectedRFQ = ref(null)
 const rejectionReason = ref('')
-const sortOrder = ref('newest')
 const isSubmittingPayment = ref(false)
-const showPaymentModal = ref(false)
-
-
-
-// Pagination
-const currentPage = ref(1)
-const itemsPerPage = 15
 
 const quotationForm = ref({
     materials: [{ name: '', quantity: 1, unit_price: 0 }],
-
     labor_cost: 0,
     notes: '',
-    materials_file: null
+    materials_file: null,
 })
 
 const paymentRequestForm = ref({
     percentage: 50,
-    amount: 0,
-    notes: ''
+    notes: '',
 })
 
-const filteredRFQs = computed(() => {
-    let filtered = props.rfqs
-    
-    if (searchTerm.value) {
-        const search = searchTerm.value.toLowerCase()
-        filtered = filtered.filter(rfq => 
-            rfq.user?.name?.toLowerCase().includes(search) ||
-            rfq.service_category?.name?.toLowerCase().includes(search) ||
-            rfq.description?.toLowerCase().includes(search)
-        )
-
-    }
-    
-    if (statusFilter.value !== 'all') {
-        filtered = filtered.filter(rfq => (rfq.rfq_status || 'pending') === statusFilter.value)
-    }
-
-    return filtered.sort((a, b) => {
-        const dateA = new Date(a.created_at)
-        const dateB = new Date(b.created_at)
-        return sortOrder.value === 'newest' ? dateB - dateA : dateA - dateB
+// --- Server-side pagination / filtering ---
+const applyFilters = () => {
+    router.get('/admin/rfq', {
+        search: localSearch.value || undefined,
+        status: localStatus.value !== 'all' ? localStatus.value : undefined,
+        sort: localSort.value !== 'newest' ? localSort.value : undefined,
+        per_page: localPerPage.value !== 15 ? localPerPage.value : undefined,
+    }, {
+        preserveState: true,
+        preserveScroll: true,
+        replace: true,
     })
+}
+
+const goToPage = (page) => {
+    if (page < 1 || page > props.rfqs.last_page) return
+    router.get('/admin/rfq', {
+        page,
+        search: localSearch.value || undefined,
+        status: localStatus.value !== 'all' ? localStatus.value : undefined,
+        sort: localSort.value !== 'newest' ? localSort.value : undefined,
+        per_page: localPerPage.value !== 15 ? localPerPage.value : undefined,
+    }, {
+        preserveState: true,
+        preserveScroll: true,
+        replace: true,
+    })
+}
+
+const clearFilters = () => {
+    localSearch.value = ''
+    localStatus.value = 'all'
+    localSort.value = 'newest'
+    localPerPage.value = 15
+    router.get('/admin/rfq', {}, { preserveState: true, preserveScroll: true, replace: true })
+}
+
+// --- Computed ---
+const paginationSummary = computed(() => {
+    if (!props.rfqs.total) return 'No RFQs match the current view.'
+    return `Showing ${props.rfqs.from}-${props.rfqs.to} of ${props.rfqs.total} requests`
 })
 
-const totalPages = computed(() => Math.ceil(filteredRFQs.value.length / itemsPerPage))
-
-const paginatedRFQs = computed(() => {
-    const start = (currentPage.value - 1) * itemsPerPage
-    const end = start + itemsPerPage
-    return filteredRFQs.value.slice(start, end)
+const heroSummaryText = computed(() => {
+    if (!props.rfqs.total) return 'There are no RFQs in the current view. Adjust filters to widen the queue.'
+    if (props.stats.pending > 0) return `${props.stats.pending} request${props.stats.pending === 1 ? '' : 's'} still need quotation work.`
+    if (props.stats.quoted > 0) return `${props.stats.quoted} quoted request${props.stats.quoted === 1 ? '' : 's'} are waiting on client approval.`
+    return 'The current RFQ list is mostly in completed downstream states.'
 })
 
-// Reset pagination when filters change
-watch([searchTerm, statusFilter, sortOrder], () => {
-    currentPage.value = 1
+const visiblePageNumbers = computed(() => {
+    const total = props.rfqs.last_page
+    if (total <= 1) return []
+    const windowSize = 5
+    let start = Math.max(1, props.rfqs.current_page - 2)
+    let end = Math.min(total, start + windowSize - 1)
+    if (end - start + 1 < windowSize) start = Math.max(1, end - windowSize + 1)
+    const pages = []
+    for (let p = start; p <= end; p++) pages.push(p)
+    return pages
 })
 
-const materialsTotal = computed(() => {
-    return quotationForm.value.materials.reduce((total, material) => {
-        return total + (material.quantity * material.unit_price)
-    }, 0)
+const activeFilterChips = computed(() => {
+    const chips = []
+    if (localSearch.value) chips.push(`Search: ${localSearch.value}`)
+    if (localStatus.value !== 'all') chips.push(`Status: ${getStatusLabel(localStatus.value)}`)
+    if (localSort.value !== 'newest') chips.push('Sort: Oldest first')
+    if (localPerPage.value !== 15) chips.push(`Rows: ${localPerPage.value}`)
+    return chips
 })
 
-const totalQuoteAmount = computed(() => {
-    return materialsTotal.value + (quotationForm.value.labor_cost || 0)
-})
-
-const canSubmitQuote = computed(() => {
-    return quotationForm.value.materials.some(m => m.name && m.quantity > 0 && m.unit_price > 0) &&
-           quotationForm.value.labor_cost >= 0
-})
-
+const materialsTotal = computed(() => quotationForm.value.materials.reduce((t, m) => t + (m.quantity * m.unit_price), 0))
+const totalQuoteAmount = computed(() => materialsTotal.value + (quotationForm.value.labor_cost || 0))
+const canSubmitQuote = computed(() => quotationForm.value.materials.some(m => m.name && m.quantity > 0 && m.unit_price > 0) && quotationForm.value.labor_cost >= 0)
 const calculatedPaymentAmount = computed(() => {
     if (!selectedRFQ.value?.quote_amount || !paymentRequestForm.value.percentage) return 0
     return (paymentRequestForm.value.percentage / 100) * selectedRFQ.value.quote_amount
 })
+const canSubmitPaymentRequest = computed(() => paymentRequestForm.value.percentage > 0 && paymentRequestForm.value.percentage <= 100 && selectedRFQ.value?.id)
 
-const canSubmitPaymentRequest = computed(() => {
-    return paymentRequestForm.value.percentage > 0 &&
-           paymentRequestForm.value.percentage <= 100 &&
-           selectedRFQ.value?.id
-})
-
-const viewRFQ = (rfq) => {
-    selectedRFQ.value = rfq
-    showViewModal.value = true
-}
-
-const closeViewModal = () => {
-    showViewModal.value = false
-    selectedRFQ.value = null
-}
-
-const editRFQ = () => {
-    showViewModal.value = false
-    showReviewModal.value = true
-    resetQuotationForm()
-}
-
-const viewQuote = (rfq) => {
-    selectedRFQ.value = rfq
-    showViewModal.value = true
-}
-
-const reviewRFQ = (rfq) => {
-    selectedRFQ.value = rfq
-    resetQuotationForm()
-    showReviewModal.value = true
-}
-
-const closeReviewModal = () => {
-    showReviewModal.value = false
-    selectedRFQ.value = null
-    resetQuotationForm()
-}
-
-const closeRejectModal = () => {
-    showRejectModal.value = false
-    rejectionReason.value = ''
-}
-
-const openPaymentRequestModal = (rfq) => {
-    selectedRFQ.value = rfq
-    paymentRequestForm.value = {
-        percentage: 50,
-        notes: ''
-    }
-    showPaymentRequestModal.value = true
-}
-
-const closePaymentRequestModal = () => {
-    showPaymentRequestModal.value = false
-    selectedRFQ.value = null
-    paymentRequestForm.value = {
-        percentage: 50,
-        notes: ''
-    }
-}
+// --- Modal actions ---
+const viewRFQ = (rfq) => { selectedRFQ.value = rfq; showViewModal.value = true }
+const closeViewModal = () => { showViewModal.value = false; selectedRFQ.value = null }
+const editRFQ = () => { showViewModal.value = false; showReviewModal.value = true; resetQuotationForm() }
+const reviewRFQ = (rfq) => { selectedRFQ.value = rfq; resetQuotationForm(); showReviewModal.value = true }
+const closeReviewModal = () => { showReviewModal.value = false; selectedRFQ.value = null; resetQuotationForm() }
+const closeRejectModal = () => { showRejectModal.value = false; rejectionReason.value = '' }
+const rejectRFQ = () => { showRejectModal.value = true }
 
 const initiatePaymentRequest = (rfq) => {
     selectedRFQ.value = rfq
-    paymentRequestForm.value = {
-        percentage: 50,
-        amount: (rfq.quote_amount || 0) * 0.5,
-        notes: ''
-    }
+    paymentRequestForm.value = { percentage: 50, notes: '' }
     showPaymentModal.value = true
 }
-
-const closePaymentModal = () => {
-    showPaymentModal.value = false
-    selectedRFQ.value = null
-}
-
-const calculatePaymentAmount = () => {
-    if (selectedRFQ.value && paymentRequestForm.value.percentage) {
-        const percentage = Math.min(Math.max(paymentRequestForm.value.percentage, 0), 100)
-        paymentRequestForm.value.amount = (selectedRFQ.value.quote_amount || 0) * (percentage / 100)
-    }
-}
-
-const submitPaymentRequest = () => {
-    if (!selectedRFQ.value) return
-    
-    isSubmittingPayment.value = true
-
-    axios.post(`/admin/rfq/${selectedRFQ.value.id}/request-payment`, {
-        percentage: paymentRequestForm.value.percentage,
-        notes: paymentRequestForm.value.notes
-    })
-    .then(response => {
-        if (response.data.success) {
-            alert('Payment request sent successfully!')
-            closePaymentModal()
-            // Reload to ensure state consistency (optional but safe)
-            window.location.reload()
-        }
-    })
-    .catch(error => {
-        console.error('Payment request error:', error)
-        alert(error.response?.data?.error || 'Failed to send payment request.')
-    })
-    .finally(() => {
-        isSubmittingPayment.value = false
-    })
-}
+const closePaymentModal = () => { showPaymentModal.value = false; selectedRFQ.value = null }
 
 const resetQuotationForm = () => {
-    quotationForm.value = {
-        materials: [{ name: '', quantity: 1, unit_price: 0 }],
-        labor_cost: 0,
-        labor_cost: 0,
-        notes: '',
-        materials_file: null
-    }
+    quotationForm.value = { materials: [{ name: '', quantity: 1, unit_price: 0 }], labor_cost: 0, notes: '', materials_file: null }
 }
 
-const addMaterial = () => {
-    quotationForm.value.materials.push({ name: '', quantity: 1, unit_price: 0 })
-}
-
-const removeMaterial = (index) => {
-    if (quotationForm.value.materials.length > 1) {
-        quotationForm.value.materials.splice(index, 1)
-    }
-}
+const addMaterial = () => { quotationForm.value.materials.push({ name: '', quantity: 1, unit_price: 0 }) }
+const removeMaterial = (index) => { if (quotationForm.value.materials.length > 1) quotationForm.value.materials.splice(index, 1) }
 
 const submitQuote = () => {
-    const quoteData = {
+    router.post('/admin/rfq/quote', {
         service_request_id: selectedRFQ.value.id,
         materials: quotationForm.value.materials.filter(m => m.name && m.quantity > 0),
         labor_cost: quotationForm.value.labor_cost,
         total_amount: totalQuoteAmount.value,
-        labor_cost: quotationForm.value.labor_cost,
-        total_amount: totalQuoteAmount.value,
         notes: quotationForm.value.notes,
-        materials_file: quotationForm.value.materials_file
-    }
-    
-    router.post('/admin/rfq/quote', quoteData, {
-        onSuccess: () => {
-            closeReviewModal()
-        },
-        onError: (errors) => {
-            console.error('Quote submission failed:', errors)
-        }
+        materials_file: quotationForm.value.materials_file,
+    }, {
+        preserveState: false,
+        onSuccess: () => closeReviewModal(),
+        onError: (errors) => console.error('Quote submission failed:', errors),
     })
-}
-
-const rejectRFQ = () => {
-    showRejectModal.value = true
 }
 
 const confirmReject = () => {
-    router.post(`/admin/rfq/${selectedRFQ.value.id}/reject`, {
-        reason: rejectionReason.value
-    }, {
-        onSuccess: () => {
-            closeRejectModal()
-            closeReviewModal()
-        },
-        onError: (errors) => {
-            console.error('Rejection failed:', errors)
-        }
+    router.post(`/admin/rfq/${selectedRFQ.value.id}/reject`, { reason: rejectionReason.value }, {
+        preserveState: false,
+        onSuccess: () => { closeRejectModal(); closeReviewModal() },
+        onError: (errors) => console.error('Rejection failed:', errors),
     })
 }
 
-const filterRFQs = () => {
-    // Filtering is handled by computed property
+const submitPaymentRequest = () => {
+    if (!selectedRFQ.value) return
+    isSubmittingPayment.value = true
+    axios.post(`/admin/rfq/${selectedRFQ.value.id}/request-payment`, {
+        percentage: paymentRequestForm.value.percentage,
+        notes: paymentRequestForm.value.notes,
+    }).then(response => {
+        if (response.data.success) {
+            alert('Payment request sent successfully!')
+            closePaymentModal()
+            router.reload()
+        }
+    }).catch(error => {
+        console.error('Payment request error:', error)
+        alert(error.response?.data?.error || 'Failed to send payment request.')
+    }).finally(() => { isSubmittingPayment.value = false })
 }
 
-const formatDate = (date) => {
-    if (!date) return 'N/A'
-    return new Date(date).toLocaleDateString()
+// --- Helpers ---
+const formatDate = (date) => date ? new Date(date).toLocaleDateString() : 'N/A'
+const formatCurrency = (amount) => new Intl.NumberFormat('en-KE').format(amount || 0)
+const truncateText = (text, length) => (!text ? '' : text.length > length ? text.substring(0, length) + '...' : text)
+
+const getDaysOpenLabel = (date) => {
+    if (!date) return 'Date unavailable'
+    const days = Math.max(0, Math.floor((Date.now() - new Date(date).getTime()) / 86400000))
+    if (days === 0) return 'Opened today'
+    if (days === 1) return 'Opened 1 day ago'
+    return `Opened ${days} days ago`
 }
 
-const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-KE').format(amount || 0)
-}
+const getStatusLabel = (status) => ({ pending: 'Pending Review', quoted: 'Awaiting Approval', approved: 'Approved', rejected: 'Rejected' })[status] || 'Unknown'
 
-const truncateText = (text, length) => {
-    if (!text) return ''
-    return text.length > length ? text.substring(0, length) + '...' : text
-}
-
-const getStatusLabel = (status) => {
-    const labels = {
-        pending: 'Pending Review',
-        quoted: 'Awaiting Approval',
-        approved: 'Approved',
-        rejected: 'Rejected'
-    }
-    return labels[status] || 'Unknown'
-}
-
-defineOptions({
-    layout: null
-})
+defineOptions({ layout: null })
 </script>
 
 <style>
 @import url('../../../css/dashboard-app.css');
 
-/* RFQ specific styles */
-.rfq-stats {
+.rfq-page {
+    background:
+        radial-gradient(circle at top right, rgba(14, 165, 233, 0.1), transparent 24rem),
+        linear-gradient(180deg, #f8fbfd 0%, #f3f6f8 100%);
+}
+
+.rfq-hero, .rfq-stats, .hero-action-grid, .toolbar-grid, .mobile-rfq-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1rem;
+}
+
+.rfq-hero {
+    grid-template-columns: minmax(0, 1.7fr) minmax(320px, 1fr);
     gap: 1.5rem;
-    margin-bottom: 2rem;
-}
-
-/* View Modal Styles */
-.view-grid {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 2rem;
-}
-
-.info-section,
-.quote-section,
-.rejection-section {
-    background: #f8f9fa;
-    padding: 1.5rem;
-    border-radius: 8px;
-    border: 1px solid #e9ecef;
-}
-
-.info-section h4,
-.quote-section h4,
-.rejection-section h4 {
-    margin-bottom: 1rem;
-    color: var(--primary-color);
-    border-bottom: 2px solid var(--primary-color);
-    padding-bottom: 0.5rem;
-}
-
-.quote-display {
-    background: white;
-    padding: 1rem;
-    border-radius: 6px;
-    border: 1px solid #dee2e6;
-}
-
-.quote-amount {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
     margin-bottom: 1.5rem;
-    padding: 1rem;
-    background: #e8f4fd;
-    border-radius: 6px;
 }
 
-.quote-amount .label {
-    font-weight: 600;
-    color: var(--text-color);
+.hero-copy, .hero-action-card, .stat-card, .toolbar-shell, .table-shell, .mobile-rfq-card {
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    box-shadow: 0 20px 45px rgba(15, 23, 42, 0.05);
 }
 
-.quote-amount .amount {
-    font-size: 1.5rem;
-    font-weight: bold;
-    color: var(--success-color);
+.hero-copy {
+    padding: 2rem;
+    border-radius: 26px;
+    background: linear-gradient(135deg, rgba(0, 51, 75, 0.97), rgba(7, 89, 133, 0.92)), #00334b;
+    color: #f8fafc;
 }
 
-.materials-display h5 {
-    color: var(--text-color);
-    margin-bottom: 0.75rem;
-    font-size: 1rem;
-}
-
-.materials-list-view {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-}
-
-.material-item-view {
-    display: flex;
-    justify-content: space-between;
+.hero-kicker, .section-kicker {
+    display: inline-flex;
     align-items: center;
-    padding: 0.75rem;
-    background: #f8f9fa;
-    border: 1px solid #e9ecef;
-    border-radius: 4px;
+    font-size: 0.76rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
 }
 
-.material-item-view .name {
-    font-weight: 500;
-    color: var(--text-color);
-}
+.hero-kicker { color: rgba(226, 232, 240, 0.82); }
+.section-kicker { color: #0f6c8f; }
 
-.material-item-view .details {
-    color: var(--text-muted);
-    font-size: 0.9rem;
-}
+.hero-copy h1 { margin: 0.85rem 0 0; color: #ffffff; font-size: clamp(2rem, 3vw, 2.5rem); }
+.hero-copy p { margin: 0.9rem 0 0; max-width: 42rem; color: rgba(226, 232, 240, 0.88); line-height: 1.6; }
 
-.cost-summary {
-    border-top: 1px solid #dee2e6;
-    padding-top: 1rem;
-    margin-top: 1rem;
-}
-
-.cost-line {
+.hero-pills, .filter-chip-row, .table-summary-chips, .action-buttons, .mobile-actions, .pagination-controls, .page-number-row, .pagination-shell {
     display: flex;
-    justify-content: space-between;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
+    flex-wrap: wrap;
+    gap: 0.65rem;
 }
+.hero-pills { margin-top: 1.5rem; }
 
-.quote-notes-display {
-    background: #f8f9fa;
-    padding: 1rem;
-    border-radius: 6px;
-    margin-top: 1rem;
-    border-left: 4px solid var(--info-color);
-}
-
-.quote-notes-display h5 {
-    color: var(--info-color);
-    margin-bottom: 0.5rem;
-}
-
-.rejection-display {
-    background: #fee2e2;
-    padding: 1rem;
-    border-radius: 6px;
-    border-left: 4px solid #dc2626;
-}
-
-.rejection-display p {
-    margin: 0;
-    color: #7f1d1d;
-}
-
-.stat-card {
-    background: white;
-    padding: 1.5rem;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    position: relative;
-    overflow: hidden;
-}
-
-.stat-card h4 {
-    margin: 0 0 0.5rem 0;
-    color: var(--text-color);
-    font-size: 0.9rem;
-    font-weight: 500;
-}
-
-.stat-value {
-    font-size: 2rem;
-    font-weight: bold;
-    margin: 0;
-    color: var(--primary-color);
-}
-
-.stat-icon {
-    position: absolute;
-    top: 1rem;
-    right: 1rem;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    display: flex;
+.hero-pill, .summary-chip, .filter-chip {
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    color: white;
-    font-size: 1.2rem;
+    gap: 0.45rem;
+    padding: 0.55rem 0.9rem;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 700;
 }
+.hero-pill { background: rgba(255, 255, 255, 0.12); color: #f8fafc; }
+.hero-pill.muted { background: rgba(15, 23, 42, 0.24); }
 
+.hero-action-card, .toolbar-shell, .table-shell { padding: 1.4rem; border-radius: 24px; background: rgba(255, 255, 255, 0.94); }
+.hero-action-copy h3, .toolbar-header h3, .table-shell-header h3 { margin: 0.35rem 0 0; color: #0f172a; }
+.hero-action-copy p, .toolbar-header p, .table-shell-header p { margin: 0.45rem 0 0; color: #64748b; line-height: 1.55; }
+
+.hero-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 1rem 0 1.1rem; }
+.hero-action-tile, .hero-action-note, .mobile-rfq-grid > div { padding: 1rem; border-radius: 18px; background: #f8fafc; border: 1px solid #e2e8f0; }
+.hero-action-tile span, .hero-action-note span, .toolbar-field span, .cell-subtext, .mobile-rfq-grid span, .pagination-info, .no-data span { color: #64748b; font-size: 0.8rem; }
+.hero-action-tile strong, .hero-action-note strong, .mobile-rfq-grid strong { display: block; margin-top: 0.35rem; color: #0f172a; }
+
+.rfq-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 1.5rem; }
+.stat-card { padding: 1.35rem; border-radius: 22px; position: relative; overflow: hidden; }
+.tone-amber { background: linear-gradient(180deg, rgba(255, 251, 235, 0.98), #ffffff); }
+.tone-blue { background: linear-gradient(180deg, rgba(239, 246, 255, 0.98), #ffffff); }
+.tone-green { background: linear-gradient(180deg, rgba(240, 253, 244, 0.98), #ffffff); }
+.tone-slate { background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), #ffffff); }
+
+.stat-topline { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.9rem; }
+.stat-tag { display: inline-flex; padding: 0.35rem 0.65rem; border-radius: 999px; background: rgba(255, 255, 255, 0.8); color: #475569; font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.stat-card h4 { margin: 0; color: #475569; font-size: 0.92rem; }
+.stat-value { margin: 0.45rem 0 0; font-size: 1.8rem; font-weight: 800; color: #0f172a; }
+.stat-footnote { display: block; margin-top: 0.55rem; color: #64748b; font-size: 0.84rem; line-height: 1.45; }
+.stat-icon { width: 2.8rem; height: 2.8rem; border-radius: 16px; display: flex; align-items: center; justify-content: center; color: white; font-size: 1rem; }
 .stat-icon.pending { background: #F97316; }
 .stat-icon.quoted { background: #2563EB; }
 .stat-icon.approved { background: #16A34A; }
 .stat-icon.value { background: #9333EA; }
 
-.status-filter {
-    padding: 0.5rem 1rem;
-    border: 1px solid var(--border-color);
-    border-radius: 4px;
-    background: white;
-}
+.rfq-toolbar-section { margin-bottom: 1.5rem; }
+.toolbar-grid { grid-template-columns: 2fr 1fr 1fr 0.8fr; margin-top: 1rem; }
+.toolbar-field { display: flex; flex-direction: column; gap: 0.45rem; font-weight: 700; color: #334155; }
+.search-shell { display: inline-flex; align-items: center; gap: 0.65rem; padding: 0.82rem 0.95rem; border-radius: 14px; border: 1px solid #d7dee7; background: #f8fafc; }
+.search-shell input, .status-filter { width: 100%; box-sizing: border-box; padding: 0.82rem 0.95rem; border: 1px solid #d7dee7; border-radius: 14px; background: #f8fafc; color: #0f172a; font: inherit; }
+.search-shell input { padding: 0; border: none; background: transparent; outline: none; }
+.search-shell:focus-within, .status-filter:focus { border-color: rgba(14, 116, 144, 0.45); box-shadow: 0 0 0 4px rgba(14, 116, 144, 0.12); background: #ffffff; outline: none; }
+.filter-chip-row { margin-top: 1rem; }
+.filter-chip { background: #e0f2fe; color: #0f6c8f; }
+.clear-chip-btn { border: none; background: transparent; color: #0f6c8f; font-size: 0.82rem; font-weight: 700; cursor: pointer; }
 
-.rfq-table {
-    overflow-x: auto;
-}
+.table-shell-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.summary-chip { background: #eff6ff; color: #0f6c8f; }
+.summary-chip.muted { background: #fff7ed; color: #c2410c; }
 
-.rfq-table table {
-    width: 100%;
-    border-collapse: collapse;
-}
+.rfq-table { overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 18px; background: #ffffff; }
+.rfq-table table { width: 100%; border-collapse: collapse; }
+.rfq-table th, .rfq-table td { padding: 1rem; text-align: left; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+.rfq-table th { background: #f8fafc; font-weight: 600; color: #475569; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.rfq-table tbody tr { transition: background 0.15s ease; }
+.rfq-table tbody tr:hover, .table-row-clickable:hover { background: #f0f9ff; cursor: pointer; }
 
-.rfq-table th,
-.rfq-table td {
-    padding: 1rem;
-    text-align: left;
-    border-bottom: 1px solid var(--border-color);
-}
+.request-cell, .client-info, .service-info { display: flex; flex-direction: column; gap: 0.2rem; }
+.client-info strong, .service-info strong, .request-cell strong { color: #0f172a; }
 
-.rfq-table th {
-    background: var(--bg-light);
-    font-weight: 600;
-    color: var(--text-color);
-}
+.pm-badge { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.3rem 0.6rem; border-radius: 999px; background: #ede9fe; color: #7c3aed; font-size: 0.8rem; font-weight: 600; }
+.no-pm { color: #94a3b8; font-size: 0.85rem; }
 
-.client-info strong {
-    color: var(--text-color);
-}
+.status-badge { display: inline-flex; align-items: center; justify-content: center; padding: 0.38rem 0.72rem; border-radius: 999px; font-size: 0.8rem; font-weight: 700; white-space: nowrap; }
+.status-badge.pending { background: #FEF3C7; color: #D97706; }
+.status-badge.quoted { background: #DBEAFE; color: #2563EB; }
+.status-badge.approved { background: #D1FAE5; color: #059669; }
+.status-badge.rejected { background: #FEE2E2; color: #DC2626; }
 
-.client-info small {
-    color: var(--text-muted);
-}
+.quote-amount-text { font-weight: 700; color: #166534; }
+.no-quote { color: #94a3b8; }
+.action-buttons { align-items: center; }
 
-.service-info strong {
-    color: var(--text-color);
-}
+.mobile-rfq-list { display: none; gap: 1rem; }
+.mobile-rfq-card { padding: 1rem; border-radius: 20px; background: #ffffff; }
+.mobile-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; }
+.mobile-card-top h4 { margin: 0; color: #0f172a; }
+.mobile-card-top p, .mobile-description { margin: 0.35rem 0 0; color: #64748b; }
+.mobile-rfq-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 1rem; }
+.mobile-description { margin-top: 1rem; line-height: 1.55; }
+.mobile-actions { margin-top: 1rem; }
 
-.service-info small {
-    color: var(--text-muted);
-}
+.pagination-shell { align-items: center; justify-content: space-between; gap: 1rem; padding-top: 1rem; }
+.pagination-controls { align-items: center; }
+.btn-pagination, .page-number-btn { padding: 0.6rem 0.9rem; border-radius: 12px; border: 1px solid #d7dee7; background: #ffffff; color: #334155; font-size: 0.88rem; font-weight: 700; cursor: pointer; transition: border-color 0.2s ease, background-color 0.2s ease, color 0.2s ease; }
+.btn-pagination:hover:not(:disabled), .page-number-btn:hover:not(.active) { border-color: #7dd3fc; background: #f8fbfd; }
+.page-number-btn.active { border-color: #0f6c8f; background: #0f6c8f; color: #ffffff; }
+.btn-pagination:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.status-badge {
-    padding: 0.25rem 0.75rem;
-    border-radius: 20px;
-    font-size: 0.8rem;
-    font-weight: 500;
-    text-transform: capitalize;
-}
+.no-data { text-align: center; padding: 3rem 1rem; color: #94a3b8; border: 1px dashed #cbd5e1; border-radius: 18px; background: #f8fafc; }
+.no-data i { font-size: 3rem; margin-bottom: 1rem; opacity: 0.5; display: block; }
 
-.status-badge.pending {
-    background: #FEF3C7;
-    color: #D97706;
-}
+/* View Modal */
+.view-grid { display: grid; grid-template-columns: 1fr; gap: 2rem; }
+.info-section, .quote-section, .rejection-section { background: #f8f9fa; padding: 1.5rem; border-radius: 8px; border: 1px solid #e9ecef; }
+.info-section h4, .quote-section h4, .rejection-section h4 { margin-bottom: 1rem; color: var(--primary-color); border-bottom: 2px solid var(--primary-color); padding-bottom: 0.5rem; }
+.files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; }
+.file-card { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: #fff; border: 1px solid #e9ecef; border-radius: 6px; }
+.file-icon { font-size: 1.5rem; color: var(--primary-color); }
+.file-info { flex: 1; min-width: 0; }
+.file-name { font-weight: 500; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-action { font-size: 0.8rem; color: var(--primary-color); text-decoration: none; }
+.quote-display { background: white; padding: 1rem; border-radius: 6px; border: 1px solid #dee2e6; }
+.quote-amount-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; padding: 1rem; background: #e8f4fd; border-radius: 6px; }
+.quote-amount-bar .label { font-weight: 600; }
+.quote-amount-bar .amount { font-size: 1.5rem; font-weight: bold; color: var(--success-color); }
+.materials-display h5 { color: var(--text-color); margin-bottom: 0.75rem; font-size: 1rem; }
+.materials-list-view { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+.material-item-view { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px; }
+.material-item-view .name { font-weight: 500; }
+.material-item-view .details { color: var(--text-muted); font-size: 0.9rem; }
+.cost-summary { border-top: 1px solid #dee2e6; padding-top: 1rem; margin-top: 1rem; }
+.cost-line { display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-weight: 500; }
+.quote-notes-display { background: #f8f9fa; padding: 1rem; border-radius: 6px; margin-top: 1rem; border-left: 4px solid var(--info-color); }
+.quote-notes-display h5 { color: var(--info-color); margin-bottom: 0.5rem; }
+.rejection-display { background: #fee2e2; padding: 1rem; border-radius: 6px; border-left: 4px solid #dc2626; }
+.rejection-display p { margin: 0; color: #7f1d1d; }
 
-.status-badge.quoted {
-    background: #DBEAFE;
-    color: #2563EB;
-}
+/* Review Modal */
+.modal-content.large { width: 90%; max-width: 1000px; }
+.modal-content.extra-large { width: 95%; max-width: 1200px; max-height: 90vh; }
+.request-summary { margin-bottom: 2rem; }
+.summary-card { background: #f8f9fa; padding: 1.5rem; border-radius: 8px; border-left: 4px solid var(--primary-color); }
+.summary-card h4 { margin: 0 0 1rem 0; color: var(--primary-color); display: flex; align-items: center; gap: 0.5rem; }
+.summary-card p { margin: 0.5rem 0; }
+.form-section { margin-bottom: 2rem; padding: 1.5rem; background: #fafafa; border-radius: 8px; border: 1px solid #e9ecef; }
+.form-section h4 { margin: 0 0 1.5rem 0; color: var(--primary-color); display: flex; align-items: center; gap: 0.5rem; border-bottom: 2px solid var(--primary-color); padding-bottom: 0.5rem; }
+.materials-container { background: white; padding: 1rem; border-radius: 6px; border: 1px solid #dee2e6; }
+.material-row { margin-bottom: 1rem; }
+.material-inputs { display: grid; grid-template-columns: 2fr 100px 120px 100px 40px; gap: 0.75rem; align-items: center; }
+.material-total { font-weight: 600; color: var(--success-color); text-align: right; font-size: 0.9rem; }
+.btn-remove { background: var(--danger-color); color: white; border: none; border-radius: 4px; padding: 0.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; min-width: 35px; height: 35px; }
+.btn-remove:hover:not(:disabled) { background: #DC2626; }
+.btn-remove:disabled { background: #ccc; cursor: not-allowed; }
+.add-material-btn { margin-top: 1rem; border: 2px dashed var(--primary-color); background: transparent; color: var(--primary-color); padding: 0.75rem 1rem; }
+.add-material-btn:hover { background: var(--primary-color); color: white; }
+.form-row { display: grid; grid-template-columns: 1fr 2fr; gap: 2rem; }
+.form-group { margin-bottom: 1rem; }
+.form-group label { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; color: var(--text-color); margin-bottom: 0.5rem; }
+.cost-summary-section { margin-top: 2rem; }
+.cost-summary-card { background: linear-gradient(135deg, #e8f4fd 0%, #f0f9ff 100%); padding: 1.5rem; border-radius: 8px; border: 1px solid #bae6fd; }
+.cost-summary-card h4 { margin: 0 0 1rem 0; color: var(--primary-color); display: flex; align-items: center; gap: 0.5rem; }
+.cost-breakdown { background: white; padding: 1rem; border-radius: 6px; border: 1px solid #dbeafe; }
+.cost-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid #f1f5f9; }
+.cost-item:last-child { border-bottom: none; }
+.cost-item.total { border-top: 2px solid var(--primary-color); margin-top: 0.5rem; padding-top: 1rem; font-weight: bold; font-size: 1.1rem; color: var(--primary-color); }
 
-.status-badge.approved {
-    background: #D1FAE5;
-    color: #059669;
-}
+/* Payment Modal */
+.payment-request-info { background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem; border: 1px solid #e9ecef; }
+.payment-request-info .info-row { display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid #e9ecef; }
+.payment-request-info .info-row:last-child { border-bottom: none; }
+.payment-request-info .label { color: var(--text-muted); font-weight: 500; }
+.payment-request-info .value { color: var(--text-color); font-weight: 600; }
+.payment-request-info .value.highlight { color: var(--success-color); font-size: 1.1rem; }
+.calculated-amount { background: linear-gradient(135deg, #e8f4fd 0%, #f0f9ff 100%); padding: 1rem; border-radius: 8px; margin: 1rem 0; display: flex; justify-content: space-between; align-items: center; border: 1px solid #bae6fd; }
+.calculated-amount .label { font-weight: 500; }
+.calculated-amount .amount { font-size: 1.5rem; font-weight: bold; color: var(--primary-color); }
 
-.status-badge.rejected {
-    background: #FEE2E2;
-    color: #DC2626;
-}
-
-.quote-amount {
-    font-weight: 600;
-    color: var(--success-color);
-}
-
-.no-quote {
-    color: var(--text-muted);
-}
-
-.action-buttons {
-    display: flex;
-    gap: 0.5rem;
-}
-
-.no-data {
-    text-align: center;
-    padding: 3rem;
-    color: var(--text-muted);
-}
-
-.no-data i {
-    font-size: 3rem;
-    margin-bottom: 1rem;
-    opacity: 0.5;
-}
-
-/* Modal styles */
-.modal-content.large {
-    width: 90%;
-    max-width: 1000px;
-}
-
-.modal-content.extra-large {
-    width: 95%;
-    max-width: 1200px;
-    max-height: 90vh;
-}
-
-/* Request Summary */
-.request-summary {
-    margin-bottom: 2rem;
-}
-
-.summary-card {
-    background: #f8f9fa;
-    padding: 1.5rem;
-    border-radius: 8px;
-    border-left: 4px solid var(--primary-color);
-}
-
-.summary-card h4 {
-    margin: 0 0 1rem 0;
-    color: var(--primary-color);
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.summary-card p {
-    margin: 0.5rem 0;
-    color: var(--text-color);
-}
-
-/* Form Sections */
-.quotation-form-section {
-    background: white;
-}
-
-.form-section {
-    margin-bottom: 2rem;
-    padding: 1.5rem;
-    background: #fafafa;
-    border-radius: 8px;
-    border: 1px solid #e9ecef;
-}
-
-.form-section h4 {
-    margin: 0 0 1.5rem 0;
-    color: var(--primary-color);
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    border-bottom: 2px solid var(--primary-color);
-    padding-bottom: 0.5rem;
-}
-
-/* Materials Container */
-.materials-container {
-    background: white;
-    padding: 1rem;
-    border-radius: 6px;
-    border: 1px solid #dee2e6;
-}
-
-.material-row {
-    margin-bottom: 1rem;
-}
-
-.material-inputs {
-    display: grid;
-    grid-template-columns: 2fr 100px 120px 100px 40px;
-    gap: 0.75rem;
-    align-items: center;
-}
-
-.material-name {
-    font-weight: 500;
-}
-
-.material-qty,
-.material-price {
-    text-align: right;
-}
-
-.material-total {
-    font-weight: 600;
-    color: var(--success-color);
-    text-align: right;
-    font-size: 0.9rem;
-}
-
-.btn-remove {
-    background: var(--danger-color);
-    color: white;
-    border: none;
-    border-radius: 4px;
-    padding: 0.5rem;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 35px;
-    height: 35px;
-}
-
-.btn-remove:hover:not(:disabled) {
-    background: #DC2626;
-}
-
-.btn-remove:disabled {
-    background: #ccc;
-    cursor: not-allowed;
-}
-
-.add-material-btn {
-    margin-top: 1rem;
-    border: 2px dashed var(--primary-color);
-    background: transparent;
-    color: var(--primary-color);
-    padding: 0.75rem 1rem;
-}
-
-.add-material-btn:hover {
-    background: var(--primary-color);
-    color: white;
-}
-
-/* Form Row */
-.form-row {
-    display: grid;
-    grid-template-columns: 1fr 2fr;
-    gap: 2rem;
-}
-
-.form-group {
-    margin-bottom: 1rem;
-}
-
-.form-group label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-weight: 600;
-    color: var(--text-color);
-    margin-bottom: 0.5rem;
-}
-
-/* Cost Summary */
-.cost-summary-section {
-    margin-top: 2rem;
-}
-
-.cost-summary-card {
-    background: linear-gradient(135deg, #e8f4fd 0%, #f0f9ff 100%);
-    padding: 1.5rem;
-    border-radius: 8px;
-    border: 1px solid #bae6fd;
-}
-
-.cost-summary-card h4 {
-    margin: 0 0 1rem 0;
-    color: var(--primary-color);
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.cost-breakdown {
-    background: white;
-    padding: 1rem;
-    border-radius: 6px;
-    border: 1px solid #dbeafe;
-}
-
-.cost-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid #f1f5f9;
-}
-
-.cost-item:last-child {
-    border-bottom: none;
-}
-
-.cost-item.total {
-    border-top: 2px solid var(--primary-color);
-    margin-top: 0.5rem;
-    padding-top: 1rem;
-    font-weight: bold;
-    font-size: 1.1rem;
-    color: var(--primary-color);
-}
-
-/* Payment Request Modal Styles */
-.payment-request-info {
-    background: #f8f9fa;
-    padding: 1rem;
-    border-radius: 8px;
-    margin-bottom: 1.5rem;
-    border: 1px solid #e9ecef;
-}
-
-.payment-request-info .info-row {
-    display: flex;
-    justify-content: space-between;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid #e9ecef;
-}
-
-.payment-request-info .info-row:last-child {
-    border-bottom: none;
-}
-
-.payment-request-info .label {
-    color: var(--text-muted);
-    font-weight: 500;
-}
-
-.payment-request-info .value {
-    color: var(--text-color);
-    font-weight: 600;
-}
-
-.payment-request-info .value.highlight {
-    color: var(--success-color);
-    font-size: 1.1rem;
-}
-
-.calculated-amount {
-    background: linear-gradient(135deg, #e8f4fd 0%, #f0f9ff 100%);
-    padding: 1rem;
-    border-radius: 8px;
-    margin: 1rem 0;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border: 1px solid #bae6fd;
-}
-
-.calculated-amount .label {
-    color: var(--text-color);
-    font-weight: 500;
-}
-
-.calculated-amount .amount {
-    font-size: 1.5rem;
-    font-weight: bold;
-    color: var(--primary-color);
-}
-
-.form-help {
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    margin-top: 0.25rem;
-    display: block;
-}
-
-.btn-warning {
-    background: #F59E0B;
-    color: white;
-    border: none;
-}
-
-.btn-warning:hover {
-    background: #D97706;
-}
-
-/* Responsive design */
+/* Responsive */
 @media (max-width: 768px) {
-    .rfq-stats {
-        grid-template-columns: 1fr;
-    }
+    .rfq-stats { grid-template-columns: 1fr 1fr; }
+    .rfq-hero, .hero-action-grid, .toolbar-grid, .mobile-rfq-grid, .pagination-shell, .pagination-controls { grid-template-columns: 1fr; }
+    .rfq-hero, .table-shell-header, .mobile-card-top, .pagination-shell { display: flex; flex-direction: column; align-items: flex-start; }
+    .toolbar-grid { display: grid; }
+    .desktop-table { display: none; }
+    .mobile-rfq-list { display: grid; margin-top: 0; }
+    .material-inputs { grid-template-columns: 1fr; gap: 0.5rem; }
+    .form-row { grid-template-columns: 1fr; gap: 1rem; }
+    .modal-content.extra-large { width: 98%; max-height: 95vh; }
+    .material-item-view { flex-direction: column; align-items: flex-start; gap: 0.25rem; }
+    .quote-amount-bar { flex-direction: column; gap: 0.5rem; text-align: center; }
+    .btn-pagination, .page-number-btn { width: 100%; justify-content: center; }
+}
 
-    .material-inputs {
-        grid-template-columns: 1fr;
-        gap: 0.5rem;
-    }
-
-    .form-row {
-        grid-template-columns: 1fr;
-        gap: 1rem;
-    }
-
-    .modal-content.extra-large {
-        width: 98%;
-        max-height: 95vh;
-    }
-
-    .material-total {
-        text-align: left;
-        margin-top: 0.25rem;
-    }
-
-    .rfq-table {
-        font-size: 0.9rem;
-    }
-
-    .action-buttons {
-        flex-direction: column;
-    }
-
-    .material-item-view {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.25rem;
-    }
-
-    .quote-amount {
-        flex-direction: column;
-        gap: 0.5rem;
-        text-align: center;
-    }
+@media (min-width: 769px) {
+    .mobile-rfq-list { display: none; }
 }
 </style>

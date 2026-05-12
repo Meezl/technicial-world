@@ -19,6 +19,8 @@ class ServiceSubTask extends Model
         'assigned_at',
         'completed_at',
         'order',
+        'agreed_compensation',
+        'compensation_notes',
     ];
 
     protected $casts = [
@@ -26,6 +28,7 @@ class ServiceSubTask extends Model
         'completed_at' => 'datetime',
         'progress_percentage' => 'integer',
         'order' => 'integer',
+        'agreed_compensation' => 'decimal:2',
     ];
 
     const STATUS_PENDING = 'pending';

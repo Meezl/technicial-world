@@ -4,10 +4,12 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Expenditure;
+use App\Models\ProgressReport;
 use App\Models\ServiceRequest;
 use App\Models\ServiceRequestBudget;
 use App\Models\TechnicianPayment;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class AdminPaymentController extends Controller
 {
@@ -67,6 +69,7 @@ class AdminPaymentController extends Controller
         $request->validate([
             'technician_id' => 'required|exists:technicians,id',
             'service_request_id' => 'nullable|exists:service_requests,id',
+            'progress_report_id' => 'nullable|exists:progress_reports,id',
             'category' => 'required|in:labor,materials,other',
             'amount' => 'required|numeric|min:0.01',
             'payment_method' => 'nullable|string|max:50',
@@ -77,7 +80,7 @@ class AdminPaymentController extends Controller
 
         $paymentId = 'TPY-' . now()->format('Ymd') . '-' . strtoupper(substr(uniqid(), -4));
 
-        TechnicianPayment::create([
+        $paymentData = [
             'payment_id' => $paymentId,
             'technician_id' => $request->technician_id,
             'service_request_id' => $request->service_request_id,
@@ -88,9 +91,79 @@ class AdminPaymentController extends Controller
             'transaction_reference' => $request->transaction_reference,
             'paid_at' => now(),
             'notes' => $request->notes,
-        ]);
+        ];
+
+        if (Schema::hasColumn('technician_payments', 'progress_report_id')) {
+            $paymentData['progress_report_id'] = $request->progress_report_id;
+        }
+
+        TechnicianPayment::create($paymentData);
 
         return back()->with('success', 'Technician payment recorded.');
+    }
+
+    /**
+     * Pay a technician from an approved progress report using labor budget percentage.
+     */
+    public function payApprovedProgressReport(ProgressReport $progressReport)
+    {
+        $progressReport->loadMissing('serviceRequest.budget', 'technician.user');
+
+        if (!$progressReport->is_validated) {
+            return back()->with('error', 'Only approved progress reports can be paid.');
+        }
+
+        if (!$progressReport->technician_id || !$progressReport->technician) {
+            return back()->with('error', 'This progress report is not linked to a technician.');
+        }
+
+        $budget = $progressReport->serviceRequest?->budget;
+
+        if (!$budget || (float) $budget->labor_budget <= 0) {
+            return back()->with('error', 'Set a labor budget before paying against progress.');
+        }
+
+        $validatedPercent = (float) ($progressReport->validated_percent ?? $progressReport->percent_complete ?? 0);
+        $targetAmount = round(((float) $budget->labor_budget) * ($validatedPercent / 100), 2);
+
+        $alreadyPaid = (float) TechnicianPayment::query()
+            ->where('service_request_id', $progressReport->service_request_id)
+            ->where('technician_id', $progressReport->technician_id)
+            ->where('category', 'labor')
+            ->where('status', 'completed')
+            ->sum('amount');
+
+        $payableAmount = round($targetAmount - $alreadyPaid, 2);
+
+        if ($payableAmount <= 0) {
+            return back()->with('error', 'There is no unpaid labor amount remaining for this approved progress report.');
+        }
+
+        $paymentId = 'TPY-' . now()->format('Ymd') . '-' . strtoupper(substr(uniqid(), -4));
+
+        $paymentData = [
+            'payment_id' => $paymentId,
+            'technician_id' => $progressReport->technician_id,
+            'service_request_id' => $progressReport->service_request_id,
+            'category' => 'labor',
+            'amount' => $payableAmount,
+            'status' => 'completed',
+            'payment_method' => 'progress_report',
+            'paid_at' => now(),
+            'notes' => sprintf(
+                'Auto payout for approved progress report #%d at %s%% of labor budget.',
+                $progressReport->id,
+                rtrim(rtrim(number_format($validatedPercent, 2, '.', ''), '0'), '.')
+            ),
+        ];
+
+        if (Schema::hasColumn('technician_payments', 'progress_report_id')) {
+            $paymentData['progress_report_id'] = $progressReport->id;
+        }
+
+        TechnicianPayment::create($paymentData);
+
+        return back()->with('success', 'Technician progress payout recorded.');
     }
 
     /**

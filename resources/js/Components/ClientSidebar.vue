@@ -1,44 +1,29 @@
 <template>
-    <aside class="sidebar">
-        <div class="sidebar-header">
-            <h2 class="logo">TECHNICIAN WORLD</h2>
-        </div>
-        <nav class="sidebar-nav">
-            <Link href="/client/dashboard" :class="['nav-item', { active: currentPage === 'dashboard' }]">
-                <i class="fas fa-tachometer-alt"></i><span>Dashboard</span>
-            </Link>
-            <Link href="/client/new-request" :class="['nav-item', { active: currentPage === 'new-request' }]">
-                <i class="fas fa-plus-circle"></i><span>New Request</span>
-            </Link>
-            <Link href="/client/payments" :class="['nav-item', { active: currentPage === 'payments' }]">
-                <i class="fas fa-file-invoice-dollar"></i><span>Payments</span>
-            </Link>
-            <Link href="/client/support" :class="['nav-item', { active: currentPage === 'support' }]">
-                <i class="fas fa-headset"></i><span>Support</span>
-            </Link>
-            <Link href="/client/profile" :class="['nav-item', { active: currentPage === 'profile' }]">
-                <i class="fas fa-user-circle"></i><span>Profile</span>
-            </Link>
-        </nav>
-        <div class="sidebar-footer">
-            <Link href="/logout" class="nav-item" method="post" as="button">
-                <i class="fas fa-sign-out-alt"></i><span>Log Out</span>
-            </Link>
-        </div>
-    </aside>
+    <AppSidebar
+        role-label="Client Portal"
+        role-hint="Submit requests, review progress, and track payments with fewer clicks."
+        :current-page="resolvedPage"
+        :items="navItems"
+    />
 </template>
 
 <script setup>
-import { Link } from '@inertiajs/vue3'
+import AppSidebar from './AppSidebar.vue'
 
-defineProps({
+const props = defineProps({
     currentPage: {
         type: String,
-        default: 'dashboard'
-    }
+        default: 'dashboard',
+    },
 })
-</script>
 
-<style>
-@import url('../../css/dashboard-app.css');
-</style>
+const resolvedPage = props.currentPage === 'statements' ? 'payments' : props.currentPage
+
+const navItems = [
+    { key: 'dashboard', href: '/client/dashboard', icon: 'fas fa-tachometer-alt', label: 'Dashboard', caption: 'Overview and updates' },
+    { key: 'new-request', href: '/client/new-request', icon: 'fas fa-plus-circle', label: 'New Request', caption: 'Start a new job' },
+    { key: 'payments', href: '/client/payments', icon: 'fas fa-file-invoice-dollar', label: 'Payments', caption: 'Statements and balances' },
+    { key: 'support', href: '/client/support', icon: 'fas fa-headset', label: 'Support', caption: 'Need help fast?' },
+    { key: 'profile', href: '/client/profile', icon: 'fas fa-user-circle', label: 'Profile', caption: 'Personal details' },
+]
+</script>

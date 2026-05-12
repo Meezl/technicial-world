@@ -37,6 +37,7 @@ class Payment extends Model
     const METHOD_MPESA = 'mpesa';
     const METHOD_CHEQUE = 'cheque';
     const METHOD_CASH = 'cash';
+    const METHOD_BANK_DEPOSIT = 'bank_deposit';
 
     /**
      * Generate a unique payment ID.

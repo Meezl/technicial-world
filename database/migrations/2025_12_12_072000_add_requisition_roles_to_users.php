@@ -11,6 +11,10 @@ return new class extends Migration {
      */
     public function up(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            return;
+        }
+
         // Modify role enum to include requisition-related roles
         DB::statement("ALTER TABLE users MODIFY COLUMN role ENUM('admin', 'client', 'technician', 'foreman', 'office', 'procurement', 'accounts') DEFAULT 'client'");
     }
@@ -20,6 +24,10 @@ return new class extends Migration {
      */
     public function down(): void
     {
+        if (DB::getDriverName() === 'sqlite') {
+            return;
+        }
+
         DB::statement("ALTER TABLE users MODIFY COLUMN role ENUM('admin', 'client', 'technician') DEFAULT 'client'");
     }
 };

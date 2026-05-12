@@ -48,7 +48,28 @@
                     <h3 style="margin: 0; font-size: 2rem; color: var(--success-color);">{{ completedJobsCount || 0 }}</h3>
                     <p style="margin: 0; font-size: 0.8rem; color: var(--light-text);">Completed</p>
                 </div>
+                <div class="pwa-card" style="text-align: center; padding: 1rem 0.5rem; margin-bottom: 0;">
+                    <h3 style="margin: 0; font-size: 1.25rem; color: var(--success-color);">{{ formatCurrency(earningsSummary?.total_paid || 0) }}</h3>
+                    <p style="margin: 0; font-size: 0.8rem; color: var(--light-text);">Paid So Far</p>
+                </div>
+                <div class="pwa-card" style="text-align: center; padding: 1rem 0.5rem; margin-bottom: 0;">
+                    <h3 style="margin: 0; font-size: 1.25rem; color: var(--warning-color);">{{ formatCurrency(earningsSummary?.total_outstanding || 0) }}</h3>
+                    <p style="margin: 0; font-size: 0.8rem; color: var(--light-text);">Still Owed</p>
+                </div>
             </div>
+
+            <Link href="/technician/earnings" class="pwa-card" style="display: block; text-decoration: none; color: inherit; margin-bottom: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+                    <div>
+                        <span style="display: inline-block; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--primary-color); margin-bottom: 0.35rem;">Money Overview</span>
+                        <h3 style="margin: 0 0 0.25rem 0; font-size: 1rem;">See paid and owed amounts per job</h3>
+                        <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">
+                            {{ earningsSummary?.job_count || 0 }} job{{ earningsSummary?.job_count === 1 ? '' : 's' }} with compensation tracking.
+                        </p>
+                    </div>
+                    <i class="fas fa-chevron-right" style="color: var(--light-text);"></i>
+                </div>
+            </Link>
 
             <!-- Incoming Jobs (Assigned but not started) -->
             <div v-if="incomingJobs.length > 0">
@@ -67,10 +88,21 @@
                     <p style="font-size: 0.9rem; color: var(--light-text); margin-bottom: 1rem;">
                         <i class="far fa-clock" style="margin-right: 5px;"></i> {{ formatDate(job.created_at) }}
                     </p>
+
+                    <div v-if="job.compensation_summary" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 1rem;">
+                        <div style="background: #F8FAFC; padding: 0.75rem; border-radius: 10px;">
+                            <span style="display: block; font-size: 0.72rem; color: var(--light-text); margin-bottom: 0.2rem;">Paid</span>
+                            <strong style="color: var(--success-color);">{{ formatCurrency(job.compensation_summary.paid_to_date) }}</strong>
+                        </div>
+                        <div style="background: #FFF7ED; padding: 0.75rem; border-radius: 10px;">
+                            <span style="display: block; font-size: 0.72rem; color: var(--light-text); margin-bottom: 0.2rem;">Still Owed</span>
+                            <strong style="color: #c2410c;">{{ formatCurrency(job.compensation_summary.outstanding_balance) }}</strong>
+                        </div>
+                    </div>
                     
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
                         <!-- Using plain button for now, can implement accept/decline logic later -->
-                        <button class="btn btn-primary" @click="startJob(job)">
+                        <button class="btn btn-primary" @click.stop="startJob(job)">
                             Start Job
                         </button>
                     </div>
@@ -91,6 +123,17 @@
                      <p style="font-size: 0.85rem; color: var(--light-text); margin-bottom: 1rem;">
                         <i class="fas fa-user" style="margin-right: 5px;"></i> {{ job.user?.name || 'Client' }}
                     </p>
+
+                    <div v-if="job.compensation_summary" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 1rem;">
+                        <div style="background: #F8FAFC; padding: 0.75rem; border-radius: 10px;">
+                            <span style="display: block; font-size: 0.72rem; color: var(--light-text); margin-bottom: 0.2rem;">Paid</span>
+                            <strong style="color: var(--success-color);">{{ formatCurrency(job.compensation_summary.paid_to_date) }}</strong>
+                        </div>
+                        <div style="background: #FFF7ED; padding: 0.75rem; border-radius: 10px;">
+                            <span style="display: block; font-size: 0.72rem; color: var(--light-text); margin-bottom: 0.2rem;">Still Owed</span>
+                            <strong style="color: #c2410c;">{{ formatCurrency(job.compensation_summary.outstanding_balance) }}</strong>
+                        </div>
+                    </div>
 
                     <div style="background: #F9FAFB; padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem;">
                         <div style="display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.5rem;">
@@ -113,7 +156,7 @@
                         <button 
                             v-if="!job.technician_arrived" 
                             class="btn btn-primary" 
-                            @click="updateStatus(job, 'on_site')"
+                            @click.stop="updateStatus(job, 'on_site')"
                         >
                             Arrived On Site
                         </button>
@@ -121,12 +164,12 @@
                             v-else 
                             class="btn btn-outline" 
                             style="border-color: var(--success-color); color: var(--success-color);"
-                            @click="updateStatus(job, 'completed')"
+                            @click.stop="updateStatus(job, 'completed')"
                         >
                             Mark Complete
                         </button>
                         
-                        <Link href="/technician/tools" class="btn btn-outline">
+                        <Link href="/technician/tools" class="btn btn-outline" @click.stop>
                             <i class="fas fa-tools" style="margin-right: 5px;"></i> Request Tools
                         </Link>
                     </div>
@@ -149,8 +192,8 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
-import { Link, router, usePage } from '@inertiajs/vue3'; // Import router correctly
+import { computed } from 'vue';
+import { Link, router } from '@inertiajs/vue3';
 import TechnicianBottomNav from '@/Components/TechnicianBottomNav.vue';
 
 const props = defineProps({
@@ -158,6 +201,7 @@ const props = defineProps({
     incomingJobs: Array,
     activeJobs: Array,
     completedJobsCount: Number,
+    earningsSummary: Object,
 });
 
 const isAvailable = computed(() => props.technician?.availability === 'available');
@@ -188,6 +232,13 @@ const formatDate = (dateString) => {
         month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
     });
 };
+
+const formatCurrency = (amount) => {
+    return 'KES ' + Number(amount || 0).toLocaleString('en-KE', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    })
+}
 
 // Disable default layout
 defineOptions({ layout: null });

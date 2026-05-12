@@ -22,7 +22,9 @@ class PaymentRequest extends Model
         'mpesa_receipt_number',
         'phone_number',
         'cheque_number',
+        'bank_reference',
         'notes',
+        'evidence_path',
         'paid_at',
     ];
 
@@ -39,6 +41,7 @@ class PaymentRequest extends Model
     const METHOD_MPESA = 'mpesa';
     const METHOD_CHEQUE = 'cheque';
     const METHOD_CASH = 'cash';
+    const METHOD_BANK_DEPOSIT = 'bank_deposit';
 
     /**
      * Generate a unique payment request ID.
