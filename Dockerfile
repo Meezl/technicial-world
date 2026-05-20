@@ -57,7 +57,7 @@ RUN mkdir -p storage/framework/{sessions,views,cache} \
 # Environment defaults
 ENV PORT=8080
 ENV APP_ENV=production
-ENV APP_DEBUG=true
+ENV APP_DEBUG=false
 ENV LOG_CHANNEL=stderr
 ENV QUEUE_CONNECTION=redis
 ENV CACHE_STORE=redis

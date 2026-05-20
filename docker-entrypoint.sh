@@ -36,10 +36,6 @@ echo "    REDIS_HOST=${REDIS_HOST:-not set}"
 echo "    REDIS_PORT=${REDIS_PORT:-not set}"
 echo "    REDIS_URL=${REDIS_URL:+set (hidden)}"
 
-# Test that the app can boot and diagnose driver issues
-echo "==> Running driver diagnostics..."
-php /app/diagnose-driver.php 2>&1 || echo "WARNING: Diagnostic failed"
-
 # ── 5. Queue worker (background, non-fatal) ──────────────────────────────────
 echo "==> Starting queue worker in background..."
 (php artisan queue:work --sleep=3 --tries=3 --timeout=90 2>&1 || echo "WARNING: Queue worker exited with error") &
