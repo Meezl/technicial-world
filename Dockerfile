@@ -59,6 +59,9 @@ ENV PORT=8080
 ENV APP_ENV=production
 ENV APP_DEBUG=true
 ENV LOG_CHANNEL=stderr
+ENV QUEUE_CONNECTION=redis
+ENV CACHE_STORE=redis
+ENV SESSION_DRIVER=redis
 
 ENTRYPOINT ["docker-entrypoint"]
 CMD ["frankenphp", "run", "--config", "/etc/caddy/Caddyfile"]

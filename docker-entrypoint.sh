@@ -32,6 +32,9 @@ echo "    DB_CONNECTION=${DB_CONNECTION:-not set}"
 echo "    QUEUE_CONNECTION=${QUEUE_CONNECTION:-not set}"
 echo "    CACHE_STORE=${CACHE_STORE:-not set}"
 echo "    SESSION_DRIVER=${SESSION_DRIVER:-not set}"
+echo "    REDIS_HOST=${REDIS_HOST:-not set}"
+echo "    REDIS_PORT=${REDIS_PORT:-not set}"
+echo "    REDIS_URL=${REDIS_URL:+set (hidden)}"
 
 # Test that the app can boot and respond
 echo "==> Testing Laravel app boot..."
