@@ -19,17 +19,24 @@ else
 fi
 
 # ── 3. Storage symlink ─────────────────────────────────────────────────────────
-# Use -L (symlink) not -d (directory) — a broken symlink passes -d but not -L
 if [ ! -L "/app/public/storage" ]; then
     echo "==> Creating storage symlink..."
     php artisan storage:link
 fi
 
-# ── 4. Queue worker (background) ──────────────────────────────────────────────
+# ── 4. Diagnostics ────────────────────────────────────────────────────────────
+echo "==> Environment check:"
+echo "    PORT=$PORT"
+echo "    APP_ENV=$APP_ENV"
+echo "    DB_CONNECTION=${DB_CONNECTION:-not set}"
+echo "    QUEUE_CONNECTION=${QUEUE_CONNECTION:-not set}"
+echo "    CACHE_STORE=${CACHE_STORE:-not set}"
+
+# ── 5. Queue worker (background, non-fatal) ──────────────────────────────────
 echo "==> Starting queue worker in background..."
-php artisan queue:work --sleep=3 --tries=3 --timeout=90 --daemon &
+(php artisan queue:work --sleep=3 --tries=3 --timeout=90 2>&1 || echo "WARNING: Queue worker exited with error") &
 
 echo "==> Startup complete. Launching web server..."
 
-# ── 5. Hand off to the web server (FrankenPHP / Caddy) ────────────────────────
+# ── 6. Hand off to the web server (FrankenPHP / Caddy) ────────────────────────
 exec "$@"

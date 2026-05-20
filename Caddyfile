@@ -1,14 +1,9 @@
 {
-    frankenphp
+	frankenphp
 }
 
 :{$PORT:8080} {
-    root * /app/public
-
-    encode zstd gzip
-
-    # Serve real files/directories directly; everything else → index.php (Laravel router)
-    try_files {path} {path}/ /index.php?{query}
-
-    php_server
+	root * /app/public
+	encode zstd gzip
+	php_server
 }
