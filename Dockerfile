@@ -11,7 +11,7 @@ RUN composer dump-autoload --no-dev --optimize --classmap-authoritative
 # Stage 2: Build frontend assets
 FROM node:20 AS frontend-builder
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY package.json ./
 RUN npm install
 COPY . .
 COPY --from=composer-builder /app/vendor/tightenco/ziggy /app/vendor/tightenco/ziggy
