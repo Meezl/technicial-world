@@ -1,5 +1,7 @@
-# Stage 1: Install PHP dependencies
-FROM composer:2 AS composer-builder
+# Stage 1: Install PHP dependencies (pinned to PHP 8.3 to match the runner)
+FROM php:8.3-cli-alpine AS composer-builder
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+RUN apk add --no-cache unzip git
 WORKDIR /app
 COPY composer.json composer.lock ./
 RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
