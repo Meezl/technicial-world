@@ -1,18 +1,19 @@
-# Stage 1: Build frontend assets
-FROM node:20 AS frontend-builder
-WORKDIR /app
-COPY package.json ./
-RUN npm install
-COPY . .
-RUN npm run build
-
-# Stage 2: Install PHP dependencies
+# Stage 1: Install PHP dependencies
 FROM composer:2 AS composer-builder
 WORKDIR /app
 COPY composer*.json ./
 RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
 COPY . .
 RUN composer dump-autoload --no-dev --optimize
+
+# Stage 2: Build frontend assets
+FROM node:20 AS frontend-builder
+WORKDIR /app
+COPY package.json ./
+RUN npm install
+COPY . .
+COPY --from=composer-builder /app/vendor/tightenco/ziggy /app/vendor/tightenco/ziggy
+RUN npm run build
 
 # Stage 3: Final application server
 FROM dunglas/frankenphp:1-php8.3 AS runner
