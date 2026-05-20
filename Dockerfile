@@ -2,9 +2,9 @@
 FROM composer:2 AS composer-builder
 WORKDIR /app
 COPY composer*.json ./
-RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
+RUN composer install --no-dev --no-autoloader --prefer-dist
 COPY . .
-RUN composer dump-autoload --no-dev --optimize
+RUN composer dump-autoload --no-dev --optimize --classmap-authoritative
 
 # Stage 2: Build frontend assets
 FROM node:20 AS frontend-builder
