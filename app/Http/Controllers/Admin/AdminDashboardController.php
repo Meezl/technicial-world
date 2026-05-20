@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Inertia\Inertia;
+use App\Models\AuditLog;
 use App\Models\ServiceRequest;
+use App\Models\ServiceCategory;
 use App\Models\Technician;
 use App\Models\User;
 use App\Models\Tool;
@@ -20,11 +22,15 @@ use App\Mail\TechnicianAssigned;
 use App\Models\JobAssignment;
 use App\Models\ServiceSubTask;
 use App\Models\Payment;
+use App\Models\PaymentMilestone;
+use App\Models\PaymentMilestoneAllocation;
 use App\Models\ProgressReport;
 use App\Models\TechnicianPayment;
 use App\Models\TechnicianPaymentEntry;
 use App\Models\Expenditure;
 use App\Services\ProgressService;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class AdminDashboardController extends Controller
@@ -109,6 +115,7 @@ class AdminDashboardController extends Controller
             'payments',
             'paymentRequests',
             'milestones',
+            'milestones.allocations.technician.user',
             'progressReports.technician.user',
             'progressReports.submitter',
             'progressReports.validator',
@@ -403,6 +410,11 @@ class AdminDashboardController extends Controller
             (float) $request->agreed_compensation,
             excludeAssignmentId: $existingAssignment?->id
         );
+        $this->ensureTechnicianMilestoneCoverage(
+            $serviceRequest,
+            (int) $technician->id,
+            (float) $request->agreed_compensation
+        );
 
         // Update service request
         $serviceRequest->update([
@@ -454,6 +466,11 @@ class AdminDashboardController extends Controller
             $serviceRequest,
             (float) $request->agreed_compensation,
             excludeAssignmentId: $existingAssignment?->id
+        );
+        $this->ensureTechnicianMilestoneCoverage(
+            $serviceRequest,
+            (int) $technician->id,
+            (float) $request->agreed_compensation
         );
 
         $serviceRequest->update([
@@ -578,6 +595,175 @@ class AdminDashboardController extends Controller
         }
     }
 
+    protected function ensureTechnicianMilestoneCoverage(
+        ServiceRequest $serviceRequest,
+        int $technicianId,
+        float $agreedCompensation,
+        ?int $excludeMilestoneId = null
+    ): void {
+        $allocatedAcrossMilestones = (float) PaymentMilestoneAllocation::query()
+            ->where('technician_id', $technicianId)
+            ->whereHas('milestone', function ($query) use ($serviceRequest, $excludeMilestoneId) {
+                $query->where('service_request_id', $serviceRequest->id)
+                    ->when($excludeMilestoneId, fn ($inner) => $inner->where('id', '!=', $excludeMilestoneId));
+            })
+            ->sum('allocated_amount');
+
+        if ($allocatedAcrossMilestones > ($agreedCompensation + 0.0001)) {
+            throw ValidationException::withMessages([
+                'agreed_compensation' => 'This technician already has KSH '
+                    . number_format($allocatedAcrossMilestones, 2)
+                    . ' reserved across milestones on this job. Increase the agreed dues or reduce milestone allocations first.',
+            ]);
+        }
+    }
+
+    protected function getMilestoneLaborReleaseSummary(ServiceRequest $serviceRequest, ?int $excludeMilestoneId = null): array
+    {
+        $budgeted = (float) ($serviceRequest->budget?->labor_budget ?? 0);
+        $released = (float) $serviceRequest->milestones()
+            ->when($excludeMilestoneId, fn ($query) => $query->where('id', '!=', $excludeMilestoneId))
+            ->sum('labor_release_amount');
+
+        return [
+            'budgeted' => $budgeted,
+            'released' => $released,
+            'remaining' => $budgeted - $released,
+        ];
+    }
+
+    protected function getTechnicianAgreedCompensation(ServiceRequest $serviceRequest, int $technicianId): float
+    {
+        $agreedFromAssignments = (float) $serviceRequest->jobAssignments()
+            ->where('technician_id', $technicianId)
+            ->whereIn('status', [
+                JobAssignment::STATUS_PENDING,
+                JobAssignment::STATUS_ACCEPTED,
+                JobAssignment::STATUS_COMPLETED,
+            ])
+            ->sum('agreed_compensation');
+
+        if ($agreedFromAssignments > 0) {
+            return $agreedFromAssignments;
+        }
+
+        return (float) $serviceRequest->subTasks()
+            ->where('technician_id', $technicianId)
+            ->sum('agreed_compensation');
+    }
+
+    protected function getAssignedTechnicianIds(ServiceRequest $serviceRequest): array
+    {
+        return collect()
+            ->merge($serviceRequest->jobAssignments()
+                ->whereIn('status', [
+                    JobAssignment::STATUS_PENDING,
+                    JobAssignment::STATUS_ACCEPTED,
+                    JobAssignment::STATUS_COMPLETED,
+                ])
+                ->pluck('technician_id'))
+            ->merge($serviceRequest->subTasks()->whereNotNull('technician_id')->pluck('technician_id'))
+            ->merge([$serviceRequest->technician_id, $serviceRequest->lead_technician_id])
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    protected function validateMilestoneConfiguration(
+        ServiceRequest $serviceRequest,
+        float $laborReleaseAmount,
+        array $allocations,
+        ?int $excludeMilestoneId = null
+    ): void {
+        if (! $serviceRequest->budget) {
+            throw ValidationException::withMessages([
+                'labor_release_amount' => 'Set the labor budget before planning milestone technician releases.',
+            ]);
+        }
+
+        $releaseSummary = $this->getMilestoneLaborReleaseSummary($serviceRequest, $excludeMilestoneId);
+        if ($releaseSummary['budgeted'] <= 0) {
+            throw ValidationException::withMessages([
+                'labor_release_amount' => 'The labor budget must be greater than zero before creating milestone labor releases.',
+            ]);
+        }
+
+        if ($laborReleaseAmount > ($releaseSummary['remaining'] + 0.0001)) {
+            throw ValidationException::withMessages([
+                'labor_release_amount' => 'This milestone exceeds the remaining labor budget release capacity. Up to KSH '
+                    . number_format(max($releaseSummary['remaining'], 0), 2)
+                    . ' is still available across milestones on this job.',
+            ]);
+        }
+
+        $assignedTechnicianIds = $this->getAssignedTechnicianIds($serviceRequest);
+        $seenTechnicians = [];
+        $allocatedTotal = 0.0;
+
+        foreach ($allocations as $index => $allocation) {
+            $technicianId = (int) ($allocation['technician_id'] ?? 0);
+            $allocatedAmount = (float) ($allocation['allocated_amount'] ?? 0);
+
+            if (! in_array($technicianId, $assignedTechnicianIds, true)) {
+                throw ValidationException::withMessages([
+                    "allocations.$index.technician_id" => 'Only technicians assigned to this job can be allocated on a milestone.',
+                ]);
+            }
+
+            if (in_array($technicianId, $seenTechnicians, true)) {
+                throw ValidationException::withMessages([
+                    "allocations.$index.technician_id" => 'Each technician can only appear once per milestone.',
+                ]);
+            }
+
+            $seenTechnicians[] = $technicianId;
+            $allocatedTotal += $allocatedAmount;
+
+            $agreedCompensation = $this->getTechnicianAgreedCompensation($serviceRequest, $technicianId);
+            $existingOtherMilestoneAllocations = (float) PaymentMilestoneAllocation::query()
+                ->where('technician_id', $technicianId)
+                ->whereHas('milestone', function ($query) use ($serviceRequest, $excludeMilestoneId) {
+                    $query->where('service_request_id', $serviceRequest->id)
+                        ->when($excludeMilestoneId, fn ($inner) => $inner->where('id', '!=', $excludeMilestoneId));
+                })
+                ->sum('allocated_amount');
+
+            if ($agreedCompensation <= 0) {
+                throw ValidationException::withMessages([
+                    "allocations.$index.allocated_amount" => 'Set agreed technician dues before assigning milestone releases.',
+                ]);
+            }
+
+            if (($existingOtherMilestoneAllocations + $allocatedAmount) > ($agreedCompensation + 0.0001)) {
+                throw ValidationException::withMessages([
+                    "allocations.$index.allocated_amount" => 'This technician only has KSH '
+                        . number_format(max($agreedCompensation - $existingOtherMilestoneAllocations, 0), 2)
+                        . ' of unallocated agreed dues left for milestone planning on this job.',
+                ]);
+            }
+        }
+
+        if ($allocatedTotal > ($laborReleaseAmount + 0.0001)) {
+            throw ValidationException::withMessages([
+                'allocations' => 'Milestone technician allocations cannot exceed the labor release amount for this milestone.',
+            ]);
+        }
+    }
+
+    protected function syncMilestoneAllocations(PaymentMilestone $milestone, array $allocations): void
+    {
+        $milestone->allocations()->delete();
+
+        foreach ($allocations as $allocation) {
+            $milestone->allocations()->create([
+                'technician_id' => (int) $allocation['technician_id'],
+                'allocated_amount' => (float) $allocation['allocated_amount'],
+                'notes' => $allocation['notes'] ?? null,
+            ]);
+        }
+    }
+
     protected function syncPrimaryAssignment(
         ServiceRequest $serviceRequest,
         ?int $currentTechnicianId,
@@ -659,37 +845,82 @@ class AdminDashboardController extends Controller
 
     public function storeMilestone(Request $request, ServiceRequest $serviceRequest)
     {
-        $request->validate([
-            'progress_step' => 'required|integer|min:1|max:100',
-            'amount' => 'required|numeric|min:0',
-            'notes' => 'nullable|string|max:500',
+        $validated = $request->validate([
+            'progress_step'          => 'required|integer|min:1|max:100',
+            'labor_release_amount'   => 'required|numeric|min:0',
+            'notes'                  => 'nullable|string|max:500',
+            'allocations'            => 'nullable|array',
+            'allocations.*.technician_id'    => 'required|exists:technicians,id',
+            'allocations.*.allocated_amount' => 'required|numeric|min:0',
+            'allocations.*.notes'            => 'nullable|string|max:500',
         ]);
 
-        $serviceRequest->milestones()->create([
-            'progress_step' => $request->progress_step,
-            'amount' => $request->amount,
-            'notes' => $request->notes,
-            'status' => 'pending',
-        ]);
+        $allocations = collect($validated['allocations'] ?? [])
+            ->filter(fn ($a) => (float) ($a['allocated_amount'] ?? 0) > 0)
+            ->values()
+            ->all();
+
+        $this->validateMilestoneConfiguration(
+            $serviceRequest,
+            (float) $validated['labor_release_amount'],
+            $allocations
+        );
+
+        DB::transaction(function () use ($serviceRequest, $validated, $allocations) {
+            $milestone = $serviceRequest->milestones()->create([
+                'progress_step'        => $validated['progress_step'],
+                'labor_release_amount' => $validated['labor_release_amount'],
+                'notes'                => $validated['notes'] ?? null,
+                'status'               => 'pending',
+            ]);
+
+            $this->syncMilestoneAllocations($milestone, $allocations);
+        });
 
         return back()->with('success', 'Milestone added successfully.');
     }
 
-    public function updateMilestone(Request $request, \App\Models\PaymentMilestone $milestone)
+    public function updateMilestone(Request $request, PaymentMilestone $milestone)
     {
-        $request->validate([
-            'progress_step' => 'required|integer|min:1|max:100',
-            'amount' => 'required|numeric|min:0',
-            'notes' => 'nullable|string|max:500',
-            'status' => 'nullable|in:pending,reached,paid',
+        $validated = $request->validate([
+            'progress_step'          => 'required|integer|min:1|max:100',
+            'labor_release_amount'   => 'required|numeric|min:0',
+            'notes'                  => 'nullable|string|max:500',
+            'status'                 => 'nullable|in:pending,reached,paid',
+            'allocations'            => 'nullable|array',
+            'allocations.*.technician_id'    => 'required|exists:technicians,id',
+            'allocations.*.allocated_amount' => 'required|numeric|min:0',
+            'allocations.*.notes'            => 'nullable|string|max:500',
         ]);
 
-        $milestone->update($request->only(['progress_step', 'amount', 'notes', 'status']));
+        $serviceRequest = $milestone->serviceRequest()->with(['budget', 'jobAssignments', 'subTasks'])->firstOrFail();
+        $allocations = collect($validated['allocations'] ?? [])
+            ->filter(fn ($a) => (float) ($a['allocated_amount'] ?? 0) > 0)
+            ->values()
+            ->all();
+
+        $this->validateMilestoneConfiguration(
+            $serviceRequest,
+            (float) $validated['labor_release_amount'],
+            $allocations,
+            excludeMilestoneId: $milestone->id
+        );
+
+        DB::transaction(function () use ($milestone, $validated, $allocations) {
+            $milestone->update([
+                'progress_step'        => $validated['progress_step'],
+                'labor_release_amount' => $validated['labor_release_amount'],
+                'notes'                => $validated['notes'] ?? null,
+                'status'               => $validated['status'] ?? $milestone->status,
+            ]);
+
+            $this->syncMilestoneAllocations($milestone, $allocations);
+        });
 
         return back()->with('success', 'Milestone updated.');
     }
 
-    public function destroyMilestone(\App\Models\PaymentMilestone $milestone)
+    public function destroyMilestone(PaymentMilestone $milestone)
     {
         $milestone->delete();
 
@@ -922,9 +1153,130 @@ class AdminDashboardController extends Controller
         ]);
     }
 
+    public function createAdminAssistedRfq()
+    {
+        $clients = User::query()
+            ->where('role', User::ROLE_CLIENT)
+            ->orderBy('name')
+            ->get(['id', 'name', 'email', 'phone']);
+
+        $serviceCategories = ServiceCategory::query()
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name']);
+
+        return Inertia::render('Admin/CreateAssistedRFQ', [
+            'clients' => $clients,
+            'serviceCategories' => $serviceCategories,
+        ]);
+    }
+
+    public function storeAdminAssistedRfq(Request $request)
+    {
+        $clientMode = $request->input('client_mode', 'existing');
+
+        $newClientTemporaryPassword = null;
+
+        if ($clientMode === 'new') {
+            $request->validate([
+                'new_client.name'  => 'required|string|max:255',
+                'new_client.email' => 'required|email|max:255|unique:users,email',
+                'new_client.phone' => 'nullable|string|max:30',
+                'service_category_id' => 'required|exists:service_categories,id',
+                'description' => 'required|string|min:10|max:1000',
+                'location' => 'required|string|max:255',
+                'urgency' => 'required|in:low,medium,high',
+                'files.*' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx|max:10240',
+            ]);
+
+            // Capture plain-text password before hashing so we can include it in the welcome email
+            $newClientTemporaryPassword = Str::random(16);
+
+            $client = User::create([
+                'name'     => $request->input('new_client.name'),
+                'email'    => $request->input('new_client.email'),
+                'phone'    => $request->input('new_client.phone'),
+                'role'     => User::ROLE_CLIENT,
+                'password' => Hash::make($newClientTemporaryPassword),
+            ]);
+
+            AuditLog::log(AuditLog::ACTION_CREATED, $client, null, [
+                'note' => 'Client account created on-the-fly during admin-assisted RFQ',
+                'created_by_admin_id' => auth()->id(),
+            ]);
+        } else {
+            $request->validate([
+                'user_id' => 'required|exists:users,id',
+                'service_category_id' => 'required|exists:service_categories,id',
+                'description' => 'required|string|min:10|max:1000',
+                'location' => 'required|string|max:255',
+                'urgency' => 'required|in:low,medium,high',
+                'files.*' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx|max:10240',
+            ]);
+
+            $client = User::query()
+                ->where('id', $request->user_id)
+                ->where('role', User::ROLE_CLIENT)
+                ->firstOrFail();
+        }
+
+        $validated = $request->only(['service_category_id', 'description', 'location', 'urgency']);
+
+        $serviceRequest = ServiceRequest::create([
+            'request_id' => 'REQ-' . strtoupper(Str::random(6)),
+            'user_id' => $client->id,
+            'service_category_id' => $validated['service_category_id'],
+            'description' => $validated['description'],
+            'location' => $validated['location'],
+            'urgency' => $validated['urgency'],
+            'status' => ServiceRequest::STATUS_PENDING,
+            'submission_mode' => ServiceRequest::SUBMISSION_MODE_ADMIN_PROXY,
+            'created_by_admin_id' => auth()->id(),
+        ]);
+
+        if ($request->hasFile('files')) {
+            $uploadedFiles = [];
+            foreach ($request->file('files') as $file) {
+                $path = $file->store('service-requests/' . $serviceRequest->request_id, 'public');
+                $uploadedFiles[] = [
+                    'path' => $path,
+                    'name' => $file->getClientOriginalName(),
+                    'mime_type' => $file->getMimeType(),
+                ];
+            }
+
+            $serviceRequest->update(['files' => $uploadedFiles]);
+        }
+
+        AuditLog::log(AuditLog::ACTION_CREATED, $serviceRequest, null, [
+            'submission_mode' => ServiceRequest::SUBMISSION_MODE_ADMIN_PROXY,
+            'client_name' => $client->name,
+            'created_by_admin_id' => auth()->id(),
+        ]);
+
+        // Send welcome email only when a brand-new client account was just created
+        if ($newClientTemporaryPassword !== null) {
+            $serviceRequest->loadMissing('serviceCategory');
+            Mail::to($client->email)->send(
+                new \App\Mail\ClientAccountCreated($client, $newClientTemporaryPassword, $serviceRequest)
+            );
+        }
+
+        return redirect()
+            ->route('admin.rfq')
+            ->with('success', "Admin-assisted service request created for {$client->name}. Request ID: {$serviceRequest->request_id}");
+    }
+
     public function rfq(Request $request)
     {
-        $query = ServiceRequest::with(['user', 'serviceCategory', 'technician.user', 'assignedPm']);
+        $query = ServiceRequest::with([
+            'user',
+            'serviceCategory',
+            'technician.user',
+            'assignedPm',
+            'createdByAdmin:id,name,email',
+            'proxyQuoteApprover:id,name,email',
+        ]);
 
         // Search filter
         if ($search = $request->input('search')) {
@@ -946,6 +1298,15 @@ class AdminDashboardController extends Controller
         if ($status = $request->input('status')) {
             if ($status !== 'all') {
                 $query->where('rfq_status', $status);
+            }
+        }
+
+        if ($origin = $request->input('origin')) {
+            if (in_array($origin, [
+                ServiceRequest::SUBMISSION_MODE_CLIENT_SELF,
+                ServiceRequest::SUBMISSION_MODE_ADMIN_PROXY,
+            ], true)) {
+                $query->where('submission_mode', $origin);
             }
         }
 
@@ -974,6 +1335,7 @@ class AdminDashboardController extends Controller
             'filters' => [
                 'search' => $request->input('search', ''),
                 'status' => $request->input('status', 'all'),
+                'origin' => $request->input('origin', 'all'),
                 'sort' => $sortOrder,
                 'per_page' => $perPage,
             ],
@@ -1044,6 +1406,58 @@ class AdminDashboardController extends Controller
         Mail::to($serviceRequest->user->email)->send(new QuotationRejected($serviceRequest));
 
         return redirect()->route('admin.rfq')->with('success', 'Service request rejected successfully.');
+    }
+
+    public function approveRfqOnBehalf(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'note' => 'required|string|min:10|max:1000',
+        ]);
+
+        if (!$serviceRequest->isAdminAssisted()) {
+            return redirect()->route('admin.rfq')
+                ->with('error', 'Only admin-assisted requests can be approved on behalf of a client.');
+        }
+
+        if ($serviceRequest->rfq_status !== ServiceRequest::RFQ_STATUS_QUOTED) {
+            return redirect()->route('admin.rfq')
+                ->with('error', 'This quotation cannot be proxy-approved in its current status.');
+        }
+
+        $oldValues = [
+            'rfq_status' => $serviceRequest->rfq_status,
+            'status' => $serviceRequest->status,
+            'proxy_quote_approved_by' => $serviceRequest->proxy_quote_approved_by,
+            'proxy_quote_approved_at' => optional($serviceRequest->proxy_quote_approved_at)?->toDateTimeString(),
+        ];
+
+        $updateData = [
+            'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
+            'proxy_quote_approved_by' => auth()->id(),
+            'proxy_quote_approved_at' => now(),
+            'proxy_quote_approval_note' => $request->note,
+        ];
+
+        if (in_array($serviceRequest->status, [
+            ServiceRequest::STATUS_AWAITING_QUOTE_APPROVAL,
+            ServiceRequest::STATUS_PENDING,
+            'pending',
+        ], true)) {
+            $updateData['status'] = ServiceRequest::STATUS_AWAITING_PAYMENT;
+        }
+
+        $serviceRequest->update($updateData);
+
+        AuditLog::log(AuditLog::ACTION_APPROVAL, $serviceRequest, $oldValues, [
+            'rfq_status' => $serviceRequest->rfq_status,
+            'status' => $serviceRequest->status,
+            'proxy_quote_approved_by' => auth()->id(),
+            'proxy_quote_approved_at' => $serviceRequest->proxy_quote_approved_at?->toDateTimeString(),
+            'proxy_quote_approval_note' => $serviceRequest->proxy_quote_approval_note,
+        ]);
+
+        return redirect()->route('admin.rfq')
+            ->with('success', 'Quotation approved on behalf of the client. The request now continues through the normal workflow.');
     }
 
     public function users(Request $request)
@@ -1282,6 +1696,113 @@ class AdminDashboardController extends Controller
         ]);
     }
 
+    /**
+     * For admin-assisted RFQs: admin confirms payment directly instead of
+     * sending a request to the client. Creates the PaymentRequest + Payment
+     * in one step and transitions the SR to READY_FOR_ASSIGNMENT.
+     */
+    public function confirmPaymentOnBehalf(Request $request, ServiceRequest $serviceRequest)
+    {
+        $serviceRequest->loadMissing('user');
+
+        if ($serviceRequest->submission_mode !== ServiceRequest::SUBMISSION_MODE_ADMIN_PROXY) {
+            return response()->json(['error' => 'This action is only available for admin-assisted service requests.'], 422);
+        }
+
+        if ($serviceRequest->rfq_status !== ServiceRequest::RFQ_STATUS_APPROVED) {
+            return response()->json(['error' => 'Payment can only be confirmed for approved service requests.'], 422);
+        }
+
+        $request->validate([
+            'percentage'    => 'required|numeric|min:1|max:100',
+            'payment_method'=> 'required|in:cash,cheque,bank_deposit',
+            'cheque_number' => 'required_if:payment_method,cheque|nullable|string|max:50',
+            'bank_reference'=> 'required_if:payment_method,bank_deposit|nullable|string|max:100',
+            'notes'         => 'nullable|string|max:500',
+            'evidence'      => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:10240',
+        ]);
+
+        $amount = ($request->percentage / 100) * $serviceRequest->quote_amount;
+
+        // Reuse any existing pending payment request for this SR (may exist from an earlier
+        // attempt or a mistakenly sent normal request) — update it with the new details.
+        $existingPending = PaymentRequest::where('service_request_id', $serviceRequest->id)
+            ->where('status', PaymentRequest::STATUS_PENDING)
+            ->first();
+
+        if ($existingPending) {
+            $existingPending->update([
+                'requested_by'   => auth()->id(),
+                'percentage'     => $request->percentage,
+                'amount'         => $amount,
+                'notes'          => $request->notes,
+                'payment_method' => $request->payment_method,
+                'cheque_number'  => $request->cheque_number,
+                'bank_reference' => $request->bank_reference,
+            ]);
+            $paymentRequest = $existingPending->fresh();
+        } else {
+            $paymentRequest = PaymentRequest::create([
+                'payment_request_id' => PaymentRequest::generatePaymentRequestId(),
+                'service_request_id' => $serviceRequest->id,
+                'user_id'            => $serviceRequest->user_id,
+                'requested_by'       => auth()->id(),
+                'percentage'         => $request->percentage,
+                'amount'             => $amount,
+                'status'             => PaymentRequest::STATUS_PENDING,
+                'notes'              => $request->notes,
+                'payment_method'     => $request->payment_method,
+                'cheque_number'      => $request->cheque_number,
+                'bank_reference'     => $request->bank_reference,
+            ]);
+        }
+
+        // Store proof of payment if uploaded
+        if ($request->hasFile('evidence')) {
+            $path = $request->file('evidence')->store('payment-evidence', 'public');
+            $paymentRequest->update(['evidence_path' => $path]);
+        }
+
+        // Immediately mark as paid — admin is confirming on behalf
+        $paymentRequest->markAsPaid($request->payment_method);
+
+        // Create the Payment record
+        Payment::create([
+            'payment_id'          => Payment::generatePaymentId(),
+            'payment_request_id'  => $paymentRequest->id,
+            'service_request_id'  => $serviceRequest->id,
+            'user_id'             => $serviceRequest->user_id,
+            'amount'              => $amount,
+            'status'              => Payment::STATUS_COMPLETED,
+            'payment_method'      => $request->payment_method,
+            'phone_number'        => $serviceRequest->user->phone ?? '',
+            'account_reference'   => $serviceRequest->request_id,
+            'paid_at'             => now(),
+            'notes'               => 'Payment confirmed on behalf of client by admin (' . auth()->user()->name . ')',
+        ]);
+
+        // Advance the service request status
+        if (in_array($serviceRequest->status, [
+            ServiceRequest::STATUS_AWAITING_PAYMENT,
+            ServiceRequest::STATUS_PAYMENT_PENDING_APPROVAL,
+            'pending',
+        ])) {
+            $serviceRequest->update(['status' => ServiceRequest::STATUS_READY_FOR_ASSIGNMENT]);
+        }
+
+        AuditLog::log(AuditLog::ACTION_APPROVAL, $paymentRequest, null, [
+            'note'    => 'Admin confirmed payment on behalf of client',
+            'amount'  => $amount,
+            'method'  => $request->payment_method,
+            'admin'   => auth()->user()->name,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Payment of KSH " . number_format($amount, 2) . " confirmed on behalf of client.",
+        ]);
+    }
+
     // ==================== SUB-TASK MANAGEMENT ====================
 
     public function addSubTask(Request $request, ServiceRequest $serviceRequest)
@@ -1358,6 +1879,11 @@ class AdminDashboardController extends Controller
             $serviceRequest,
             (float) $request->agreed_compensation,
             excludeSubTaskId: $serviceSubTask->id
+        );
+        $this->ensureTechnicianMilestoneCoverage(
+            $serviceRequest,
+            (int) $technician->id,
+            (float) $request->agreed_compensation
         );
 
         // Assign technician to sub-task
@@ -1637,7 +2163,7 @@ class AdminDashboardController extends Controller
         // Service requests this technician is assigned to (with milestones)
         $serviceRequests = ServiceRequest::where('technician_id', $technician->id)
             ->orWhere('lead_technician_id', $technician->id)
-            ->with(['serviceCategory:id,name', 'milestones', 'budget'])
+            ->with(['serviceCategory:id,name', 'milestones.allocations.technician.user', 'budget'])
             ->orderBy('created_at', 'desc')
             ->get();
 
@@ -1668,8 +2194,12 @@ class AdminDashboardController extends Controller
                     'id' => $m->id,
                     'progress_step' => $m->progress_step,
                     'amount' => (float) $m->amount,
+                    'labor_release_amount' => (float) ($m->labor_release_amount ?? 0),
                     'status' => $m->status,
                     'notes' => $m->notes,
+                    'allocated_amount' => (float) $m->allocations
+                        ->where('technician_id', $technician->id)
+                        ->sum('allocated_amount'),
                 ]),
                 'direct_payments' => $srDirectPayments->map(fn ($p) => [
                     'id' => $p->id,

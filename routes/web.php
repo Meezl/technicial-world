@@ -214,12 +214,15 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
 
     // RFQ Management
     Route::redirect('/rfqs', '/admin/rfq');
-    Route::redirect('/rfq/create', '/admin/rfq');
+    Route::get('/rfq/create', [AdminDashboardController::class, 'createAdminAssistedRfq'])->name('admin.rfq.create');
+    Route::post('/rfq/create', [AdminDashboardController::class, 'storeAdminAssistedRfq'])->name('admin.rfq.store-assisted');
     Route::get('/rfq', [AdminDashboardController::class, 'rfq'])->name('admin.rfq');
     Route::post('/rfq/quote', [AdminDashboardController::class, 'submitQuote'])->name('admin.rfq.quote');
+    Route::post('/rfq/{serviceRequest}/approve-on-behalf', [AdminDashboardController::class, 'approveRfqOnBehalf'])->name('admin.rfq.approve-on-behalf');
     Route::post('/rfq/{serviceRequest}/reject', [AdminDashboardController::class, 'rejectRFQ'])->name('admin.rfq.reject');
     Route::post('/rfq/{serviceRequest}/assign-pm', [AdminDashboardController::class, 'assignPm'])->name('admin.rfq.assign-pm');
     Route::post('/rfq/{serviceRequest}/request-payment', [AdminDashboardController::class, 'requestPayment'])->name('admin.rfq.request-payment');
+    Route::post('/rfq/{serviceRequest}/confirm-payment-on-behalf', [AdminDashboardController::class, 'confirmPaymentOnBehalf'])->name('admin.rfq.confirm-payment-on-behalf');
 
     // Reports
     Route::get('/reports', [AdminDashboardController::class, 'reports'])->name('admin.reports');

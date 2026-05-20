@@ -8,6 +8,7 @@ use App\Models\ServiceRequest;
 use App\Models\Technician;
 use App\Models\JobAssignment;
 use App\Models\AuditLog;
+use App\Models\PaymentMilestoneAllocation;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
@@ -69,7 +70,12 @@ class TechnicianPaymentService
                 if ($validatedProgress <= 0) continue;
 
                 // Calculate cumulative amount due
-                $cumulativeAmountDue = $agreedCompensation * ($validatedProgress / 100);
+                $cumulativeAmountDue = $this->calculateCumulativeAmountDue(
+                    $serviceRequest,
+                    $technician->id,
+                    (float) $agreedCompensation,
+                    (int) $validatedProgress
+                );
 
                 // Get previous cumulative paid (from ALL prior sheets, handles gap weeks correctly)
                 $previousCumulativePaid = $this->getPreviousCumulativePaid(
@@ -166,6 +172,90 @@ class TechnicianPaymentService
 
         // Fallback to service request progress
         return $serviceRequest->progress_percentage ?? 0;
+    }
+
+    public function getValidatedProgressForTechnician(ServiceRequest $serviceRequest, int $technicianId): int
+    {
+        $report = $serviceRequest->progressReports()
+            ->where('is_validated', true)
+            ->where('technician_id', $technicianId)
+            ->orderBy('report_date', 'desc')
+            ->first();
+
+        return $report
+            ? (int) ($report->validated_percent ?? $report->percent_complete ?? 0)
+            : (int) ($serviceRequest->progress_percentage ?? 0);
+    }
+
+    public function resolveApprovedAmount(ServiceRequest $serviceRequest, int $technicianId): float
+    {
+        $assignment = JobAssignment::where('service_request_id', $serviceRequest->id)
+            ->where('technician_id', $technicianId)
+            ->whereIn('status', [
+                JobAssignment::STATUS_PENDING,
+                JobAssignment::STATUS_ACCEPTED,
+                JobAssignment::STATUS_COMPLETED,
+            ])
+            ->sum('agreed_compensation');
+
+        $approvedAmount = (float) $assignment;
+
+        if ($approvedAmount <= 0) {
+            $subTaskAmount = (float) $serviceRequest->subTasks()
+                ->where('technician_id', $technicianId)
+                ->sum('agreed_compensation');
+            $approvedAmount = $subTaskAmount;
+        }
+
+        if ($approvedAmount <= 0 && $serviceRequest->technician_payout > 0) {
+            $approvedAmount = (float) $serviceRequest->technician_payout;
+        }
+
+        if ($approvedAmount <= 0 && $serviceRequest->quote_labor_cost > 0) {
+            $approvedAmount = (float) $serviceRequest->quote_labor_cost;
+        }
+
+        return round($approvedAmount, 2);
+    }
+
+    public function getUnlockedMilestoneAllocationTotal(ServiceRequest $serviceRequest, int $technicianId): ?float
+    {
+        $allocations = PaymentMilestoneAllocation::query()
+            ->where('technician_id', $technicianId)
+            ->whereHas('milestone', function ($query) use ($serviceRequest) {
+                $query->where('service_request_id', $serviceRequest->id)
+                    ->whereIn('status', ['reached', 'paid']);
+            })
+            ->sum('allocated_amount');
+
+        $hasAllocations = PaymentMilestoneAllocation::query()
+            ->where('technician_id', $technicianId)
+            ->whereHas('milestone', function ($query) use ($serviceRequest) {
+                $query->where('service_request_id', $serviceRequest->id);
+            })
+            ->exists();
+
+        if (! $hasAllocations) {
+            return null;
+        }
+
+        return round((float) $allocations, 2);
+    }
+
+    public function calculateCumulativeAmountDue(
+        ServiceRequest $serviceRequest,
+        int $technicianId,
+        float $approvedAmount,
+        int $validatedProgress
+    ): float {
+        $progressEarned = round($approvedAmount * ($validatedProgress / 100), 2);
+        $milestoneReleased = $this->getUnlockedMilestoneAllocationTotal($serviceRequest, $technicianId);
+
+        if ($milestoneReleased === null) {
+            return $progressEarned;
+        }
+
+        return round(min($progressEarned, $milestoneReleased), 2);
     }
 
     /**

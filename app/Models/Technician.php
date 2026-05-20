@@ -123,6 +123,11 @@ class Technician extends Model
         return $this->hasMany(CompensationAmendment::class);
     }
 
+    public function milestoneAllocations()
+    {
+        return $this->hasMany(PaymentMilestoneAllocation::class);
+    }
+
     public function vetter()
     {
         return $this->belongsTo(User::class, 'vetted_by');

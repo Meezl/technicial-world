@@ -189,7 +189,8 @@
                                     <span class="milestone-step">{{ m.progress_step }}%</span>
                                     <span :class="['milestone-status', m.status]">{{ formatStatus(m.status) }}</span>
                                 </div>
-                                <strong class="milestone-amount">{{ formatCurrency(m.amount) }}</strong>
+                                <strong class="milestone-amount">{{ formatCurrency(m.labor_release_amount || 0) }}</strong>
+                                <p class="milestone-note">Allocated to this technician: {{ formatCurrency(m.allocated_amount || 0) }}</p>
                                 <p v-if="m.notes" class="milestone-note">{{ m.notes }}</p>
                             </div>
                         </div>

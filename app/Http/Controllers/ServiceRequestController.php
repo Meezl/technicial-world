@@ -54,6 +54,7 @@ class ServiceRequestController extends Controller
             'location' => $validated['location'],
             'urgency' => $validated['urgency'],
             'status' => 'pending',
+            'submission_mode' => ServiceRequest::SUBMISSION_MODE_CLIENT_SELF,
         ]);
 
         // Load relationships for notification

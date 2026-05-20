@@ -47,6 +47,11 @@
                         <span>Current page</span>
                         <strong>{{ rfqs.last_page ? `${rfqs.current_page} / ${rfqs.last_page}` : '0 / 0' }}</strong>
                     </div>
+
+                    <Link href="/admin/rfq/create" class="btn btn-primary hero-create-btn">
+                        <i class="fas fa-user-plus"></i>
+                        Create For Client
+                    </Link>
                 </div>
             </section>
 
@@ -127,6 +132,15 @@
                         </label>
 
                         <label class="toolbar-field">
+                            <span>Origin</span>
+                            <select v-model="localOrigin" @change="applyFilters" class="status-filter">
+                                <option value="all">All Origins</option>
+                                <option value="client_self">Client Submitted</option>
+                                <option value="admin_proxy">Admin Assisted</option>
+                            </select>
+                        </label>
+
+                        <label class="toolbar-field">
                             <span>Sort</span>
                             <select v-model="localSort" @change="applyFilters" class="status-filter">
                                 <option value="newest">Newest First</option>
@@ -188,6 +202,9 @@
                                         <div class="request-cell">
                                             <strong>{{ rfq.request_id || `REQ-${rfq.id}` }}</strong>
                                             <span class="cell-subtext">{{ rfq.location || 'Location not specified' }}</span>
+                                            <span :class="['origin-badge', rfq.submission_mode === 'admin_proxy' ? 'proxy' : 'self']">
+                                                {{ getSubmissionModeLabel(rfq.submission_mode) }}
+                                            </span>
                                         </div>
                                     </td>
                                     <td>
@@ -233,11 +250,32 @@
                                             <button v-if="rfq.rfq_status === 'pending'" @click="reviewRFQ(rfq)" class="btn btn-sm btn-primary" title="Create Quote">
                                                 <i class="fas fa-file-invoice-dollar"></i>
                                             </button>
-                                            <button v-if="rfq.rfq_status === 'approved'" @click="initiatePaymentRequest(rfq)" class="btn btn-sm btn-success" title="Request Payment">
+                                            <button
+                                                v-if="rfq.rfq_status === 'approved' && rfq.submission_mode !== 'admin_proxy'"
+                                                @click="initiatePaymentRequest(rfq)"
+                                                class="btn btn-sm btn-success"
+                                                title="Request Payment"
+                                            >
                                                 <i class="fas fa-hand-holding-usd"></i>
+                                            </button>
+                                            <button
+                                                v-if="rfq.rfq_status === 'approved' && rfq.submission_mode === 'admin_proxy'"
+                                                @click="openProxyPaymentModal(rfq)"
+                                                class="btn btn-sm btn-teal"
+                                                title="Confirm Payment Received"
+                                            >
+                                                <i class="fas fa-cash-register"></i>
                                             </button>
                                             <button v-if="rfq.rfq_status === 'quoted'" @click="viewRFQ(rfq)" class="btn btn-sm btn-success" title="View Quote">
                                                 <i class="fas fa-receipt"></i>
+                                            </button>
+                                            <button
+                                                v-if="rfq.rfq_status === 'quoted' && rfq.submission_mode === 'admin_proxy'"
+                                                @click="openApproveOnBehalfModal(rfq)"
+                                                class="btn btn-sm btn-warning"
+                                                title="Approve on behalf of client"
+                                            >
+                                                <i class="fas fa-user-check"></i>
                                             </button>
                                         </div>
                                     </td>
@@ -280,6 +318,10 @@
 
                             <p class="mobile-description">{{ truncateText(rfq.description, 120) || 'No description provided.' }}</p>
 
+                            <span :class="['origin-badge', rfq.submission_mode === 'admin_proxy' ? 'proxy' : 'self']">
+                                {{ getSubmissionModeLabel(rfq.submission_mode) }}
+                            </span>
+
                             <div class="action-buttons mobile-actions">
                                 <button @click="viewRFQ(rfq)" class="btn btn-sm btn-info">
                                     <i class="fas fa-eye"></i> View
@@ -287,8 +329,26 @@
                                 <button v-if="rfq.rfq_status === 'pending'" @click="reviewRFQ(rfq)" class="btn btn-sm btn-primary">
                                     <i class="fas fa-file-invoice-dollar"></i> Quote
                                 </button>
-                                <button v-if="rfq.rfq_status === 'approved'" @click="initiatePaymentRequest(rfq)" class="btn btn-sm btn-success">
+                                <button
+                                    v-if="rfq.rfq_status === 'approved' && rfq.submission_mode !== 'admin_proxy'"
+                                    @click="initiatePaymentRequest(rfq)"
+                                    class="btn btn-sm btn-success"
+                                >
                                     <i class="fas fa-hand-holding-usd"></i> Payment
+                                </button>
+                                <button
+                                    v-if="rfq.rfq_status === 'approved' && rfq.submission_mode === 'admin_proxy'"
+                                    @click="openProxyPaymentModal(rfq)"
+                                    class="btn btn-sm btn-teal"
+                                >
+                                    <i class="fas fa-cash-register"></i> Confirm Payment
+                                </button>
+                                <button
+                                    v-if="rfq.rfq_status === 'quoted' && rfq.submission_mode === 'admin_proxy'"
+                                    @click="openApproveOnBehalfModal(rfq)"
+                                    class="btn btn-sm btn-warning"
+                                >
+                                    <i class="fas fa-user-check"></i> Approve
                                 </button>
                             </div>
                         </article>
@@ -395,6 +455,24 @@
                                         {{ getStatusLabel(selectedRFQ?.rfq_status || 'pending') }}
                                     </span>
                                 </div>
+                                <div class="info-item">
+                                    <label>Origin:</label>
+                                    <span :class="['origin-badge', selectedRFQ?.submission_mode === 'admin_proxy' ? 'proxy' : 'self']">
+                                        {{ getSubmissionModeLabel(selectedRFQ?.submission_mode) }}
+                                    </span>
+                                </div>
+                                <div class="info-item" v-if="selectedRFQ?.created_by_admin">
+                                    <label>Created By Admin:</label>
+                                    <span>{{ selectedRFQ?.created_by_admin?.name }}</span>
+                                </div>
+                                <div class="info-item" v-if="selectedRFQ?.proxy_quote_approver">
+                                    <label>Proxy Approved By:</label>
+                                    <span>{{ selectedRFQ?.proxy_quote_approver?.name }}</span>
+                                </div>
+                                <div class="info-item" v-if="selectedRFQ?.proxy_quote_approved_at">
+                                    <label>Proxy Approval Date:</label>
+                                    <span>{{ formatDateTime(selectedRFQ?.proxy_quote_approved_at) }}</span>
+                                </div>
                                 <div class="info-item full-width">
                                     <label>Description:</label>
                                     <p>{{ selectedRFQ?.description }}</p>
@@ -402,6 +480,10 @@
                                 <div class="info-item full-width" v-if="selectedRFQ?.location">
                                     <label>Location:</label>
                                     <p>{{ selectedRFQ?.location }}</p>
+                                </div>
+                                <div class="info-item full-width" v-if="selectedRFQ?.proxy_quote_approval_note">
+                                    <label>Proxy Approval Note:</label>
+                                    <p>{{ selectedRFQ?.proxy_quote_approval_note }}</p>
                                 </div>
                             </div>
                         </div>
@@ -475,6 +557,13 @@
                 <div class="modal-footer">
                     <button v-if="selectedRFQ?.rfq_status === 'pending'" @click="editRFQ" class="btn btn-primary">
                         <i class="fas fa-edit"></i> Create Quotation
+                    </button>
+                    <button
+                        v-if="selectedRFQ?.rfq_status === 'quoted' && selectedRFQ?.submission_mode === 'admin_proxy'"
+                        @click="openApproveOnBehalfModal(selectedRFQ)"
+                        class="btn btn-warning"
+                    >
+                        <i class="fas fa-user-check"></i> Approve On Behalf
                     </button>
                     <button @click="closeViewModal" class="btn btn-secondary">Close</button>
                 </div>
@@ -578,6 +667,98 @@
             </div>
         </div>
 
+        <!-- Proxy Payment Confirmation Modal (admin-assisted RFQs only) -->
+        <div v-if="showProxyPaymentModal" class="modal-overlay" @click="closeProxyPaymentModal">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h3><i class="fas fa-cash-register" style="margin-right:0.5rem;color:#0f766e;"></i>Confirm Payment Received</h3>
+                    <button @click="closeProxyPaymentModal" class="modal-close"><i class="fas fa-times"></i></button>
+                </div>
+                <form @submit.prevent="submitProxyPayment">
+                    <div class="modal-body">
+                        <div class="proxy-payment-notice">
+                            <i class="fas fa-info-circle"></i>
+                            This is an admin-assisted request. You are confirming payment on behalf of the client — no payment request will be sent to them.
+                        </div>
+
+                        <div class="payment-request-info">
+                            <div class="info-row">
+                                <span class="label">Request ID:</span>
+                                <span class="value">{{ selectedRFQ?.request_id }}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Client:</span>
+                                <span class="value">{{ selectedRFQ?.user?.name }}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Total Quote:</span>
+                                <span class="value highlight">KSH {{ formatCurrency(selectedRFQ?.quote_amount) }}</span>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Payment Percentage (%)</label>
+                            <input v-model.number="proxyPaymentForm.percentage" type="number" min="1" max="100" class="form-control" required>
+                        </div>
+                        <div class="calculated-amount" v-if="proxyPaymentForm.percentage > 0">
+                            <span class="label">Amount Confirmed:</span>
+                            <span class="amount">KSH {{ formatCurrency((proxyPaymentForm.percentage / 100) * (selectedRFQ?.quote_amount || 0)) }}</span>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Payment Method</label>
+                            <select v-model="proxyPaymentForm.payment_method" class="form-control" required>
+                                <option value="">Select method...</option>
+                                <option value="cash">Cash</option>
+                                <option value="cheque">Cheque</option>
+                                <option value="bank_deposit">Bank Deposit</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" v-if="proxyPaymentForm.payment_method === 'cheque'">
+                            <label>Cheque Number *</label>
+                            <input v-model="proxyPaymentForm.cheque_number" type="text" class="form-control" placeholder="e.g. 001234" required>
+                        </div>
+                        <div class="form-group" v-if="proxyPaymentForm.payment_method === 'bank_deposit'">
+                            <label>Bank Reference *</label>
+                            <input v-model="proxyPaymentForm.bank_reference" type="text" class="form-control" placeholder="e.g. TXN-20260512-001" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Proof of Payment (optional)</label>
+                            <div class="evidence-upload-area" @click="proxyEvidenceInput.click()">
+                                <div v-if="!proxyPaymentForm.evidence" class="evidence-placeholder">
+                                    <i class="fas fa-upload"></i>
+                                    <span>Click to upload receipt, cheque scan, or deposit slip</span>
+                                    <small>JPG, PNG or PDF · Max 10 MB</small>
+                                </div>
+                                <div v-else class="evidence-selected">
+                                    <i class="fas fa-check-circle" style="color:#10b981;"></i>
+                                    <span>{{ proxyPaymentForm.evidence.name }}</span>
+                                    <button type="button" class="remove-evidence-btn" @click.stop="proxyPaymentForm.evidence = null; proxyEvidenceInput.value = ''">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <input ref="proxyEvidenceInput" type="file" accept="image/jpeg,image/png,application/pdf" style="display:none" @change="e => proxyPaymentForm.evidence = e.target.files[0] || null">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Notes (Optional)</label>
+                            <textarea v-model="proxyPaymentForm.notes" class="form-control" rows="2" placeholder="e.g. Paid in cash at office on 12 May 2026"></textarea>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" @click="closeProxyPaymentModal" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" class="btn btn-teal" :disabled="isSubmittingProxyPayment || !proxyPaymentForm.payment_method">
+                            <i class="fas fa-check-circle"></i>
+                            {{ isSubmittingProxyPayment ? 'Confirming...' : 'Confirm Payment Received' }}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
         <!-- Request Payment Modal -->
         <div v-if="showPaymentModal" class="modal-overlay" @click="closePaymentModal">
             <div class="modal-content" @click.stop>
@@ -643,6 +824,56 @@
             </div>
         </div>
 
+        <!-- Proxy Approval Modal -->
+        <div v-if="showApproveOnBehalfModal" class="modal-overlay" @click="closeApproveOnBehalfModal">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h3>Approve On Behalf Of Client</h3>
+                    <button @click="closeApproveOnBehalfModal" class="modal-close">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+
+                <form @submit.prevent="submitApproveOnBehalf">
+                    <div class="modal-body">
+                        <div class="payment-request-info">
+                            <div class="info-row">
+                                <span class="label">Request ID:</span>
+                                <span class="value">{{ selectedRFQ?.request_id }}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Client:</span>
+                                <span class="value">{{ selectedRFQ?.user?.name }}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="label">Origin:</span>
+                                <span class="value">{{ getSubmissionModeLabel(selectedRFQ?.submission_mode) }}</span>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Approval note</label>
+                            <textarea
+                                v-model="proxyApprovalNote"
+                                class="form-control"
+                                rows="4"
+                                placeholder="Document how the client approved this quotation offline."
+                                required
+                            ></textarea>
+                            <small class="helper-text">Example: Client approved via signed quote received by email on 12 May 2026.</small>
+                        </div>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button type="button" @click="closeApproveOnBehalfModal" class="btn btn-secondary">Cancel</button>
+                        <button type="submit" class="btn btn-warning" :disabled="proxyApprovalNote.trim().length < 10">
+                            <i class="fas fa-user-check"></i> Confirm Proxy Approval
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
         <!-- Rejection Modal -->
         <div v-if="showRejectModal" class="modal-overlay" @click="closeRejectModal">
             <div class="modal-content" @click.stop>
@@ -674,18 +905,19 @@
 <script setup>
 import AdminSidebar from '../../Components/AdminSidebar.vue'
 import { ref, computed } from 'vue'
-import { router } from '@inertiajs/vue3'
+import { Link, router } from '@inertiajs/vue3'
 import axios from 'axios'
 
 const props = defineProps({
     rfqs: { type: Object, default: () => ({ data: [], current_page: 1, last_page: 1, total: 0, from: 0, to: 0 }) },
     stats: { type: Object, default: () => ({ pending: 0, quoted: 0, approved: 0, rejected: 0, total: 0, totalValue: 0 }) },
-    filters: { type: Object, default: () => ({ search: '', status: 'all', sort: 'newest', per_page: 15 }) },
+    filters: { type: Object, default: () => ({ search: '', status: 'all', origin: 'all', sort: 'newest', per_page: 15 }) },
 })
 
 // Local filter state (bound to inputs)
 const localSearch = ref(props.filters.search || '')
 const localStatus = ref(props.filters.status || 'all')
+const localOrigin = ref(props.filters.origin || 'all')
 const localSort = ref(props.filters.sort || 'newest')
 const localPerPage = ref(props.filters.per_page || 15)
 
@@ -694,9 +926,23 @@ const showViewModal = ref(false)
 const showReviewModal = ref(false)
 const showRejectModal = ref(false)
 const showPaymentModal = ref(false)
+const showApproveOnBehalfModal = ref(false)
+const showProxyPaymentModal = ref(false)
 const selectedRFQ = ref(null)
 const rejectionReason = ref('')
+const proxyApprovalNote = ref('')
 const isSubmittingPayment = ref(false)
+const isSubmittingProxyPayment = ref(false)
+const proxyEvidenceInput = ref(null)
+
+const proxyPaymentForm = ref({
+    percentage: 50,
+    payment_method: '',
+    cheque_number: '',
+    bank_reference: '',
+    notes: '',
+    evidence: null,
+})
 
 const quotationForm = ref({
     materials: [{ name: '', quantity: 1, unit_price: 0 }],
@@ -715,6 +961,7 @@ const applyFilters = () => {
     router.get('/admin/rfq', {
         search: localSearch.value || undefined,
         status: localStatus.value !== 'all' ? localStatus.value : undefined,
+        origin: localOrigin.value !== 'all' ? localOrigin.value : undefined,
         sort: localSort.value !== 'newest' ? localSort.value : undefined,
         per_page: localPerPage.value !== 15 ? localPerPage.value : undefined,
     }, {
@@ -730,6 +977,7 @@ const goToPage = (page) => {
         page,
         search: localSearch.value || undefined,
         status: localStatus.value !== 'all' ? localStatus.value : undefined,
+        origin: localOrigin.value !== 'all' ? localOrigin.value : undefined,
         sort: localSort.value !== 'newest' ? localSort.value : undefined,
         per_page: localPerPage.value !== 15 ? localPerPage.value : undefined,
     }, {
@@ -742,6 +990,7 @@ const goToPage = (page) => {
 const clearFilters = () => {
     localSearch.value = ''
     localStatus.value = 'all'
+    localOrigin.value = 'all'
     localSort.value = 'newest'
     localPerPage.value = 15
     router.get('/admin/rfq', {}, { preserveState: true, preserveScroll: true, replace: true })
@@ -776,6 +1025,7 @@ const activeFilterChips = computed(() => {
     const chips = []
     if (localSearch.value) chips.push(`Search: ${localSearch.value}`)
     if (localStatus.value !== 'all') chips.push(`Status: ${getStatusLabel(localStatus.value)}`)
+    if (localOrigin.value !== 'all') chips.push(`Origin: ${getSubmissionModeLabel(localOrigin.value)}`)
     if (localSort.value !== 'newest') chips.push('Sort: Oldest first')
     if (localPerPage.value !== 15) chips.push(`Rows: ${localPerPage.value}`)
     return chips
@@ -805,6 +1055,52 @@ const initiatePaymentRequest = (rfq) => {
     showPaymentModal.value = true
 }
 const closePaymentModal = () => { showPaymentModal.value = false; selectedRFQ.value = null }
+
+const openProxyPaymentModal = (rfq) => {
+    selectedRFQ.value = rfq
+    proxyPaymentForm.value = { percentage: 50, payment_method: '', cheque_number: '', bank_reference: '', notes: '', evidence: null }
+    showProxyPaymentModal.value = true
+}
+const closeProxyPaymentModal = () => {
+    showProxyPaymentModal.value = false
+    selectedRFQ.value = null
+    if (proxyEvidenceInput.value) proxyEvidenceInput.value.value = ''
+}
+
+const submitProxyPayment = () => {
+    if (!selectedRFQ.value) return
+    isSubmittingProxyPayment.value = true
+    const fd = new FormData()
+    fd.append('percentage', proxyPaymentForm.value.percentage)
+    fd.append('payment_method', proxyPaymentForm.value.payment_method)
+    if (proxyPaymentForm.value.cheque_number) fd.append('cheque_number', proxyPaymentForm.value.cheque_number)
+    if (proxyPaymentForm.value.bank_reference) fd.append('bank_reference', proxyPaymentForm.value.bank_reference)
+    if (proxyPaymentForm.value.notes) fd.append('notes', proxyPaymentForm.value.notes)
+    if (proxyPaymentForm.value.evidence) fd.append('evidence', proxyPaymentForm.value.evidence)
+    axios.post(`/admin/rfq/${selectedRFQ.value.id}/confirm-payment-on-behalf`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    }).then(response => {
+        if (response.data.success) {
+            alert(response.data.message || 'Payment confirmed successfully.')
+            closeProxyPaymentModal()
+            router.reload()
+        }
+    }).catch(error => {
+        alert(error.response?.data?.error || 'Failed to confirm payment.')
+    }).finally(() => {
+        isSubmittingProxyPayment.value = false
+    })
+}
+
+const openApproveOnBehalfModal = (rfq) => {
+    selectedRFQ.value = rfq
+    proxyApprovalNote.value = rfq?.proxy_quote_approval_note || ''
+    showApproveOnBehalfModal.value = true
+}
+const closeApproveOnBehalfModal = () => {
+    showApproveOnBehalfModal.value = false
+    proxyApprovalNote.value = ''
+}
 
 const resetQuotationForm = () => {
     quotationForm.value = { materials: [{ name: '', quantity: 1, unit_price: 0 }], labor_cost: 0, notes: '', materials_file: null }
@@ -854,8 +1150,23 @@ const submitPaymentRequest = () => {
     }).finally(() => { isSubmittingPayment.value = false })
 }
 
+const submitApproveOnBehalf = () => {
+    if (!selectedRFQ.value?.id) return
+
+    router.post(`/admin/rfq/${selectedRFQ.value.id}/approve-on-behalf`, {
+        note: proxyApprovalNote.value,
+    }, {
+        preserveState: false,
+        onSuccess: () => {
+            closeApproveOnBehalfModal()
+            closeViewModal()
+        },
+    })
+}
+
 // --- Helpers ---
 const formatDate = (date) => date ? new Date(date).toLocaleDateString() : 'N/A'
+const formatDateTime = (date) => date ? new Date(date).toLocaleString() : 'N/A'
 const formatCurrency = (amount) => new Intl.NumberFormat('en-KE').format(amount || 0)
 const truncateText = (text, length) => (!text ? '' : text.length > length ? text.substring(0, length) + '...' : text)
 
@@ -868,6 +1179,7 @@ const getDaysOpenLabel = (date) => {
 }
 
 const getStatusLabel = (status) => ({ pending: 'Pending Review', quoted: 'Awaiting Approval', approved: 'Approved', rejected: 'Rejected' })[status] || 'Unknown'
+const getSubmissionModeLabel = (mode) => ({ client_self: 'Client Submitted', admin_proxy: 'Admin Assisted' })[mode] || 'Client Submitted'
 
 defineOptions({ layout: null })
 </script>
@@ -946,6 +1258,8 @@ defineOptions({ layout: null })
 .hero-action-tile, .hero-action-note, .mobile-rfq-grid > div { padding: 1rem; border-radius: 18px; background: #f8fafc; border: 1px solid #e2e8f0; }
 .hero-action-tile span, .hero-action-note span, .toolbar-field span, .cell-subtext, .mobile-rfq-grid span, .pagination-info, .no-data span { color: #64748b; font-size: 0.8rem; }
 .hero-action-tile strong, .hero-action-note strong, .mobile-rfq-grid strong { display: block; margin-top: 0.35rem; color: #0f172a; }
+.hero-action-note { margin-bottom: 1.35rem; }
+.hero-create-btn { display: inline-flex; margin-top: 5px; }
 
 .rfq-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 1.5rem; }
 .stat-card { padding: 1.35rem; border-radius: 22px; position: relative; overflow: hidden; }
@@ -1107,4 +1421,39 @@ defineOptions({ layout: null })
 @media (min-width: 769px) {
     .mobile-rfq-list { display: none; }
 }
+
+/* Proxy payment */
+.btn-teal { background: #0f766e; color: #ffffff; border: none; }
+.btn-teal:hover:not(:disabled) { background: #0d6460; }
+.btn-teal:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.proxy-payment-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.8rem 1rem;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 10px;
+    color: #166534;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    margin-bottom: 1.25rem;
+}
+.proxy-payment-notice i { margin-top: 0.15rem; flex-shrink: 0; }
+
+.evidence-upload-area {
+    border: 2px dashed #cbd5e1;
+    border-radius: 12px;
+    padding: 1.1rem;
+    cursor: pointer;
+    transition: border-color 0.2s ease, background 0.2s ease;
+    background: #f8fafc;
+}
+.evidence-upload-area:hover { border-color: #0f766e; background: #f0fdf4; }
+.evidence-placeholder { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; color: #64748b; text-align: center; }
+.evidence-placeholder i { font-size: 1.5rem; }
+.evidence-placeholder small { font-size: 0.78rem; }
+.evidence-selected { display: flex; align-items: center; gap: 0.65rem; color: #0f172a; font-weight: 500; }
+.remove-evidence-btn { margin-left: auto; border: none; background: transparent; color: #b91c1c; font-size: 1rem; cursor: pointer; }
 </style>

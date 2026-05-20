@@ -659,6 +659,10 @@
                                 <span>Paid</span>
                                 <strong>{{ paidMilestonesCount }}</strong>
                             </div>
+                            <div class="milestone-summary-card">
+                                <span>Labor released</span>
+                                <strong>KSH {{ formatCurrency(milestoneLaborReleasedTotal) }}</strong>
+                            </div>
                         </div>
 
                         <div v-if="job.milestones && job.milestones.length > 0" class="milestones-list">
@@ -675,8 +679,35 @@
                                             {{ milestone.status === 'reached' ? 'Due' : milestone.status }}
                                         </span>
                                     </div>
-                                    <p class="milestone-amount">KSH {{ formatCurrency(milestone.amount) }}</p>
+                                    <div class="milestone-finance-grid">
+                                        <div>
+                                            <span class="milestone-label">Labor release</span>
+                                            <p class="milestone-amount labor">KSH {{ formatCurrency(milestone.labor_release_amount || 0) }}</p>
+                                        </div>
+                                        <div>
+                                            <span class="milestone-label">Allocated</span>
+                                            <p class="milestone-amount">KSH {{ formatCurrency(getMilestoneAllocatedAmount(milestone)) }}</p>
+                                        </div>
+                                        <div>
+                                            <span class="milestone-label">Remaining</span>
+                                            <p class="milestone-amount" :class="getMilestoneRemainingAmount(milestone) > 0 ? 'remaining' : 'settled'">
+                                                KSH {{ formatCurrency(getMilestoneRemainingAmount(milestone)) }}
+                                            </p>
+                                        </div>
+                                    </div>
                                     <p v-if="milestone.notes" class="milestone-notes">{{ milestone.notes }}</p>
+                                    <div v-if="milestone.allocations && milestone.allocations.length > 0" class="milestone-allocation-list">
+                                        <div v-for="allocation in milestone.allocations" :key="allocation.id" class="milestone-allocation-row">
+                                            <div>
+                                                <strong>{{ allocation.technician?.user?.name || `Technician #${allocation.technician_id}` }}</strong>
+                                                <span v-if="allocation.notes">{{ allocation.notes }}</span>
+                                            </div>
+                                            <strong>KSH {{ formatCurrency(allocation.allocated_amount) }}</strong>
+                                        </div>
+                                    </div>
+                                    <p v-else class="milestone-allocation-empty">
+                                        No technician allocations planned for this milestone yet.
+                                    </p>
                                 </div>
                                 <div class="milestone-actions">
                                     <button
@@ -1002,12 +1033,82 @@
                             </select>
                         </div>
                         <div class="form-group">
-                            <label>Amount (KSH)</label>
-                            <input type="number" v-model="milestoneForm.amount" step="0.01" min="0" required class="form-control">
+                            <label>Labor Release Amount (KSH)</label>
+                            <input type="number" v-model="milestoneForm.labor_release_amount" step="0.01" min="0" required class="form-control">
+                            <small class="assignment-field-help">
+                                This is the maximum technician labor value this milestone can unlock.
+                            </small>
                         </div>
                         <div class="form-group">
                             <label>Notes</label>
                             <textarea v-model="milestoneForm.notes" rows="2" class="form-control"></textarea>
+                        </div>
+
+                        <div class="milestone-allocation-editor">
+                            <div class="milestone-allocation-editor-head">
+                                <div>
+                                    <h4>Technician Allocation Plan</h4>
+                                    <p>Split this milestone's labor release across assigned technicians.</p>
+                                </div>
+                                <button type="button" @click="addMilestoneAllocation" class="btn btn-secondary btn-sm">
+                                    <i class="fas fa-plus"></i>
+                                    Add Technician
+                                </button>
+                            </div>
+
+                            <div class="milestone-allocation-summary">
+                                <span>Allocated: KSH {{ formatCurrency(milestoneAllocatedTotal) }}</span>
+                                <span>Remaining: KSH {{ formatCurrency(milestoneAllocationRemaining) }}</span>
+                            </div>
+
+                            <div v-if="milestoneForm.allocations.length > 0" class="milestone-allocation-editor-list">
+                                <div v-for="(allocation, index) in milestoneForm.allocations" :key="`allocation-${index}`" class="milestone-allocation-editor-row">
+                                    <div class="alloc-tech-col">
+                                        <select
+                                            v-model="allocation.technician_id"
+                                            class="form-control"
+                                            required
+                                            @change="onMilestoneAllocationTechnicianChange(index)"
+                                        >
+                                            <option value="">Select technician</option>
+                                            <option
+                                                v-for="tech in availableMilestoneTechnicians(index)"
+                                                :key="tech.id"
+                                                :value="tech.id"
+                                            >
+                                                {{ tech.user?.name || tech.technician_id }}
+                                            </option>
+                                        </select>
+                                        <div v-if="allocation.technician_id" class="alloc-tech-budget">
+                                            <span>Agreed: KSH {{ formatCurrency(milestoneAssignedTechnicians.find(t => Number(t.id) === Number(allocation.technician_id))?.agreed_compensation || 0) }}</span>
+                                            <span class="alloc-sep">·</span>
+                                            <span>Free: KSH {{ formatCurrency(getTechRemainingBudget(allocation.technician_id)) }}</span>
+                                        </div>
+                                    </div>
+                                    <input
+                                        type="number"
+                                        v-model.number="allocation.allocated_amount"
+                                        step="0.01"
+                                        min="0"
+                                        :max="getTechRemainingBudget(allocation.technician_id) + Number(allocation.allocated_amount || 0)"
+                                        class="form-control"
+                                        placeholder="Release amount"
+                                        required
+                                    >
+                                    <input
+                                        type="text"
+                                        v-model="allocation.notes"
+                                        class="form-control"
+                                        placeholder="Optional note"
+                                    >
+                                    <button type="button" @click="removeMilestoneAllocation(index)" class="btn btn-danger btn-sm">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <p v-else class="milestone-allocation-empty">
+                                No technician allocations added yet. You can still save the milestone and plan allocations later.
+                            </p>
                         </div>
                     </form>
                 </div>
@@ -1367,6 +1468,11 @@ const displayFinalAmount = computed(() => props.job.final_amount ?? null)
 const milestoneCount = computed(() => props.job.milestones?.length || 0)
 const dueMilestonesCount = computed(() => props.job.milestones?.filter(milestone => milestone.status === 'reached').length || 0)
 const paidMilestonesCount = computed(() => props.job.milestones?.filter(milestone => milestone.status === 'paid').length || 0)
+const milestoneLaborReleasedTotal = computed(() => {
+    return (props.job.milestones || []).reduce((sum, milestone) => {
+        return sum + Number(milestone.labor_release_amount || 0)
+    }, 0)
+})
 const progressReports = computed(() => props.job.progress_reports || [])
 const completedLaborPayments = computed(() => {
     return (props.job.technician_payments || []).filter((payment) => {
@@ -1478,6 +1584,87 @@ const availableTrades = computed(() => {
     const trades = new Set(props.technicians.map(t => t.trade).filter(Boolean))
     return [...trades].sort()
 })
+
+const milestoneAssignedTechnicians = computed(() => {
+    // Build a map of technician id → { technician object, agreed_compensation }
+    // agreed_compensation = sum of active job-assignment dues (primary) or sub-task dues (fallback)
+    const techMap = new Map()
+
+    const merge = (tech, compensation) => {
+        if (!tech) return
+        const id = Number(tech.id)
+        const existing = techMap.get(id)
+        techMap.set(id, {
+            ...(existing || tech),
+            agreed_compensation: (existing?.agreed_compensation || 0) + Number(compensation || 0),
+        })
+    }
+
+    ;(props.job.job_assignments || []).forEach((assignment) => {
+        if (!assignment.technician) return
+        if (!['pending', 'accepted', 'completed'].includes(assignment.status)) return
+        merge(assignment.technician, assignment.agreed_compensation)
+    })
+
+    ;(props.job.sub_tasks || []).forEach((subTask) => {
+        if (!subTask.technician) return
+        // Only use sub-task dues if this technician has no direct assignment yet
+        const id = Number(subTask.technician.id)
+        if (!techMap.has(id)) merge(subTask.technician, subTask.agreed_compensation)
+    })
+
+    // Ensure lead and primary are always present even without explicit assignment records
+    if (props.job.technician && !techMap.has(Number(props.job.technician.id))) {
+        techMap.set(Number(props.job.technician.id), { ...props.job.technician, agreed_compensation: 0 })
+    }
+    if (props.job.lead_technician && !techMap.has(Number(props.job.lead_technician.id))) {
+        techMap.set(Number(props.job.lead_technician.id), { ...props.job.lead_technician, agreed_compensation: 0 })
+    }
+
+    return [...techMap.values()].sort((a, b) =>
+        (a.user?.name || '').localeCompare(b.user?.name || '')
+    )
+})
+
+/**
+ * For each technician: sum of allocated_amount across ALL milestones EXCEPT
+ * the one currently being edited (so we know how much budget is already spoken for).
+ */
+const techAllocatedElsewhere = computed(() => {
+    const result = {}
+    const excludeId = editingMilestone.value?.id
+    ;(props.job.milestones || []).forEach((milestone) => {
+        if (milestone.id === excludeId) return
+        ;(milestone.allocations || []).forEach((alloc) => {
+            const id = Number(alloc.technician_id)
+            result[id] = (result[id] || 0) + Number(alloc.allocated_amount || 0)
+        })
+    })
+    return result
+})
+
+/**
+ * How much of a technician's agreed dues are still free to allocate
+ * in milestones (considering what's already locked in other milestones).
+ */
+const getTechRemainingBudget = (technicianId) => {
+    const tech = milestoneAssignedTechnicians.value.find(t => Number(t.id) === Number(technicianId))
+    const agreed = tech?.agreed_compensation || 0
+    const usedElsewhere = techAllocatedElsewhere.value[Number(technicianId)] || 0
+    return Math.max(0, agreed - usedElsewhere)
+}
+
+/**
+ * When a technician is selected in an allocation row, auto-suggest the
+ * lesser of: their remaining budget or this milestone's unallocated balance.
+ */
+const onMilestoneAllocationTechnicianChange = (index) => {
+    const allocation = milestoneForm.allocations[index]
+    if (!allocation?.technician_id) return
+    const techRemaining = getTechRemainingBudget(allocation.technician_id)
+    const milestoneRemaining = milestoneAllocationRemaining.value + Number(allocation.allocated_amount || 0)
+    allocation.allocated_amount = Math.min(techRemaining, milestoneRemaining)
+}
 
 const sortedTechnicians = computed(() => {
     let list = [...props.technicians]
@@ -1736,34 +1923,105 @@ const showMilestoneModal = ref(false)
 const editingMilestone = ref(null)
 const milestoneForm = reactive({
     progress_step: 50,
-    amount: 0,
-    notes: ''
+    labor_release_amount: 0,
+    notes: '',
+    allocations: [],
 })
+const milestoneAllocatedTotal = computed(() => {
+    return milestoneForm.allocations.reduce((sum, allocation) => {
+        return sum + Number(allocation.allocated_amount || 0)
+    }, 0)
+})
+const milestoneAllocationRemaining = computed(() => {
+    return Math.max(Number(milestoneForm.labor_release_amount || 0) - milestoneAllocatedTotal.value, 0)
+})
+
+const newMilestoneAllocationRow = () => ({
+    technician_id: '',
+    allocated_amount: 0,
+    notes: '',
+})
+
+const resetMilestoneForm = () => {
+    milestoneForm.progress_step = 50
+    milestoneForm.labor_release_amount = 0
+    milestoneForm.notes = ''
+    milestoneForm.allocations = []
+}
+
+const addMilestoneAllocation = () => {
+    milestoneForm.allocations.push(newMilestoneAllocationRow())
+}
+
+const removeMilestoneAllocation = (index) => {
+    milestoneForm.allocations.splice(index, 1)
+}
+
+const availableMilestoneTechnicians = (currentIndex) => {
+    const selectedIds = milestoneForm.allocations
+        .map((allocation, index) => index === currentIndex ? null : Number(allocation.technician_id || 0))
+        .filter(Boolean)
+
+    return milestoneAssignedTechnicians.value.filter((technician) => {
+        return !selectedIds.includes(Number(technician.id))
+            || Number(milestoneForm.allocations[currentIndex]?.technician_id) === Number(technician.id)
+    })
+}
+
+const sanitizeMilestoneAllocations = () => {
+    return milestoneForm.allocations
+        .filter((allocation) => allocation.technician_id && Number(allocation.allocated_amount || 0) > 0)
+        .map((allocation) => ({
+            technician_id: Number(allocation.technician_id),
+            allocated_amount: Number(allocation.allocated_amount),
+            notes: allocation.notes || '',
+        }))
+}
+
+const getMilestoneAllocatedAmount = (milestone) => {
+    return (milestone.allocations || []).reduce((sum, allocation) => {
+        return sum + Number(allocation.allocated_amount || 0)
+    }, 0)
+}
+
+const getMilestoneRemainingAmount = (milestone) => {
+    return Math.max(Number(milestone.labor_release_amount || 0) - getMilestoneAllocatedAmount(milestone), 0)
+}
 
 const openAddMilestoneModal = () => {
     editingMilestone.value = null
-    milestoneForm.progress_step = 50
-    milestoneForm.amount = 0
-    milestoneForm.notes = ''
+    resetMilestoneForm()
     showMilestoneModal.value = true
 }
 
 const editMilestone = (milestone) => {
     editingMilestone.value = milestone
     milestoneForm.progress_step = milestone.progress_step
-    milestoneForm.amount = milestone.amount
+    milestoneForm.labor_release_amount = milestone.labor_release_amount || 0
     milestoneForm.notes = milestone.notes || ''
+    milestoneForm.allocations = (milestone.allocations || []).map((allocation) => ({
+        technician_id: Number(allocation.technician_id),
+        allocated_amount: Number(allocation.allocated_amount || 0),
+        notes: allocation.notes || '',
+    }))
     showMilestoneModal.value = true
 }
 
 const saveMilestone = () => {
+    const payload = {
+        progress_step: milestoneForm.progress_step,
+        labor_release_amount: milestoneForm.labor_release_amount,
+        notes: milestoneForm.notes,
+        allocations: sanitizeMilestoneAllocations(),
+    }
+
     if (editingMilestone.value) {
-        router.put(`/admin/milestones/${editingMilestone.value.id}`, { ...milestoneForm }, {
-            onSuccess: () => { showMilestoneModal.value = false }
+        router.put(`/admin/milestones/${editingMilestone.value.id}`, payload, {
+            onSuccess: () => { showMilestoneModal.value = false; resetMilestoneForm() }
         })
     } else {
-        router.post(`/admin/jobs/${props.job.id}/milestones`, { ...milestoneForm }, {
-            onSuccess: () => { showMilestoneModal.value = false }
+        router.post(`/admin/jobs/${props.job.id}/milestones`, payload, {
+            onSuccess: () => { showMilestoneModal.value = false; resetMilestoneForm() }
         })
     }
 }
@@ -1773,7 +2031,13 @@ const markMilestonePaid = (milestone) => {
     router.put(`/admin/milestones/${milestone.id}`, {
         status: 'paid',
         progress_step: milestone.progress_step,
-        amount: milestone.amount 
+        labor_release_amount: milestone.labor_release_amount || 0,
+        notes: milestone.notes || '',
+        allocations: (milestone.allocations || []).map((allocation) => ({
+            technician_id: Number(allocation.technician_id),
+            allocated_amount: Number(allocation.allocated_amount || 0),
+            notes: allocation.notes || '',
+        })),
     })
 }
 
@@ -2844,12 +3108,135 @@ defineOptions({
     color: #0f172a;
 }
 
+.milestone-finance-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+}
+
+.milestone-label {
+    display: block;
+    color: #64748b;
+    font-size: 0.76rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
 .milestone-amount {
     margin: 0.35rem 0 0;
     color: #0f172a;
     font-size: 1.05rem;
     font-weight: 800;
 }
+
+.milestone-amount.labor {
+    color: #0f6c8f;
+}
+
+.milestone-amount.remaining {
+    color: #92400e;
+}
+
+.milestone-amount.settled {
+    color: #166534;
+}
+
+.milestone-allocation-list,
+.milestone-allocation-editor-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    margin-top: 0.9rem;
+}
+
+.milestone-allocation-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.75rem 0.9rem;
+    border-radius: 14px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+}
+
+.milestone-allocation-row span {
+    display: block;
+    margin-top: 0.2rem;
+    color: #64748b;
+    font-size: 0.84rem;
+}
+
+.milestone-allocation-empty {
+    margin: 0.9rem 0 0;
+    color: #64748b;
+    line-height: 1.5;
+}
+
+.milestone-allocation-editor {
+    margin-top: 1.25rem;
+    padding: 1rem;
+    border-radius: 18px;
+    background: #f8fbfd;
+    border: 1px solid #dbe4ee;
+}
+
+.milestone-allocation-editor-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.85rem;
+}
+
+.milestone-allocation-editor-head h4 {
+    margin: 0;
+    color: #0f172a;
+}
+
+.milestone-allocation-editor-head p {
+    margin: 0.3rem 0 0;
+    color: #64748b;
+    line-height: 1.5;
+}
+
+.milestone-allocation-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.85rem;
+    margin-bottom: 0.85rem;
+    color: #0f172a;
+    font-size: 0.88rem;
+    font-weight: 700;
+}
+
+.milestone-allocation-editor-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(140px, 0.7fr) minmax(0, 1fr) auto;
+    gap: 0.65rem;
+    align-items: start;
+}
+
+.alloc-tech-col {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.alloc-tech-budget {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+    color: #64748b;
+    padding: 0 0.1rem;
+}
+
+.alloc-sep { color: #cbd5e1; }
+
+.alloc-tech-budget span:last-child { color: #0f766e; font-weight: 600; }
 
 .job-sidebar-column {
     gap: 1rem;
@@ -3199,6 +3586,11 @@ defineOptions({
         grid-template-columns: 1fr;
         align-items: start;
     }
+
+    .milestone-finance-grid,
+    .milestone-allocation-editor-row {
+        grid-template-columns: 1fr 1fr;
+    }
 }
 
 @media (max-width: 760px) {
@@ -3209,9 +3601,11 @@ defineOptions({
     .subtask-summary-grid,
     .budget-grid,
     .milestone-summary-grid,
+    .milestone-finance-grid,
     .job-sidebar-column,
     .form-row,
-    .hero-action-grid {
+    .hero-action-grid,
+    .milestone-allocation-editor-row {
         grid-template-columns: 1fr;
     }
 
@@ -3235,6 +3629,13 @@ defineOptions({
 
     .subtask-description {
         padding-left: 0;
+    }
+
+    .milestone-allocation-editor-head,
+    .milestone-allocation-row,
+    .milestone-allocation-summary {
+        flex-direction: column;
+        align-items: flex-start;
     }
 }
 </style>

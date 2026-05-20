@@ -100,46 +100,15 @@ class PaymentProcessingController extends Controller
 
         $serviceRequest = ServiceRequest::with('subTasks')->find($srId);
 
-        // 1. Job assignment agreed compensation
-        $assignment = JobAssignment::where('service_request_id', $srId)
-            ->where('technician_id', $techId)
-            ->whereIn('status', ['pending', 'accepted', 'completed'])
-            ->orderByDesc('id')
-            ->first();
-
-        $approvedAmount = (float) ($assignment?->agreed_compensation ?? 0);
-
-        // 2. Sub-task assigned compensation (if technician is on a sub-task)
-        if ($approvedAmount <= 0) {
-            $subTask = $serviceRequest->subTasks
-                ->where('technician_id', $techId)
-                ->first();
-            $approvedAmount = (float) ($subTask?->agreed_compensation ?? 0);
-        }
-
-        // 3. ServiceRequest.technician_payout (admin-set total payout)
-        if ($approvedAmount <= 0 && $serviceRequest->technician_payout > 0) {
-            $approvedAmount = (float) $serviceRequest->technician_payout;
-        }
-
-        // 4. Fall back to the labor cost from the approved quote
-        if ($approvedAmount <= 0 && $serviceRequest->quote_labor_cost > 0) {
-            $approvedAmount = (float) $serviceRequest->quote_labor_cost;
-        }
-
-        // Latest validated progress for this technician on this job
-        $report = $serviceRequest->progressReports()
-            ->where('is_validated', true)
-            ->where('technician_id', $techId)
-            ->orderBy('report_date', 'desc')
-            ->first();
-
-        $progress = $report
-            ? (int) ($report->validated_percent ?? $report->percent_complete)
-            : (int) ($serviceRequest->progress_percentage ?? 0);
-
-        // cumulative_amount_due = approved_amount × (progress / 100)
-        $cumulativeDue = round($approvedAmount * ($progress / 100), 2);
+        $approvedAmount = $this->paymentService->resolveApprovedAmount($serviceRequest, $techId);
+        $progress = $this->paymentService->getValidatedProgressForTechnician($serviceRequest, $techId);
+        $cumulativeDue = $this->paymentService->calculateCumulativeAmountDue(
+            $serviceRequest,
+            $techId,
+            $approvedAmount,
+            $progress
+        );
+        $releasedViaMilestones = $this->paymentService->getUnlockedMilestoneAllocationTotal($serviceRequest, $techId);
 
         // Previous cumulative paid = cumulative_amount_due on the most recent finalized sheet
         $prevEntry = TechnicianPaymentEntry::where('technician_id', $techId)
@@ -155,6 +124,7 @@ class PaymentProcessingController extends Controller
             'approved_amount' => $approvedAmount,
             'cumulative_progress_pct' => $progress,
             'cumulative_amount_due' => $cumulativeDue,
+            'released_via_milestones' => $releasedViaMilestones,
             'previous_cumulative_paid' => round($previousPaid, 2),
             'current_period_payable' => $currentPayable,
         ]);

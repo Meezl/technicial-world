@@ -209,7 +209,9 @@
                 @if($topPrimary)
                     <strong>{{ $variant === 'rfq' ? $topPrimary['job_reference'] : $topPrimary['client_name'] }}</strong>
                     <div class="muted">
-                        {{ $variant === 'rfq' ? ($topPrimary['client_name'] ?? 'N/A') : (($topPrimary['rfq_count'] ?? 0) . ' RFQs') }}
+                        {{ $variant === 'rfq'
+                            ? (($topPrimary['client_name'] ?? 'N/A') . ' • ' . ($topPrimary['service_name'] ?? 'General service'))
+                            : (($topPrimary['rfq_count'] ?? 0) . ' RFQs • ' . ($topPrimary['admin_assisted_rfq_count'] ?? 0) . ' admin-assisted') }}
                     </div>
                     <div>{{ $formatMoney($topPrimary['collected_in_period'] ?? 0) }} collected in window</div>
                 @else
@@ -221,7 +223,9 @@
                 @if($topSecondary)
                     <strong>{{ $variant === 'rfq' ? $topSecondary['job_reference'] : $topSecondary['client_name'] }}</strong>
                     <div class="muted">
-                        {{ $variant === 'rfq' ? ($topSecondary['quote_label'] ?? 'N/A') : (($topSecondary['rfq_count'] ?? 0) . ' RFQs') }}
+                        {{ $variant === 'rfq'
+                            ? (($topSecondary['submission_mode_label'] ?? 'Client Submitted') . ' • ' . ($topSecondary['quote_label'] ?? 'N/A'))
+                            : (($topSecondary['rfq_count'] ?? 0) . ' RFQs • ' . ($topSecondary['client_self_rfq_count'] ?? 0) . ' self-submitted') }}
                     </div>
                     <div>
                         {{ $variant === 'rfq'
@@ -242,6 +246,7 @@
                 <tr>
                     <th>RFQ / Job</th>
                     <th>Client</th>
+                    <th>Origin / Service</th>
                     <th>Quote Type</th>
                     <th class="text-right">Gross Quote</th>
                     <th class="text-right">Collected in Window</th>
@@ -252,6 +257,7 @@
                 <tr>
                     <th>Client</th>
                     <th class="text-right">RFQs</th>
+                    <th class="text-right">Assisted Mix</th>
                     <th class="text-right">Gross Business</th>
                     <th class="text-right">Collected in Window</th>
                     <th class="text-right">Collected to Date</th>
@@ -272,6 +278,16 @@
                             {{ $row['client_name'] ?? 'N/A' }}<br>
                             <span class="muted">{{ $row['client_email'] ?? '' }}</span>
                         </td>
+                        <td>
+                            {{ $row['submission_mode_label'] ?? 'Client Submitted' }}<br>
+                            <span class="muted">{{ $row['service_name'] ?? 'General service' }}</span><br>
+                            @if(!empty($row['created_by_admin_name']))
+                                <span class="muted">Created by {{ $row['created_by_admin_name'] }}</span><br>
+                            @endif
+                            @if(!empty($row['proxy_quote_approved_by_name']))
+                                <span class="muted">Approved by {{ $row['proxy_quote_approved_by_name'] }}</span>
+                            @endif
+                        </td>
                         <td>{{ $row['quote_label'] ?? 'N/A' }}</td>
                         <td class="text-right">{{ $formatMoney($row['gross_quoted_amount'] ?? 0) }}</td>
                         <td class="text-right">{{ $formatMoney($row['collected_in_period'] ?? 0) }}</td>
@@ -285,6 +301,7 @@
                             <span class="muted">{{ $row['client_email'] ?? '' }}</span>
                         </td>
                         <td class="text-right">{{ number_format((int) ($row['rfq_count'] ?? 0)) }}</td>
+                        <td class="text-right">{{ ($row['admin_assisted_rfq_count'] ?? 0) . ' / ' . ($row['client_self_rfq_count'] ?? 0) }}</td>
                         <td class="text-right">{{ $formatMoney($row['gross_quoted_amount'] ?? 0) }}</td>
                         <td class="text-right">{{ $formatMoney($row['collected_in_period'] ?? 0) }}</td>
                         <td class="text-right">{{ $formatMoney($row['total_collected'] ?? 0) }}</td>
@@ -294,7 +311,7 @@
                 @endif
             @empty
                 <tr>
-                    <td colspan="7">No report rows available for this period.</td>
+                    <td colspan="8">No report rows available for this period.</td>
                 </tr>
             @endforelse
         </tbody>

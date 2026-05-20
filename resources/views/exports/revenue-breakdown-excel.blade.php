@@ -78,6 +78,10 @@
                     <th>Request ID</th>
                     <th>Client</th>
                     <th>Client Email</th>
+                    <th>Service</th>
+                    <th>Origin</th>
+                    <th>Created By</th>
+                    <th>Approved By</th>
                     <th>Quote Type</th>
                     <th>Status</th>
                     <th class="text-right">Gross Quote</th>
@@ -92,6 +96,8 @@
                     <th>Client</th>
                     <th>Client Email</th>
                     <th class="text-right">RFQ Count</th>
+                    <th class="text-right">Admin Assisted</th>
+                    <th class="text-right">Self Submitted</th>
                     <th class="text-right">Payment Count in Window</th>
                     <th class="text-right">Gross Business</th>
                     <th class="text-right">Collected in Window</th>
@@ -111,6 +117,10 @@
                         <td>{{ $row['request_id'] ?? '' }}</td>
                         <td>{{ $row['client_name'] ?? '' }}</td>
                         <td>{{ $row['client_email'] ?? '' }}</td>
+                        <td>{{ $row['service_name'] ?? '' }}</td>
+                        <td>{{ $row['submission_mode_label'] ?? '' }}</td>
+                        <td>{{ $row['created_by_admin_name'] ?? '' }}</td>
+                        <td>{{ $row['proxy_quote_approved_by_name'] ?? ($row['quote_approval_actor'] ?? '') }}</td>
                         <td>{{ $row['quote_label'] ?? '' }}</td>
                         <td>{{ $row['status'] ?? '' }}</td>
                         <td class="text-right">{{ $formatMoney($row['gross_quoted_amount'] ?? 0) }}</td>
@@ -125,6 +135,8 @@
                         <td>{{ $row['client_name'] ?? '' }}</td>
                         <td>{{ $row['client_email'] ?? '' }}</td>
                         <td class="text-right">{{ $row['rfq_count'] ?? 0 }}</td>
+                        <td class="text-right">{{ $row['admin_assisted_rfq_count'] ?? 0 }}</td>
+                        <td class="text-right">{{ $row['client_self_rfq_count'] ?? 0 }}</td>
                         <td class="text-right">{{ $row['payment_count_in_period'] ?? 0 }}</td>
                         <td class="text-right">{{ $formatMoney($row['gross_quoted_amount'] ?? 0) }}</td>
                         <td class="text-right">{{ $formatMoney($row['collected_in_period'] ?? 0) }}</td>

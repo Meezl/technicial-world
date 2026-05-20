@@ -150,6 +150,7 @@
                                     <div class="entity-block">
                                         <strong>{{ row.job_reference }}</strong>
                                         <span>{{ row.request_id }}</span>
+                                        <small class="inline-note">{{ row.service_name || 'General service' }}</small>
                                         <small class="status-pill" :class="statusTone(row.status)">{{ formatStatus(row.status) }}</small>
                                     </div>
                                 </td>
@@ -157,7 +158,9 @@
                                     <div class="entity-block compact">
                                         <strong>{{ row.client_name }}</strong>
                                         <span>{{ row.client_email || 'No email available' }}</span>
-                                        <small class="inline-note">{{ row.quote_label }}</small>
+                                        <small class="inline-note">{{ row.submission_mode_label }} • {{ row.quote_label }}</small>
+                                        <small v-if="row.created_by_admin_name" class="inline-note">Created by {{ row.created_by_admin_name }}</small>
+                                        <small v-if="row.proxy_quote_approved_by_name" class="inline-note">Proxy approved by {{ row.proxy_quote_approved_by_name }}</small>
                                     </div>
                                 </td>
                                 <td class="text-right">
@@ -229,6 +232,7 @@
                                     <div class="quality-stack">
                                         <span>{{ row.collection_rate }}% collected this window</span>
                                         <small>Avg RFQ {{ formatCurrency(row.average_rfq_value) }}</small>
+                                        <small>{{ row.admin_assisted_rfq_count || 0 }} admin-assisted • {{ row.client_self_rfq_count || 0 }} self-submitted</small>
                                     </div>
                                 </td>
                                 <td class="text-right">
@@ -248,6 +252,7 @@
                         <div class="entity-block">
                             <strong>{{ isRfqVariant ? row.job_reference : row.client_name }}</strong>
                             <span>{{ isRfqVariant ? row.client_name : row.client_email || 'No email available' }}</span>
+                            <small v-if="isRfqVariant" class="inline-note">{{ row.service_name || 'General service' }}</small>
                         </div>
                         <span v-if="isRfqVariant" class="status-pill" :class="statusTone(row.status)">
                             {{ formatStatus(row.status) }}
@@ -279,10 +284,12 @@
                     </div>
 
                     <div class="mobile-footnote">
-                        <span v-if="isRfqVariant">{{ row.quote_label }}</span>
+                        <span v-if="isRfqVariant">{{ row.submission_mode_label }} • {{ row.quote_label }}</span>
                         <span v-else>{{ row.collection_rate }}% collected this window</span>
                         <span v-if="isRfqVariant && row.latest_payment_date">Last {{ formatDate(row.latest_payment_date) }}</span>
                         <span v-else-if="!isRfqVariant">Avg RFQ {{ formatCurrency(row.average_rfq_value) }}</span>
+                        <span v-if="isRfqVariant && row.proxy_quote_approved_by_name">Approved by {{ row.proxy_quote_approved_by_name }}</span>
+                        <span v-if="!isRfqVariant">{{ row.admin_assisted_rfq_count || 0 }} assisted • {{ row.client_self_rfq_count || 0 }} self-submitted</span>
                     </div>
 
                     <div v-if="!isRfqVariant" class="mobile-actions" style="margin-top: 1rem;">

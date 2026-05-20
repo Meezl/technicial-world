@@ -23,6 +23,11 @@ class ServiceRequest extends Model
         'location',
         'urgency',
         'status',
+        'submission_mode',
+        'created_by_admin_id',
+        'proxy_quote_approved_by',
+        'proxy_quote_approved_at',
+        'proxy_quote_approval_note',
         'rfq_status',
         'quote_amount',
         'quote_materials',
@@ -65,6 +70,7 @@ class ServiceRequest extends Model
         'assigned_at' => 'datetime',
         'completed_date' => 'datetime',
         'client_confirmation_date' => 'datetime',
+        'proxy_quote_approved_at' => 'datetime',
         'suspended_at' => 'datetime',
         'resumed_at' => 'datetime',
         'preferred_date' => 'date',
@@ -100,6 +106,10 @@ class ServiceRequest extends Model
     const STATUS_PENDING = 'pending';
     const STATUS_COMPLETED = 'completed';
     const STATUS_CANCELLED = 'cancelled';
+
+    // Submission modes
+    const SUBMISSION_MODE_CLIENT_SELF = 'client_self';
+    const SUBMISSION_MODE_ADMIN_PROXY = 'admin_proxy';
 
     // RFQ Status constants
     const RFQ_STATUS_PENDING = 'pending';
@@ -180,6 +190,16 @@ class ServiceRequest extends Model
         return $this->belongsTo(Technician::class, 'lead_technician_id');
     }
 
+    public function createdByAdmin()
+    {
+        return $this->belongsTo(User::class, 'created_by_admin_id');
+    }
+
+    public function proxyQuoteApprover()
+    {
+        return $this->belongsTo(User::class, 'proxy_quote_approved_by');
+    }
+
     public function subTasks()
     {
         return $this->hasMany(ServiceSubTask::class)->orderBy('order');
@@ -228,6 +248,16 @@ class ServiceRequest extends Model
     public function milestones()
     {
         return $this->hasMany(PaymentMilestone::class)->orderBy('progress_step');
+    }
+
+    public function milestoneAllocations()
+    {
+        return $this->hasManyThrough(
+            PaymentMilestoneAllocation::class,
+            PaymentMilestone::class,
+            'service_request_id',
+            'payment_milestone_id'
+        );
     }
 
     public function quotations()
@@ -297,6 +327,11 @@ class ServiceRequest extends Model
         return $query->where('rfq_status', self::RFQ_STATUS_APPROVED);
     }
 
+    public function scopeAdminAssisted($query)
+    {
+        return $query->where('submission_mode', self::SUBMISSION_MODE_ADMIN_PROXY);
+    }
+
     public function scopeForPm($query, int $pmId)
     {
         return $query->where('assigned_pm_id', $pmId);
@@ -345,6 +380,16 @@ class ServiceRequest extends Model
         }
 
         return $this->progress_percentage ?? 0;
+    }
+
+    public function isAdminAssisted(): bool
+    {
+        return $this->submission_mode === self::SUBMISSION_MODE_ADMIN_PROXY;
+    }
+
+    public function submissionModeLabel(): string
+    {
+        return $this->isAdminAssisted() ? 'Admin Assisted' : 'Client Submitted';
     }
 
     /**

@@ -249,6 +249,7 @@ class ReportingService
                 'user:id,name,email',
                 'serviceCategory:id,name',
                 'subTasks',
+                'milestones.allocations.technician.user',
             ])
             ->get()
             ->keyBy('id');
@@ -350,6 +351,26 @@ class ReportingService
                     return (float) ($subTask->agreed_compensation ?? 0);
                 });
 
+            $milestoneAllocations = $serviceRequest->milestones
+                ->map(function ($milestone) use ($technicianId) {
+                    $allocation = $milestone->allocations->firstWhere('technician_id', $technicianId);
+                    if (! $allocation) {
+                        return null;
+                    }
+
+                    return [
+                        'milestone_id' => $milestone->id,
+                        'progress_step' => (int) $milestone->progress_step,
+                        'status' => $milestone->status,
+                        'milestone_amount' => (float) ($milestone->amount ?? 0),
+                        'labor_release_amount' => (float) ($milestone->labor_release_amount ?? 0),
+                        'allocated_amount' => (float) ($allocation->allocated_amount ?? 0),
+                        'notes' => $allocation->notes ?: $milestone->notes,
+                    ];
+                })
+                ->filter()
+                ->values();
+
             $agreedCompensation = $agreedFromAssignments > 0
                 ? $agreedFromAssignments
                 : ($agreedFromSubTasks > 0
@@ -414,6 +435,10 @@ class ReportingService
                 'latest_progress_pct' => (int) ($latestSheetEntry?->cumulative_progress_pct ?? 0),
                 'latest_period_payable' => (float) ($latestSheetEntry?->current_period_payable ?? 0),
                 'last_payment_date' => collect($history)->pluck('date')->filter()->sortDesc()->first(),
+                'milestone_released_total' => (float) $milestoneAllocations
+                    ->whereIn('status', ['reached', 'paid'])
+                    ->sum('allocated_amount'),
+                'milestone_allocations' => $milestoneAllocations->all(),
                 'history' => $history,
             ];
         })
@@ -491,6 +516,9 @@ class ReportingService
         $query = ServiceRequest::query()
             ->with([
                 'user:id,name,email',
+                'serviceCategory:id,name',
+                'createdByAdmin:id,name,email',
+                'proxyQuoteApprover:id,name,email',
                 'quotations' => function ($query) {
                     $query->select('id', 'service_request_id', 'version', 'status', 'grand_total', 'approved_at')
                         ->orderBy('version', 'desc');
@@ -544,10 +572,19 @@ class ReportingService
                     'service_request_id' => $serviceRequest->id,
                     'request_id' => $serviceRequest->request_id,
                     'job_reference' => $serviceRequest->job_reference ?? $serviceRequest->request_id,
+                    'service_name' => $serviceRequest->serviceCategory->name ?? 'N/A',
                     'client_id' => $serviceRequest->user_id,
                     'client_name' => $serviceRequest->user->name ?? 'N/A',
                     'client_email' => $serviceRequest->user->email ?? null,
                     'status' => $serviceRequest->status,
+                    'submission_mode' => $serviceRequest->submission_mode ?? ServiceRequest::SUBMISSION_MODE_CLIENT_SELF,
+                    'submission_mode_label' => $serviceRequest->isAdminAssisted() ? 'Admin Assisted' : 'Client Submitted',
+                    'created_by_admin_name' => $serviceRequest->createdByAdmin->name ?? null,
+                    'proxy_quote_approved_by_name' => $serviceRequest->proxyQuoteApprover->name ?? null,
+                    'proxy_quote_approved_at' => optional($serviceRequest->proxy_quote_approved_at)->toDateString(),
+                    'quote_approval_actor' => $serviceRequest->proxyQuoteApprover
+                        ? 'Admin proxy'
+                        : ($serviceRequest->rfq_status === ServiceRequest::RFQ_STATUS_APPROVED ? 'Client' : 'Pending'),
                     'gross_quoted_amount' => $grossQuotedAmount,
                     'collected_in_period' => $collectedInPeriod,
                     'total_collected' => $totalCollected,
@@ -555,10 +592,11 @@ class ReportingService
                     'payment_count_in_period' => $paymentsInPeriod->count(),
                     'total_payment_count' => $serviceRequest->payments->count(),
                     'latest_payment_date' => optional($serviceRequest->payments->first()?->paid_at)->toDateString(),
-                    'approved_quote_date' => optional($latestApprovedQuotation?->approved_at)->toDateString(),
+                    'approved_quote_date' => optional($latestApprovedQuotation?->approved_at)->toDateString()
+                        ?? optional($serviceRequest->proxy_quote_approved_at)->toDateString(),
                     'quote_version' => $latestApprovedQuotation?->version,
                     'is_amended' => (int) ($latestApprovedQuotation?->version ?? 1) > 1,
-                    'quote_label' => $this->resolveQuoteLabel($latestApprovedQuotation),
+                    'quote_label' => $this->resolveQuoteLabel($serviceRequest, $latestApprovedQuotation),
                 ];
             })
             ->sort(function ($left, $right) {
@@ -584,6 +622,8 @@ class ReportingService
                     'client_name' => $first['client_name'],
                     'client_email' => $first['client_email'],
                     'rfq_count' => $rfqCount,
+                    'admin_assisted_rfq_count' => (int) $rows->where('submission_mode', ServiceRequest::SUBMISSION_MODE_ADMIN_PROXY)->count(),
+                    'client_self_rfq_count' => (int) $rows->where('submission_mode', ServiceRequest::SUBMISSION_MODE_CLIENT_SELF)->count(),
                     'gross_quoted_amount' => $grossQuotedAmount,
                     'collected_in_period' => $collectedInPeriod,
                     'total_collected' => $totalCollected,
@@ -619,10 +659,12 @@ class ReportingService
         return 0.0;
     }
 
-    protected function resolveQuoteLabel(?Quotation $latestApprovedQuotation): string
+    protected function resolveQuoteLabel(ServiceRequest $serviceRequest, ?Quotation $latestApprovedQuotation): string
     {
         if (! $latestApprovedQuotation) {
-            return 'Pending quote';
+            return $serviceRequest->quote_amount !== null
+                ? 'RFQ quote'
+                : 'Pending quote';
         }
 
         return $latestApprovedQuotation->version > 1

@@ -8,11 +8,14 @@ use App\Models\ProgressReport;
 use App\Models\ServiceRequest;
 use App\Models\ServiceRequestBudget;
 use App\Models\TechnicianPayment;
+use App\Services\TechnicianPaymentService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 
 class AdminPaymentController extends Controller
 {
+    public function __construct(private TechnicianPaymentService $technicianPaymentService) {}
+
     /**
      * Create or update budget for a service request.
      */
@@ -123,8 +126,17 @@ class AdminPaymentController extends Controller
             return back()->with('error', 'Set a labor budget before paying against progress.');
         }
 
-        $validatedPercent = (float) ($progressReport->validated_percent ?? $progressReport->percent_complete ?? 0);
-        $targetAmount = round(((float) $budget->labor_budget) * ($validatedPercent / 100), 2);
+        $validatedPercent = (int) ($progressReport->validated_percent ?? $progressReport->percent_complete ?? 0);
+        $approvedAmount = $this->technicianPaymentService->resolveApprovedAmount(
+            $progressReport->serviceRequest,
+            $progressReport->technician_id
+        );
+        $targetAmount = $this->technicianPaymentService->calculateCumulativeAmountDue(
+            $progressReport->serviceRequest,
+            $progressReport->technician_id,
+            $approvedAmount > 0 ? $approvedAmount : (float) $budget->labor_budget,
+            $validatedPercent
+        );
 
         $alreadyPaid = (float) TechnicianPayment::query()
             ->where('service_request_id', $progressReport->service_request_id)
@@ -151,7 +163,7 @@ class AdminPaymentController extends Controller
             'payment_method' => 'progress_report',
             'paid_at' => now(),
             'notes' => sprintf(
-                'Auto payout for approved progress report #%d at %s%% of labor budget.',
+                'Auto payout for approved progress report #%d at %s%% validated progress, capped by agreed dues and reached milestones.',
                 $progressReport->id,
                 rtrim(rtrim(number_format($validatedPercent, 2, '.', ''), '0'), '.')
             ),
