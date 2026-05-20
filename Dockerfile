@@ -1,8 +1,8 @@
 # Stage 1: Install PHP dependencies
 FROM composer:2 AS composer-builder
 WORKDIR /app
-COPY composer*.json ./
-RUN composer install --no-dev --no-autoloader --prefer-dist
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
 COPY . .
 RUN composer dump-autoload --no-dev --optimize --classmap-authoritative
 
