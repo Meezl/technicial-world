@@ -12,7 +12,7 @@ RUN composer dump-autoload --no-dev --optimize --classmap-authoritative
 FROM node:20 AS frontend-builder
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm install
 COPY . .
 COPY --from=composer-builder /app/vendor/tightenco/ziggy /app/vendor/tightenco/ziggy
 RUN npm run build
