@@ -63,6 +63,7 @@ ENV QUEUE_CONNECTION=redis
 ENV CACHE_STORE=redis
 ENV SESSION_DRIVER=redis
 ENV APP_MAINTENANCE_DRIVER=file
+ENV INERTIA_SSR_ENABLED=false
 
 ENTRYPOINT ["docker-entrypoint"]
 CMD ["frankenphp", "run", "--config", "/etc/caddy/Caddyfile"]
