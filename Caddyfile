@@ -1,6 +1,5 @@
 {
     frankenphp
-    order frankenphp last
 }
 
 :{$PORT:8080} {
