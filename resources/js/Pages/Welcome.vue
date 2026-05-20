@@ -7,7 +7,7 @@
                 <ul class="nav-links">
                     <li><Link href="/about">About Us</Link></li>
                     <li><Link href="/services">Our Services</Link></li>
-                    <li><Link href="/ecommerce">E-Commerce</Link></li>
+                    <li><Link href="https://shop.technicianworld.co.ke" target="_blank">E-Commerce</Link></li>
                     <li><Link href="/contact">Contact Us</Link></li>
                 </ul>
                 <Link v-if="canLogin && !$page.props.auth.user" href="/login" class="cta-button-2">Sign Up / Log in</Link>
