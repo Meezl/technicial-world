@@ -4,10 +4,6 @@
 
 :{$PORT:8080} {
 	root * /app/public
-
 	encode zstd gzip
-
-	try_files {path} {path}/ /index.php?{query}
-	php
-	file_server
+	php_server
 }
