@@ -139,7 +139,7 @@
                 <Link href="/contact" class="cta-button">REQUEST A QUOTE</Link>
             </div>
             <div class="footer-bottom">
-                <p>&copy; 2025 Technician World. All Rights Reserved.</p>
+                <p>&copy; 2026 Technician World. All Rights Reserved.</p>
                 <ul class="footer-links">
                     <li><Link href="/about">About</Link></li>
                     <li><Link href="/services">Services</Link></li>
