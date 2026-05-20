@@ -57,7 +57,7 @@ RUN mkdir -p storage/framework/{sessions,views,cache} \
 # Environment defaults
 ENV PORT=8080
 ENV APP_ENV=production
-ENV APP_DEBUG=false
+ENV APP_DEBUG=true
 ENV LOG_CHANNEL=stderr
 
 ENTRYPOINT ["docker-entrypoint"]

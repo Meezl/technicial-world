@@ -31,6 +31,11 @@ echo "    APP_ENV=$APP_ENV"
 echo "    DB_CONNECTION=${DB_CONNECTION:-not set}"
 echo "    QUEUE_CONNECTION=${QUEUE_CONNECTION:-not set}"
 echo "    CACHE_STORE=${CACHE_STORE:-not set}"
+echo "    SESSION_DRIVER=${SESSION_DRIVER:-not set}"
+
+# Test that the app can boot and respond
+echo "==> Testing Laravel app boot..."
+php artisan about 2>&1 | head -20 || echo "WARNING: App boot test failed"
 
 # ── 5. Queue worker (background, non-fatal) ──────────────────────────────────
 echo "==> Starting queue worker in background..."
