@@ -1024,7 +1024,7 @@ defineOptions({ layout: null })
     color: #94a3b8;
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1024px) {
     .payments-hero,
     .payment-kpi-grid,
     .job-summary-grid {
@@ -1032,7 +1032,7 @@ defineOptions({ layout: null })
     }
 }
 
-@media (max-width: 820px) {
+@media (max-width: 640px) {
     .payments-hero,
     .payment-kpi-grid,
     .filter-grid,

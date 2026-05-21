@@ -1403,6 +1403,13 @@ defineOptions({ layout: null })
 .calculated-amount .amount { font-size: 1.5rem; font-weight: bold; color: var(--primary-color); }
 
 /* Responsive */
+@media (max-width: 1024px) {
+    .toolbar-grid { grid-template-columns: 1fr 1fr; }
+    .toolbar-field-wide { grid-column: 1 / -1; }
+    .rfq-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .hero-action-grid { grid-template-columns: 1fr; }
+}
+
 @media (max-width: 768px) {
     .rfq-stats { grid-template-columns: 1fr 1fr; }
     .rfq-hero, .hero-action-grid, .toolbar-grid, .mobile-rfq-grid, .pagination-shell, .pagination-controls { grid-template-columns: 1fr; }

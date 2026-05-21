@@ -1387,6 +1387,7 @@ defineOptions({ layout: null })
 @media (max-width: 1180px) {
     .technicians-hero, .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .overview-grid { grid-template-columns: 1fr; }
+    .filter-grid { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 860px) {
@@ -1394,5 +1395,11 @@ defineOptions({ layout: null })
     .technician-card-top, .profile-hero, .profile-title-row, .directory-header, .form-banner, .form-row { flex-direction: column; align-items: flex-start; }
     .form-row { grid-template-columns: 1fr; }
     .spotlight-person { grid-template-columns: 1fr; }
+    .technician-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 640px) {
+    .stats-grid { grid-template-columns: 1fr; }
+    .modal-content { width: 95%; max-height: 95vh; }
 }
 </style>
