@@ -1684,6 +1684,12 @@ defineOptions({
     align-self: flex-start;
 }
 
+@media (max-width: 1024px) {
+    .payment-method-options {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
 @media (max-width: 768px) {
     .action-info {
         flex-direction: column;
@@ -1700,6 +1706,12 @@ defineOptions({
 
     .paid-payment-item {
         grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (max-width: 480px) {
+    .paid-payment-item {
+        grid-template-columns: 1fr;
     }
 }
 </style>

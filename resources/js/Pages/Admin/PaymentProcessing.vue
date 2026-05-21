@@ -278,6 +278,7 @@
                                 </div>
                             </div>
 
+                            <div class="table-scroll">
                             <table class="data-table">
                                 <thead>
                                     <tr>
@@ -310,6 +311,7 @@
                                     </tr>
                                 </tfoot>
                             </table>
+                            </div>
 
                             <div v-if="viewSheet.notes" class="sheet-notes">
                                 <i class="fas fa-sticky-note"></i>
@@ -928,15 +930,26 @@ const truncate = (text, len) => {
 
 /* History list */
 .table-shell {
-    overflow: hidden;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
     border-radius: 18px;
     border: 1px solid #e2e8f0;
     background: #fff;
 }
 
+.table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-radius: 18px;
+    border: 1px solid #e2e8f0;
+    background: #fff;
+    margin-top: 1rem;
+}
+
 .data-table {
     width: 100%;
     border-collapse: collapse;
+    min-width: 720px;
 }
 
 .data-table th,
@@ -1064,6 +1077,31 @@ const truncate = (text, len) => {
 
     .form-row {
         grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 640px) {
+    .header-actions {
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
+
+    .header-actions .btn {
+        flex: 1 1 auto;
+    }
+
+    .entries-table th,
+    .entries-table td,
+    .data-table th,
+    .data-table td {
+        padding: 0.6rem 0.55rem;
+        font-size: 0.8rem;
+    }
+
+    .cell-input,
+    .cell-select,
+    .payable-input {
+        min-height: 38px;
     }
 }
 </style>

@@ -31,6 +31,7 @@
                             >
                         </div>
                     </div>
+                    <div class="table-scroll">
                     <table class="data-table">
                         <thead>
                             <tr>
@@ -136,7 +137,8 @@
                             </tr>
                         </tbody>
                     </table>
-                    
+                    </div>
+
                     <div class="pagination-container" v-if="jobs.links.length > 3">
                         <div class="pagination">
                             <Component
@@ -547,5 +549,57 @@ defineOptions({
 .pagination-info {
     color: var(--medium-grey);
     font-size: 0.9rem;
+}
+
+.table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.table-scroll .data-table {
+    min-width: 880px;
+}
+
+@media (max-width: 768px) {
+    .card-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+    }
+
+    .filter-controls input {
+        width: 100%;
+        margin-right: 0 !important;
+        box-sizing: border-box;
+    }
+
+    .header-actions {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .pagination-container {
+        flex-direction: column;
+        gap: 0.75rem;
+        align-items: stretch;
+    }
+
+    .pagination {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .modal-content {
+        width: 95%;
+        max-height: 95vh;
+    }
+
+    .modal-header,
+    .modal-body,
+    .modal-footer {
+        padding: 1rem;
+    }
 }
 </style>

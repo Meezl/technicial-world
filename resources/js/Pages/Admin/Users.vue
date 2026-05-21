@@ -649,11 +649,13 @@ defineOptions({
 
 .users-table {
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .users-table table {
     width: 100%;
     border-collapse: collapse;
+    min-width: 820px;
 }
 
 .users-table th,
@@ -1004,6 +1006,12 @@ defineOptions({
 }
 
 /* Responsive */
+@media (max-width: 1024px) {
+    .stats-section {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
 @media (max-width: 768px) {
     .stats-section {
         grid-template-columns: 1fr;
@@ -1033,6 +1041,18 @@ defineOptions({
     .profile-header {
         flex-direction: column;
         text-align: center;
+    }
+
+    :deep(.modal-content) {
+        width: 95% !important;
+        max-width: 95% !important;
+        max-height: 95vh;
+    }
+
+    :deep(.modal-body),
+    :deep(.modal-header),
+    :deep(.modal-footer) {
+        padding: 1rem !important;
     }
 }
 </style>

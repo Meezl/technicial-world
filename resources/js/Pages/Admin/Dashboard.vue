@@ -403,17 +403,29 @@ defineOptions({
 }
 
 /* Responsive chart layout */
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
     .chart-grid {
         grid-template-columns: 1fr;
     }
 
     .chart-container {
-        height: 250px;
+        height: 280px;
+    }
+}
+
+@media (max-width: 768px) {
+    .chart-container {
+        height: 240px;
+        padding: 0.75rem;
     }
 
     .chart-container.large {
         height: 300px;
+    }
+
+    .chart-controls {
+        flex-wrap: wrap;
+        gap: 0.5rem;
     }
 }
 </style>
