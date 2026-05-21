@@ -1,27 +1,7 @@
 <template>
     <Head title="Technician World - Professional Service Platform" />
     <div>
-        <header class="main-header">
-            <nav class="navbar">
-                <Link href="/" class="logo">TECHNICIAN WORLD</Link>
-                <ul class="nav-links">
-                    <li><Link href="/about">About Us</Link></li>
-                    <li><Link href="/services">Our Services</Link></li>
-                    <li>
-                        <a
-                            href="https://shop.technicianworld.co.ke"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                        >
-                            E-Commerce
-                        </a>
-                    </li>
-                    <li><Link href="/contact">Contact Us</Link></li>
-                </ul>
-                <Link v-if="canLogin && !$page.props.auth.user" href="/login" class="cta-button-2">Sign Up / Log in</Link>
-                <Link v-else-if="$page.props.auth.user" href="/dashboard" class="cta-button-2">Dashboard</Link>
-            </nav>
-        </header>
+        <PublicNav variant="dark" current-page="home" />
 
         <main>
             <!-- Updated Clean Hero Section -->
@@ -152,6 +132,7 @@
 
 <script setup>
 import { Head, Link } from '@inertiajs/vue3'
+import PublicNav from '@/Components/PublicNav.vue'
 
 defineProps({
     canLogin: {
