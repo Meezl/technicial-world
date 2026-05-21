@@ -1,27 +1,7 @@
 <template>
     <Head title="About Us - Technician World" />
     <div>
-        <header class="main-header header-light">
-            <nav class="navbar">
-                <Link href="/" class="logo logo-dark">TECHNICIAN WORLD</Link>
-                <ul class="nav-links">
-                    <li><Link href="/about" class="link-dark active">About Us</Link></li>
-                    <li><Link href="/services" class="link-dark">Our Services</Link></li>
-                    <li>
-                        <a
-                            href="https://shop.technicianworld.co.ke"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                        >
-                            E-Commerce
-                        </a>
-                    </li>
-                    <li><Link href="/contact" class="link-dark">Contact Us</Link></li>
-                </ul>
-                <Link v-if="!$page.props.auth.user" href="/login" class="cta-button">Sign Up / Log in</Link>
-                <Link v-else href="/dashboard" class="cta-button">Dashboard</Link>
-            </nav>
-        </header>
+        <PublicNav variant="light" current-page="about" />
 
         <main>
             <section class="subpage-header abt-header">
@@ -96,6 +76,7 @@
 
 <script setup>
 import { Head, Link } from '@inertiajs/vue3'
+import PublicNav from '@/Components/PublicNav.vue'
 
 defineOptions({
     layout: null

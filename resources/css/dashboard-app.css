@@ -749,19 +749,165 @@
     margin-bottom: 1rem;
 }
 
+/* Mobile drawer chrome (hidden on desktop) */
+.dashboard-container .mobile-topbar {
+    display: none;
+}
+
+.dashboard-container .sidebar-backdrop {
+    display: none;
+}
+
+.dashboard-container .sidebar-close {
+    display: none;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
-    .dashboard-container .sidebar {
-        width: 100%;
-        height: auto;
-        max-height: none;
-        position: sticky;
-        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.12);
+    .dashboard-container {
+        display: block;
     }
 
+    /* Mobile top bar */
+    .dashboard-container .mobile-topbar {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 60px;
+        padding: 0 1rem;
+        background: linear-gradient(180deg, rgba(0, 51, 75, 0.98) 0%, rgba(5, 50, 114, 0.98) 100%);
+        color: #fff;
+        z-index: 40;
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.18);
+    }
+
+    .dashboard-container .mobile-topbar-toggle {
+        width: 42px;
+        height: 42px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        font-size: 1.1rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: background 0.15s ease;
+    }
+
+    .dashboard-container .mobile-topbar-toggle:active {
+        background: rgba(255, 255, 255, 0.18);
+    }
+
+    .dashboard-container .mobile-topbar-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.65rem;
+        min-width: 0;
+    }
+
+    .dashboard-container .mobile-topbar-mark {
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
+        background: linear-gradient(135deg, #38bdf8, #0ea5e9);
+        color: #02263a;
+        font-weight: 800;
+        font-size: 0.85rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        letter-spacing: 0.04em;
+    }
+
+    .dashboard-container .mobile-topbar-copy {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.2;
+        min-width: 0;
+    }
+
+    .dashboard-container .mobile-topbar-copy strong {
+        font-size: 0.95rem;
+        font-weight: 700;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .dashboard-container .mobile-topbar-copy span {
+        font-size: 0.7rem;
+        color: rgba(255, 255, 255, 0.7);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* Backdrop */
+    .dashboard-container .sidebar-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(2, 6, 23, 0.55);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.22s ease;
+        z-index: 35;
+    }
+
+    .dashboard-container .sidebar-backdrop.visible {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    /* Drawer */
+    .dashboard-container .sidebar {
+        width: 86%;
+        max-width: 320px;
+        height: 100vh;
+        max-height: 100vh;
+        position: fixed;
+        top: 0;
+        left: 0;
+        transform: translateX(-100%);
+        transition: transform 0.25s ease;
+        box-shadow: 16px 0 40px rgba(15, 23, 42, 0.35);
+        z-index: 50;
+    }
+
+    .dashboard-container .sidebar.drawer-open {
+        transform: translateX(0);
+    }
+
+    .dashboard-container .sidebar-close {
+        display: inline-flex;
+        margin-left: auto;
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 10px;
+        width: 36px;
+        height: 36px;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+
+    .dashboard-container .sidebar-brand {
+        align-items: center;
+    }
+
+    /* Main content sits below the fixed mobile top bar */
     .dashboard-container .main-content {
         margin-left: 0;
         padding: 1rem;
+        padding-top: calc(60px + 1rem);
     }
 
     .dashboard-container .form-row {
@@ -776,58 +922,67 @@
     .dashboard-container .main-header {
         flex-direction: column;
         gap: 1rem;
-        text-align: center;
+        align-items: flex-start;
     }
 
     .dashboard-container .kpi-grid {
         grid-template-columns: 1fr;
     }
 
-    .dashboard-container .sidebar-header {
-        padding-bottom: 0.9rem;
-    }
+    /* ── Mobile typography (client / admin / PM only) ─────────────────
+       Tighten oversized headings and KPI values so content reads well
+       on phones. Scoped to .dashboard-container so the technician PWA
+       (different CSS) is unaffected. */
+    .dashboard-container h1 { font-size: 1.4rem; line-height: 1.25; }
+    .dashboard-container h2 { font-size: 1.2rem; line-height: 1.3; }
+    .dashboard-container h3 { font-size: 1.05rem; line-height: 1.35; }
+    .dashboard-container h4 { font-size: 0.95rem; line-height: 1.4; }
+    .dashboard-container h5 { font-size: 0.88rem; line-height: 1.4; }
+    .dashboard-container p { font-size: 0.92rem; line-height: 1.55; }
 
-    .dashboard-container .sidebar-intro {
-        display: none;
-    }
+    .dashboard-container .main-header h1 { font-size: 1.4rem; }
 
-    .dashboard-container .sidebar-nav {
-        display: flex;
-        align-items: stretch;
-        gap: 0.65rem;
-        overflow-x: auto;
-        overflow-y: hidden;
-        padding: 0.85rem 1rem;
-        scrollbar-width: none;
-    }
+    .dashboard-container .kpi-card h4 { font-size: 0.85rem; }
+    .dashboard-container .kpi-value { font-size: 1.5rem; }
+    .dashboard-container .kpi-trend,
+    .dashboard-container .kpi-subtext { font-size: 0.82rem; }
 
-    .dashboard-container .sidebar-nav::-webkit-scrollbar {
-        display: none;
-    }
+    .dashboard-container .card-header h3 { font-size: 1rem; }
 
-    .dashboard-container .nav-section-label {
-        display: none;
-    }
+    .dashboard-container .btn { font-size: 0.88rem; padding: 0.55rem 0.9rem; }
+    .dashboard-container .btn-sm { font-size: 0.8rem; padding: 0.4rem 0.7rem; }
 
-    .dashboard-container .nav-item {
-        min-width: 14rem;
-        margin-bottom: 0;
-    }
+    .dashboard-container .data-table th,
+    .dashboard-container .data-table td { font-size: 0.82rem; padding: 0.7rem 0.55rem; }
+    .dashboard-container .data-table th { font-size: 0.7rem; }
 
-    .dashboard-container .nav-group {
-        min-width: 14rem;
-        margin-bottom: 0;
-    }
+    .dashboard-container .status,
+    .dashboard-container .status-badge { font-size: 0.7rem; padding: 0.25rem 0.55rem; }
 
-    .dashboard-container .nav-submenu {
-        margin: 0.45rem 0 0 0;
-        padding-left: 0;
-        border-left: 0;
-    }
+    /* Form labels and helper copy */
+    .dashboard-container .form-group label { font-size: 0.85rem; }
+    .dashboard-container .form-group small,
+    .dashboard-container .form-hint { font-size: 0.78rem; }
+}
 
-    .dashboard-container .sidebar-footer {
-        padding-top: 0;
-    }
+/* Extra-small phones (≤420px): one more notch tighter */
+@media (max-width: 420px) {
+    .dashboard-container h1 { font-size: 1.25rem; }
+    .dashboard-container .main-header h1 { font-size: 1.25rem; }
+    .dashboard-container h2 { font-size: 1.1rem; }
+    .dashboard-container .kpi-value { font-size: 1.35rem; }
+
+    .dashboard-container .mobile-topbar-copy strong { font-size: 0.88rem; }
+    .dashboard-container .mobile-topbar-copy span { font-size: 0.65rem; }
+
+    .dashboard-container .btn { font-size: 0.85rem; }
+    .dashboard-container .data-table th,
+    .dashboard-container .data-table td { font-size: 0.78rem; }
+}
+
+/* Lock body scroll while drawer is open on mobile */
+body.app-sidebar-locked {
+    overflow: hidden;
 }
 
 /* Modal Styles - Global for all dashboard modals - SCOPED */

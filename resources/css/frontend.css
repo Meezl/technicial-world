@@ -1017,3 +1017,213 @@ p{
     border-radius: 6px;
     color: #fff !important;
 }
+
+/* ─────────────────────────────────────────────────────────────────
+   Public Nav — hamburger + mobile menu
+   ───────────────────────────────────────────────────────────────── */
+
+.nav-toggle {
+    display: none;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 8px;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 5px;
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.nav-toggle.is-light {
+    border-color: rgba(33, 37, 41, 0.25);
+}
+
+.nav-toggle span {
+    display: block;
+    width: 22px;
+    height: 2px;
+    background: var(--white);
+    border-radius: 2px;
+    transition: transform 0.25s ease, opacity 0.2s ease;
+}
+
+.nav-toggle.is-light span {
+    background: var(--dark-grey);
+}
+
+.nav-toggle.active span:nth-child(1) {
+    transform: translateY(7px) rotate(45deg);
+}
+.nav-toggle.active span:nth-child(2) {
+    opacity: 0;
+}
+.nav-toggle.active span:nth-child(3) {
+    transform: translateY(-7px) rotate(-45deg);
+}
+
+body.public-nav-locked {
+    overflow: hidden;
+}
+
+@media (max-width: 992px) {
+    .nav-toggle {
+        display: inline-flex;
+        order: 3;
+    }
+
+    .navbar {
+        position: relative;
+        flex-wrap: nowrap;
+        gap: 0.75rem;
+    }
+
+    .navbar .logo {
+        flex: 1;
+        font-size: 1rem;
+    }
+
+    /* The CTA button can still show as a chip on mid-size screens, but
+       collapse to icon-only feel on tiny phones */
+    .navbar > a.cta-button,
+    .navbar > a.cta-button-2 {
+        padding: 0.55rem 0.9rem;
+        font-size: 0.78rem;
+        border-width: 1px;
+    }
+
+    /* Mobile menu panel */
+    .nav-links {
+        display: none !important;
+    }
+
+    .nav-links.open {
+        display: flex !important;
+        position: absolute;
+        top: calc(100% + 0.75rem);
+        left: 0;
+        right: 0;
+        flex-direction: column;
+        gap: 0;
+        background: var(--white);
+        border-radius: 14px;
+        padding: 0.5rem 0;
+        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+        z-index: 50;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+    }
+
+    .nav-links.open li {
+        list-style: none;
+        border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+    }
+
+    .nav-links.open li:last-child {
+        border-bottom: none;
+    }
+
+    .nav-links.open a {
+        display: block;
+        padding: 0.95rem 1.2rem;
+        font-size: 0.95rem;
+        color: var(--dark-grey) !important;
+        opacity: 1;
+        font-weight: 600;
+    }
+
+    .nav-links.open a.active {
+        color: var(--primary-blue) !important;
+        background: rgba(5, 50, 114, 0.06);
+    }
+}
+
+@media (max-width: 768px) {
+    .main-header { padding: 1rem 4%; }
+
+    .navbar > a.cta-button,
+    .navbar > a.cta-button-2 {
+        padding: 0.5rem 0.75rem;
+        font-size: 0.72rem;
+    }
+
+    /* Hero typography tightening */
+    .hero-section h1 { font-size: 2rem !important; line-height: 1.2; }
+    .hero-section .subtitle { font-size: 0.95rem; }
+    .hero-cta { flex-direction: column; align-items: stretch; gap: 0.75rem; }
+    .hero-cta .btn-primary,
+    .hero-cta .btn-secondary { width: 100%; box-sizing: border-box; text-align: center; }
+
+    /* Subpage headers */
+    .subpage-header h1 { font-size: 2rem; }
+    .subpage-header p { font-size: 0.95rem; }
+
+    /* Section spacing */
+    section { padding-left: 1.25rem !important; padding-right: 1.25rem !important; }
+
+    .about-section, .metrics-section, .features-section,
+    .services-projects-section, .page-content {
+        padding-top: 2.5rem !important;
+        padding-bottom: 2.5rem !important;
+    }
+
+    /* Metrics */
+    .metric-number { font-size: 2rem; }
+    .metric-label { font-size: 0.85rem; }
+
+    /* Features */
+    .feature-item h4 { font-size: 1rem; }
+    .feature-item p { font-size: 0.88rem; }
+
+    /* About */
+    .about-text h2 { font-size: 1.5rem; line-height: 1.3; }
+    .about-text p { font-size: 0.95rem; }
+
+    /* Footer */
+    .footer-title { font-size: 1.5rem; }
+    .footer-content p { font-size: 0.92rem; }
+
+    /* Contact page */
+    .contact-page {
+        grid-template-columns: 1fr;
+        gap: 2rem;
+    }
+    .contact-details h3,
+    .contact-form h3 { font-size: 1.25rem; }
+    .contact-details li { font-size: 0.95rem; word-break: break-word; }
+    .form-group { margin-bottom: 1rem; }
+    .form-group label { font-size: 0.85rem; }
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+        padding: 0.85rem 0.9rem;
+        font-size: 1rem;
+        box-sizing: border-box;
+    }
+    .submit-btn {
+        padding: 0.9rem;
+        font-size: 0.95rem;
+    }
+
+    /* Service cards */
+    .service-grid { grid-template-columns: 1fr; gap: 1.25rem; }
+    .service-card img { height: 180px; }
+    .service-card-content { padding: 1.25rem; }
+    .service-card-content h3 { font-size: 1.1rem; }
+}
+
+@media (max-width: 480px) {
+    .hero-section h1 { font-size: 1.75rem !important; }
+    .subpage-header h1 { font-size: 1.6rem; }
+    .metric-number { font-size: 1.65rem; }
+    .navbar .logo { font-size: 0.85rem; letter-spacing: 0; }
+
+    .navbar > a.cta-button,
+    .navbar > a.cta-button-2 {
+        padding: 0.4rem 0.6rem;
+        font-size: 0.68rem;
+    }
+}
+
