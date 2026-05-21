@@ -1184,6 +1184,34 @@ body.public-nav-locked {
     /* Footer */
     .footer-title { font-size: 1.5rem; }
     .footer-content p { font-size: 0.92rem; }
+
+    /* Contact page */
+    .contact-page {
+        grid-template-columns: 1fr;
+        gap: 2rem;
+    }
+    .contact-details h3,
+    .contact-form h3 { font-size: 1.25rem; }
+    .contact-details li { font-size: 0.95rem; word-break: break-word; }
+    .form-group { margin-bottom: 1rem; }
+    .form-group label { font-size: 0.85rem; }
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+        padding: 0.85rem 0.9rem;
+        font-size: 1rem;
+        box-sizing: border-box;
+    }
+    .submit-btn {
+        padding: 0.9rem;
+        font-size: 0.95rem;
+    }
+
+    /* Service cards */
+    .service-grid { grid-template-columns: 1fr; gap: 1.25rem; }
+    .service-card img { height: 180px; }
+    .service-card-content { padding: 1.25rem; }
+    .service-card-content h3 { font-size: 1.1rem; }
 }
 
 @media (max-width: 480px) {
