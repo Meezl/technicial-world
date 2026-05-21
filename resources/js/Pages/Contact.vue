@@ -111,3 +111,7 @@ defineOptions({
     layout: null
 })
 </script>
+
+<style>
+@import url('../../css/frontend-app.css');
+</style>
