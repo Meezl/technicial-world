@@ -3,6 +3,32 @@
         <ClientSidebar current-page="dashboard" />
 
         <main class="main-content client-dashboard">
+            <section v-if="flash.success" class="submission-banner">
+                <div class="submission-banner-copy">
+                    <span class="submission-banner-tag">Request Received</span>
+                    <h2>{{ flash.success }}</h2>
+                    <p v-if="submittedRequest">
+                        {{ submittedRequest.request_id }} is now in your active requests and has been routed for review.
+                    </p>
+                    <p v-else>
+                        Your request is now in the queue and visible in your active requests.
+                    </p>
+                </div>
+
+                <div class="submission-banner-actions">
+                    <Link
+                        v-if="submittedRequest"
+                        :href="`/client/request-status/${submittedRequest.id}`"
+                        class="btn btn-primary banner-button"
+                    >
+                        View Request
+                    </Link>
+                    <Link href="/client/new-request" class="btn btn-secondary banner-button">
+                        Submit Another Request
+                    </Link>
+                </div>
+            </section>
+
             <section class="dashboard-hero">
                 <article class="hero-card hero-card-primary">
                     <span class="hero-kicker">Client Workspace</span>
@@ -270,6 +296,10 @@ const firstName = computed(() => {
     return name.split(' ')[0] || 'Client'
 })
 
+const flash = computed(() => page.props.flash || {})
+
+const submittedRequest = computed(() => flash.value.submittedRequest || null)
+
 const activeRequests = computed(() => {
     return props.serviceRequests.filter((request) =>
         !['completed', 'cancelled', 'closed', 'archived'].includes(request.status)
@@ -351,6 +381,61 @@ defineOptions({
 .client-dashboard {
     display: grid;
     gap: 1.4rem;
+}
+
+.submission-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.35rem 1.5rem;
+    border-radius: 24px;
+    background: linear-gradient(135deg, rgba(220, 252, 231, 0.94), rgba(240, 253, 244, 0.98));
+    border: 1px solid rgba(34, 197, 94, 0.16);
+    box-shadow: 0 18px 42px rgba(34, 197, 94, 0.08);
+}
+
+.submission-banner-copy {
+    display: grid;
+    gap: 0.35rem;
+}
+
+.submission-banner-tag {
+    display: inline-flex;
+    width: fit-content;
+    padding: 0.3rem 0.7rem;
+    border-radius: 999px;
+    background: rgba(21, 128, 61, 0.12);
+    color: #166534;
+    font-size: 0.74rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.submission-banner h2,
+.submission-banner p {
+    margin: 0;
+}
+
+.submission-banner h2 {
+    color: #14532d;
+    font-size: 1.2rem;
+}
+
+.submission-banner p {
+    color: #166534;
+    max-width: 50rem;
+}
+
+.submission-banner-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.banner-button {
+    white-space: nowrap;
 }
 
 .dashboard-hero,
@@ -723,6 +808,11 @@ defineOptions({
 }
 
 @media (max-width: 1180px) {
+    .submission-banner {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
     .dashboard-hero,
     .summary-grid,
     .panel-row {

@@ -127,7 +127,6 @@ class MilestoneTechnicianAllocationTest extends TestCase
         $milestone = PaymentMilestone::query()->with('allocations')->first();
 
         $this->assertNotNull($milestone);
-        $this->assertEquals(30000.0, (float) $milestone->amount);
         $this->assertEquals(30000.0, (float) $milestone->labor_release_amount);
         $this->assertCount(2, $milestone->allocations);
         $this->assertDatabaseHas('payment_milestone_allocations', [

@@ -79,7 +79,12 @@ class ServiceRequestController extends Controller
         Notification::send($adminUsers, new NewServiceRequestNotification($serviceRequest));
 
         return redirect()->route('client.dashboard')
-            ->with('success', 'Service request submitted successfully! Request ID: ' . $serviceRequest->request_id);
+            ->with('success', 'Service request submitted successfully.')
+            ->with('submittedRequest', [
+                'id' => $serviceRequest->id,
+                'request_id' => $serviceRequest->request_id,
+                'service_category' => $serviceRequest->serviceCategory?->name,
+            ]);
     }
 
     /**

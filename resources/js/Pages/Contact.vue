@@ -14,10 +14,11 @@
                     <h3>Contact Information</h3>
                     <p>For immediate assistance or if you prefer to book a service over the phone, please use the details below. Our team is available to assist you.</p>
                     <ul>
-                        <li><strong>Phone:</strong> +254 700 000 000</li>
-                        <li><strong>WhatsApp:</strong> +254 700 000 001</li>
-                        <li><strong>Email:</strong> support@technicianworld.com</li>
-                        <li><strong>Location:</strong> Nairobi, Kenya</li>
+                        <li><strong>Phone:</strong> +254 117 962 395</li>
+                        <li><strong>WhatsApp:</strong> +254 117 962 395</li>
+                        <li><strong>Email:</strong> support@technicianworld.co.ke</li>
+                        <li><strong>Location:</strong>PCEA Flats, Jabavu Road, Nairobi, Office Suite F3
+                            Nairobi, Kenya</li>
                     </ul>
                 </div>
                 <div class="contact-form">
