@@ -820,116 +820,149 @@
 
         <!-- Request Payment Modal -->
         <div v-if="showPaymentModal" class="modal-overlay">
-            <div class="modal-content" @click.stop>
-                <div class="modal-header">
-                    <h3>Request Payment</h3>
-                    <button @click="closePaymentModal" class="modal-close">
+            <div class="modal-content pr-modal" @click.stop>
+                <div class="modal-header pr-modal-header">
+                    <div class="pr-header-icon">
+                        <i class="fas fa-file-invoice-dollar"></i>
+                    </div>
+                    <div class="pr-header-copy">
+                        <h3>Request Payment</h3>
+                        <p class="pr-header-sub">
+                            {{ selectedRFQ?.request_id }} · {{ selectedRFQ?.user?.name }}
+                        </p>
+                    </div>
+                    <button @click="closePaymentModal" class="modal-close pr-close">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
 
                 <form @submit.prevent="submitPaymentRequest">
-                    <div class="modal-body">
-                        <div class="payment-request-info">
-                            <div class="info-row">
-                                <span class="label">Request ID:</span>
-                                <span class="value">{{ selectedRFQ?.request_id }}</span>
+                    <div class="modal-body pr-modal-body">
+
+                        <!-- Balance summary cards -->
+                        <div class="pr-balance-grid">
+                            <div class="pr-balance-tile tile-blue">
+                                <span class="pr-tile-label">Total Quote</span>
+                                <strong>KSH {{ formatCurrency(selectedRFQ?.quote_amount) }}</strong>
                             </div>
-                            <div class="info-row">
-                                <span class="label">Client:</span>
-                                <span class="value">{{ selectedRFQ?.user?.name }}</span>
+                            <div class="pr-balance-tile tile-amber">
+                                <span class="pr-tile-label">Already Billed</span>
+                                <strong>KSH {{ formatCurrency(alreadyBilledAmount) }}</strong>
                             </div>
-                            <div class="info-row">
-                                <span class="label">Total Quote Amount:</span>
-                                <span class="value highlight">KSH {{ formatCurrency(selectedRFQ?.quote_amount) }}</span>
-                            </div>
-                            <div class="info-row">
-                                <span class="label">Already Billed:</span>
-                                <span class="value">KSH {{ formatCurrency(alreadyBilledAmount) }}</span>
-                            </div>
-                            <div class="info-row" :style="remainingAmount <= 0 ? 'color:#b91c1c;font-weight:600;' : 'color:#0f766e;font-weight:600;'">
-                                <span class="label">Remaining Approved Balance:</span>
-                                <span class="value">KSH {{ formatCurrency(remainingAmount) }}</span>
+                            <div :class="['pr-balance-tile', remainingAmount <= 0 ? 'tile-red' : 'tile-green']">
+                                <span class="pr-tile-label">Remaining Balance</span>
+                                <strong>KSH {{ formatCurrency(remainingAmount) }}</strong>
                             </div>
                         </div>
 
-                        <div v-if="priorPaymentRequests.length" class="prior-payments-list" style="margin: 1rem 0; padding: 0.75rem; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
-                            <strong style="font-size: 0.85rem; color: #475569; display: block; margin-bottom: 0.5rem;">
-                                <i class="fas fa-history"></i> Prior payment requests
-                            </strong>
-                            <div v-for="pr in priorPaymentRequests" :key="pr.id" style="display: flex; justify-content: space-between; font-size: 0.85rem; padding: 0.35rem 0; border-bottom: 1px solid #e2e8f0;">
-                                <span>{{ pr.payment_request_id }}</span>
-                                <span>KSH {{ formatCurrency(pr.amount) }}</span>
-                                <span :style="pr.status === 'paid' ? 'color:#059669;' : pr.status === 'pending' ? 'color:#92400E;' : 'color:#64748B;'">
-                                    {{ pr.status }}
+                        <!-- Down payment hint -->
+                        <div v-if="!hasPriorPayments && selectedRFQ?.quote_down_payment > 0" class="pr-info-strip pr-info-success">
+                            <i class="fas fa-info-circle"></i>
+                            <span>Down payment of <strong>KSH {{ formatCurrency(selectedRFQ.quote_down_payment) }}</strong> was specified on this quotation.</span>
+                        </div>
+
+                        <!-- Prior payment requests -->
+                        <div v-if="priorPaymentRequests.length" class="pr-prior-section">
+                            <div class="pr-section-head">
+                                <i class="fas fa-history"></i>
+                                <span>Prior payment requests</span>
+                                <span class="pr-prior-count">{{ priorPaymentRequests.length }}</span>
+                            </div>
+                            <div class="pr-prior-list">
+                                <div v-for="pr in priorPaymentRequests" :key="pr.id" class="pr-prior-item">
+                                    <div class="pr-prior-meta">
+                                        <strong>{{ pr.payment_request_id }}</strong>
+                                        <span>KSH {{ formatCurrency(pr.amount) }}</span>
+                                    </div>
+                                    <span :class="['pr-prior-status', `pr-prior-status-${pr.status}`]">
+                                        {{ pr.status }}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Input fields -->
+                        <div class="pr-section">
+                            <label class="pr-section-label">Bill the client</label>
+                            <div class="pr-input-grid">
+                                <div class="pr-input-field">
+                                    <label>Percentage</label>
+                                    <div class="pr-input-wrap">
+                                        <input
+                                            v-model.number="paymentRequestForm.percentage"
+                                            @input="onPercentageInput"
+                                            type="number"
+                                            min="0"
+                                            max="100"
+                                            step="0.01"
+                                            class="pr-input"
+                                        >
+                                        <span class="pr-input-suffix">%</span>
+                                    </div>
+                                </div>
+                                <div class="pr-input-or">or</div>
+                                <div class="pr-input-field">
+                                    <label>Fixed Amount</label>
+                                    <div class="pr-input-wrap">
+                                        <span class="pr-input-prefix">KSH</span>
+                                        <input
+                                            v-model.number="paymentRequestForm.amount"
+                                            @input="onAmountInput"
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            class="pr-input pr-input-with-prefix"
+                                            :placeholder="`Max ${formatCurrency(remainingAmount)}`"
+                                        >
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Calculated amount -->
+                        <div v-if="resolvedPaymentAmount > 0" :class="['pr-summary', capExceeded ? 'pr-summary-error' : '']">
+                            <span class="pr-summary-label">Amount to request</span>
+                            <strong class="pr-summary-value">KSH {{ formatCurrency(resolvedPaymentAmount) }}</strong>
+                        </div>
+
+                        <!-- Cap exceeded warning -->
+                        <div v-if="capExceeded" class="pr-info-strip pr-info-error">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <span>This amount exceeds the remaining approved balance. Reduce it or get additional client approval first.</span>
+                        </div>
+
+                        <!-- Down payment checkbox -->
+                        <div v-if="!hasPriorPayments" class="pr-checkbox-card">
+                            <label class="pr-checkbox-label">
+                                <input
+                                    type="checkbox"
+                                    v-model="paymentRequestForm.is_down_payment"
+                                    class="pr-checkbox-input"
+                                />
+                                <span class="pr-checkbox-text">
+                                    <strong>Treat as down payment</strong>
+                                    <small>Marks the deposit as requested on this job — only one down payment per job.</small>
                                 </span>
-                            </div>
-                        </div>
-
-                        <div v-if="!hasPriorPayments && selectedRFQ?.quote_down_payment > 0" style="margin: 0.75rem 0; padding: 0.65rem 0.85rem; background: #ECFDF5; border-left: 3px solid #10b981; font-size: 0.85rem; color: #065F46;">
-                            <i class="fas fa-info-circle"></i> Down payment KSH {{ formatCurrency(selectedRFQ.quote_down_payment) }} was specified on this quotation.
-                        </div>
-
-                        <div class="form-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                            <div class="form-group">
-                                <label>Payment Percentage (%)</label>
-                                <input
-                                    v-model.number="paymentRequestForm.percentage"
-                                    @input="onPercentageInput"
-                                    type="number"
-                                    min="0"
-                                    max="100"
-                                    step="0.01"
-                                    class="form-control"
-                                >
-                            </div>
-                            <div class="form-group">
-                                <label>Or Fixed Amount (KSH)</label>
-                                <input
-                                    v-model.number="paymentRequestForm.amount"
-                                    @input="onAmountInput"
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    class="form-control"
-                                    :placeholder="`Max KSH ${formatCurrency(remainingAmount)}`"
-                                >
-                            </div>
-                        </div>
-
-                        <div class="calculated-amount" v-if="resolvedPaymentAmount > 0">
-                            <span class="label">Amount to Request:</span>
-                            <span class="amount" :style="resolvedPaymentAmount > remainingAmount ? 'color:#b91c1c;' : ''">
-                                KSH {{ formatCurrency(resolvedPaymentAmount) }}
-                            </span>
-                        </div>
-
-                        <div v-if="capExceeded" style="margin: 0.75rem 0; padding: 0.7rem 0.85rem; background: #FEF2F2; border-left: 3px solid #DC2626; font-size: 0.85rem; color: #991B1B;">
-                            <i class="fas fa-exclamation-triangle"></i> This amount exceeds the remaining approved balance. Reduce it or request additional client approval first.
-                        </div>
-
-                        <div class="form-group" v-if="!hasPriorPayments">
-                            <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal;">
-                                <input type="checkbox" v-model="paymentRequestForm.is_down_payment" />
-                                <span>Treat as down payment (sets the deposit flag on this job)</span>
                             </label>
                         </div>
 
-                        <div class="form-group">
-                            <label>Notes for Client (Optional)</label>
+                        <!-- Notes -->
+                        <div class="pr-section">
+                            <label class="pr-section-label">Notes for client <span class="pr-optional">(optional)</span></label>
                             <textarea
                                 v-model="paymentRequestForm.notes"
-                                class="form-control"
+                                class="pr-textarea"
                                 rows="3"
                                 placeholder="E.g., 50% deposit required before work begins..."
                             ></textarea>
                         </div>
                     </div>
 
-                    <div class="modal-footer">
+                    <div class="modal-footer pr-modal-footer">
                         <button type="button" @click="closePaymentModal" class="btn btn-secondary">Cancel</button>
-                        <button type="submit" class="btn btn-success" :disabled="!canSubmitPaymentRequest || isSubmittingPayment">
-                            <i class="fas fa-paper-plane"></i> {{ isSubmittingPayment ? 'Sending...' : 'Send Payment Request' }}
+                        <button type="submit" class="btn btn-success pr-submit" :disabled="!canSubmitPaymentRequest || isSubmittingPayment">
+                            <i class="fas fa-paper-plane"></i>
+                            {{ isSubmittingPayment ? 'Sending...' : 'Send Payment Request' }}
                         </button>
                     </div>
                 </form>
@@ -1716,6 +1749,345 @@ defineOptions({ layout: null })
 .evidence-placeholder small { font-size: 0.78rem; }
 .evidence-selected { display: flex; align-items: center; gap: 0.65rem; color: #0f172a; font-weight: 500; }
 .remove-evidence-btn { margin-left: auto; border: none; background: transparent; color: #b91c1c; font-size: 1rem; cursor: pointer; }
+
+/* ─────────────────────────────────────────────
+   Request Payment modal (presentable redesign)
+   ───────────────────────────────────────────── */
+.pr-modal {
+    max-width: 560px;
+    width: 100%;
+}
+
+.pr-modal-header {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    padding: 1.1rem 1.25rem;
+    border-bottom: 1px solid #E2E8F0;
+}
+.pr-header-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #38bdf8, #0ea5e9);
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.05rem;
+    flex-shrink: 0;
+}
+.pr-header-copy { flex: 1; min-width: 0; }
+.pr-header-copy h3 { margin: 0; font-size: 1.05rem; color: #0F172A; }
+.pr-header-sub {
+    margin: 2px 0 0;
+    font-size: 0.78rem;
+    color: #64748B;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.pr-close {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 6px 8px;
+    border-radius: 8px;
+}
+.pr-close:hover { background: #F1F5F9; color: #0F172A; }
+
+.pr-modal-body {
+    padding: 1.1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.95rem;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.pr-modal-footer {
+    border-top: 1px solid #E2E8F0;
+    padding: 0.9rem 1.25rem;
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.6rem;
+}
+
+/* Balance summary cards */
+.pr-balance-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.6rem;
+}
+.pr-balance-tile {
+    padding: 0.7rem 0.75rem;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+.pr-balance-tile.tile-blue { background: #EFF6FF; border-color: #BFDBFE; color: #1E3A8A; }
+.pr-balance-tile.tile-amber { background: #FFFBEB; border-color: #FDE68A; color: #92400E; }
+.pr-balance-tile.tile-green { background: #ECFDF5; border-color: #A7F3D0; color: #065F46; }
+.pr-balance-tile.tile-red { background: #FEF2F2; border-color: #FECACA; color: #991B1B; }
+.pr-tile-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.85;
+}
+.pr-balance-tile strong { font-size: 0.92rem; font-weight: 700; }
+
+/* Info strips */
+.pr-info-strip {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.75rem 0.85rem;
+    border-radius: 10px;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    border: 1px solid transparent;
+}
+.pr-info-strip i.fas { margin-top: 2px; flex-shrink: 0; }
+.pr-info-success { background: #ECFDF5; border-color: #A7F3D0; color: #065F46; }
+.pr-info-error { background: #FEF2F2; border-color: #FECACA; color: #991B1B; }
+
+/* Prior payment requests */
+.pr-prior-section {
+    border: 1px solid #E2E8F0;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #FAFBFD;
+}
+.pr-section-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.65rem 0.85rem;
+    background: #F1F5F9;
+    border-bottom: 1px solid #E2E8F0;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #475569;
+}
+.pr-section-head i.fas { color: #64748B; }
+.pr-prior-count {
+    margin-left: auto;
+    background: #CBD5E1;
+    color: #1E293B;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 800;
+}
+.pr-prior-list { display: flex; flex-direction: column; }
+.pr-prior-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 0.85rem;
+    border-bottom: 1px solid #E2E8F0;
+    font-size: 0.85rem;
+}
+.pr-prior-item:last-child { border-bottom: none; }
+.pr-prior-meta { display: flex; flex-direction: column; gap: 2px; }
+.pr-prior-meta strong { color: #0F172A; font-size: 0.83rem; }
+.pr-prior-meta span { color: #475569; font-size: 0.78rem; }
+.pr-prior-status {
+    text-transform: capitalize;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: #E2E8F0;
+    color: #475569;
+}
+.pr-prior-status-paid { background: #DCFCE7; color: #166534; }
+.pr-prior-status-pending { background: #FEF3C7; color: #92400E; }
+.pr-prior-status-cancelled,
+.pr-prior-status-failed { background: #FEE2E2; color: #991B1B; }
+
+/* Sections + inputs */
+.pr-section { display: flex; flex-direction: column; gap: 0.45rem; }
+.pr-section-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #334155;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.pr-optional {
+    text-transform: none;
+    font-weight: 500;
+    color: #94A3B8;
+    letter-spacing: 0;
+}
+
+.pr-input-grid {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 0.6rem;
+    align-items: end;
+}
+.pr-input-field { display: flex; flex-direction: column; gap: 4px; }
+.pr-input-field > label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #64748B;
+    margin: 0;
+}
+.pr-input-or {
+    text-align: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #94A3B8;
+    padding-bottom: 12px;
+}
+.pr-input-wrap { position: relative; }
+.pr-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid #CBD5E1;
+    border-radius: 10px;
+    background: #ffffff;
+    font-size: 0.95rem;
+    color: #0F172A;
+    font-family: inherit;
+}
+.pr-input:focus {
+    outline: none;
+    border-color: #2563EB;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+.pr-input-with-prefix { padding-left: 2.8rem; }
+.pr-input-suffix,
+.pr-input-prefix {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.82rem;
+    color: #64748B;
+    pointer-events: none;
+}
+.pr-input-suffix { right: 0.7rem; }
+.pr-input-prefix {
+    left: 0.7rem;
+    font-weight: 700;
+    background: #F1F5F9;
+    padding: 2px 6px;
+    border-radius: 6px;
+    font-size: 0.72rem;
+}
+
+.pr-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.65rem 0.8rem;
+    border: 1px solid #CBD5E1;
+    border-radius: 10px;
+    background: #ffffff;
+    font-size: 0.9rem;
+    color: #0F172A;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 70px;
+}
+.pr-textarea:focus {
+    outline: none;
+    border-color: #2563EB;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+/* Calculated amount summary */
+.pr-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem;
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 12px;
+}
+.pr-summary-error {
+    background: #FEF2F2;
+    border-color: #FECACA;
+}
+.pr-summary-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #1E40AF;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.pr-summary-error .pr-summary-label { color: #991B1B; }
+.pr-summary-value {
+    font-size: 1.15rem;
+    color: #1E40AF;
+    font-weight: 800;
+}
+.pr-summary-error .pr-summary-value { color: #991B1B; }
+
+/* Down payment checkbox card */
+.pr-checkbox-card {
+    border: 1px solid #E2E8F0;
+    border-radius: 12px;
+    background: #FAFBFD;
+    padding: 0.75rem 0.85rem;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+.pr-checkbox-card:has(.pr-checkbox-input:checked) {
+    border-color: #93C5FD;
+    background: #EFF6FF;
+}
+.pr-checkbox-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+    cursor: pointer;
+    margin: 0;
+}
+.pr-checkbox-input {
+    /* Override global .form-group input rule that stretches inputs full-width */
+    width: 18px !important;
+    height: 18px !important;
+    margin: 2px 0 0 !important;
+    padding: 0 !important;
+    flex-shrink: 0;
+    accent-color: #2563EB;
+    cursor: pointer;
+}
+.pr-checkbox-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+}
+.pr-checkbox-text strong { font-size: 0.88rem; color: #0F172A; font-weight: 600; }
+.pr-checkbox-text small { font-size: 0.78rem; color: #64748B; line-height: 1.4; }
+
+.pr-submit { gap: 0.4rem; }
+
+@media (max-width: 560px) {
+    .pr-balance-grid { grid-template-columns: 1fr; }
+    .pr-input-grid {
+        grid-template-columns: 1fr;
+    }
+    .pr-input-or {
+        padding-bottom: 0;
+        text-align: left;
+    }
+}
 
 /* Flash banners */
 .flash-banner {
