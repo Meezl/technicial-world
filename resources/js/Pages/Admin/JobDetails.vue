@@ -849,7 +849,7 @@
         </main>
 
         <!-- Single Technician Assignment Modal -->
-        <div v-if="showSingleAssignModal" class="modal-overlay" @click="closeSingleAssignModal">
+        <div v-if="showSingleAssignModal" class="modal-overlay">
             <div class="modal-content modal-lg" @click.stop>
                 <div class="modal-header">
                     <h3>Assign Technician</h3>
@@ -973,7 +973,7 @@
         </div>
 
         <!-- Budget Modal -->
-        <div v-if="showBudgetModal" class="modal-overlay" @click="showBudgetModal = false">
+        <div v-if="showBudgetModal" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
                     <h3>{{ job.budget ? 'Edit' : 'Set' }} Budget</h3>
@@ -1015,7 +1015,7 @@
         </div>
 
         <!-- Milestone Modal -->
-        <div v-if="showMilestoneModal" class="modal-overlay" @click="showMilestoneModal = false">
+        <div v-if="showMilestoneModal" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
                     <h3>{{ editingMilestone ? 'Edit' : 'Add' }} Milestone</h3>
@@ -1120,7 +1120,7 @@
         </div>
 
         <!-- Sub-Task Technician Assignment Modal -->
-        <div v-if="showSubTaskAssignModal" class="modal-overlay" @click="closeSubTaskAssignModal">
+        <div v-if="showSubTaskAssignModal" class="modal-overlay">
             <div class="modal-content modal-lg" @click.stop>
                 <div class="modal-header">
                     <h3>Assign Technician to Sub-Task</h3>
@@ -1246,7 +1246,7 @@
         </div>
 
         <!-- Lead Technician Assignment Modal -->
-        <div v-if="showLeadAssignModal" class="modal-overlay" @click="closeLeadAssignModal">
+        <div v-if="showLeadAssignModal" class="modal-overlay">
             <div class="modal-content modal-lg" @click.stop>
                 <div class="modal-header">
                     <h3>{{ job.lead_technician ? 'Change' : 'Assign' }} Lead Technician</h3>

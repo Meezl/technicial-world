@@ -304,7 +304,7 @@
         </main>
 
         <!-- ==================== CREATE / EDIT MODAL ==================== -->
-        <div v-if="showModal" class="modal-overlay" @click="closeModal">
+        <div v-if="showModal" class="modal-overlay">
             <div class="modal-content modal-lg" @click.stop>
                 <div class="modal-header">
                     <div>
@@ -587,7 +587,7 @@
         </div>
 
         <!-- ==================== VIEW / DOCUMENTS MODAL ==================== -->
-        <div v-if="showViewModal" class="modal-overlay" @click="closeViewModal">
+        <div v-if="showViewModal" class="modal-overlay">
             <div class="modal-content modal-lg profile-modal" @click.stop>
                 <div class="modal-header">
                     <div>

@@ -274,7 +274,7 @@
                 </div>
             </section>
 
-            <div v-if="showDetailModal" class="modal-overlay" @click="showDetailModal = false">
+            <div v-if="showDetailModal" class="modal-overlay">
                 <div class="modal-content" @click.stop>
                     <div class="modal-header">
                         <div>

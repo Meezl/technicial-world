@@ -563,7 +563,7 @@
             </section>
 
             <!-- Decline Quotation Modal -->
-            <div v-if="showDeclineModal" class="modal-overlay" @click="showDeclineModal = false">
+            <div v-if="showDeclineModal" class="modal-overlay">
                 <div class="modal-content" @click.stop>
                     <div class="modal-header">
                         <h3>Decline Quotation</h3>
@@ -720,10 +720,23 @@ const approveQuote = async () => {
             }
         })
 
-        const data = await response.json()
+        // Parse defensively — when Laravel returns HTML (CSRF expired / 419 / 500
+        // error page) `response.json()` would throw and the user only saw a
+        // generic "Failed to approve quotation" alert with no clue.
+        let data = {}
+        const raw = await response.text()
+        try {
+            data = raw ? JSON.parse(raw) : {}
+        } catch (_e) {
+            // Non-JSON body — likely Laravel error page or 419 CSRF
+        }
 
         if (!response.ok) {
-            throw new Error(data.error || 'Failed to approve quotation')
+            if (response.status === 419) {
+                throw new Error('Your session has expired. Please refresh the page and try again.')
+            }
+            const detail = data?.error || data?.message || `Server returned HTTP ${response.status}.`
+            throw new Error(detail)
         }
 
         // Reload the page to show updated status

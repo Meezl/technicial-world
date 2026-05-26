@@ -420,7 +420,7 @@
         </main>
 
         <!-- Budget Modal -->
-        <div v-if="showBudgetModal" class="modal-overlay" @click="showBudgetModal = false">
+        <div v-if="showBudgetModal" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
                     <h3>{{ budgetSummary ? 'Edit' : 'Set' }} Budget</h3>
@@ -462,7 +462,7 @@
         </div>
 
         <!-- Record Technician Payment Modal -->
-        <div v-if="showTechPaymentModal" class="modal-overlay" @click="showTechPaymentModal = false">
+        <div v-if="showTechPaymentModal" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
                     <h3>Record Technician Payment</h3>
@@ -538,7 +538,7 @@
         </div>
 
         <!-- Add/Edit Expenditure Modal -->
-        <div v-if="showExpenditureModal" class="modal-overlay" @click="showExpenditureModal = false">
+        <div v-if="showExpenditureModal" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
                     <h3>{{ editingExpenditure ? 'Edit' : 'Add' }} Expenditure</h3>
@@ -603,7 +603,7 @@
             </div>
         </div>
         <!-- Payment Details Modal -->
-        <div v-if="showPaymentDetailModal" class="modal-overlay" @click="showPaymentDetailModal = false">
+        <div v-if="showPaymentDetailModal" class="modal-overlay">
             <div class="modal-content" @click.stop style="max-width: 600px;">
                 <div class="modal-header">
                     <h3>Payment Details</h3>

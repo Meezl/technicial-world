@@ -85,7 +85,7 @@
         </section>
 
         <!-- Create Sheet Modal -->
-        <div v-if="showCreateModal" class="modal-overlay" @click.self="showCreateModal = false">
+        <div v-if="showCreateModal" class="modal-overlay">
             <div class="modal-content">
                 <div class="modal-header">
                     <h3>Create Weekly Payment Sheet</h3>

@@ -161,7 +161,7 @@
         </main>
 
         <!-- Assignment Modal -->
-        <div v-if="showModal" class="modal-overlay" @click="closeModal">
+        <div v-if="showModal" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
                     <h3>{{ isReassigning ? 'Reassign' : 'Assign' }} Technician</h3>
