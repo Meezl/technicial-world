@@ -1276,6 +1276,10 @@ class AdminDashboardController extends Controller
             'assignedPm',
             'createdByAdmin:id,name,email',
             'proxyQuoteApprover:id,name,email',
+            // Eager-load payment requests so the Request Payment modal can
+            // show "Already Billed" / remaining balance and the prior
+            // payment history without an extra round-trip.
+            'paymentRequests:id,service_request_id,payment_request_id,amount,percentage,status,payment_method,paid_at,created_at',
         ]);
 
         // Search filter
