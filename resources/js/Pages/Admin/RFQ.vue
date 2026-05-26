@@ -578,6 +578,14 @@
                         <i class="fas fa-edit"></i> Create Quotation
                     </button>
                     <button
+                        v-if="['quoted', 'approved'].includes(selectedRFQ?.rfq_status)"
+                        @click="reviseExistingQuotation(selectedRFQ)"
+                        class="btn btn-primary"
+                        title="Send a revised quotation. Client will be asked to disregard the previous one."
+                    >
+                        <i class="fas fa-pen-to-square"></i> Revise Quotation
+                    </button>
+                    <button
                         v-if="selectedRFQ?.rfq_status === 'quoted' && selectedRFQ?.submission_mode === 'admin_proxy'"
                         @click="openApproveOnBehalfModal(selectedRFQ)"
                         class="btn btn-warning"
@@ -1136,6 +1144,11 @@ const quotationForm = ref({
     materials_file: null,
 })
 
+// Set to true when admin clicks "Revise Quotation" so the controller
+// emails the client a revision notice asking them to disregard the
+// previous version (#5).
+const isRevision = ref(false)
+
 const paymentRequestForm = ref({
     percentage: 50,
     amount: null,
@@ -1365,6 +1378,41 @@ const resetQuotationForm = () => {
         notes: '',
         materials_file: null,
     }
+    isRevision.value = false
+}
+
+/**
+ * Open the quotation modal pre-filled with the existing quote so the
+ * admin can adjust it (price change, missing line, negotiated discount)
+ * and re-send. Marks isRevision so the backend sends the revised-quote
+ * email instead of the original.
+ */
+const reviseExistingQuotation = (rfq) => {
+    if (!rfq) return
+    selectedRFQ.value = rfq
+
+    const existingMaterials = Array.isArray(rfq.quote_materials) && rfq.quote_materials.length
+        ? rfq.quote_materials.map((m) => ({
+            name: m.name || '',
+            quantity: Number(m.quantity) || 1,
+            unit_price: Number(m.unit_price) || 0,
+        }))
+        : [{ name: '', quantity: 1, unit_price: 0 }]
+
+    quotationForm.value = {
+        materials: existingMaterials,
+        labor_cost: Number(rfq.quote_labor_cost) || 0,
+        transport_cost: Number(rfq.quote_transport_cost) || 0,
+        down_payment: rfq.quote_down_payment !== null && rfq.quote_down_payment !== undefined
+            ? Number(rfq.quote_down_payment)
+            : null,
+        notes: rfq.quote_notes || '',
+        materials_file: null,
+    }
+
+    isRevision.value = true
+    showViewModal.value = false
+    showReviewModal.value = true
 }
 
 const addMaterial = () => { quotationForm.value.materials.push({ name: '', quantity: 1, unit_price: 0 }) }
@@ -1380,6 +1428,7 @@ const submitQuote = () => {
         total_amount: totalQuoteAmount.value,
         notes: quotationForm.value.notes,
         materials_file: quotationForm.value.materials_file,
+        is_revision: isRevision.value,
     }, {
         preserveState: false,
         onSuccess: () => closeReviewModal(),

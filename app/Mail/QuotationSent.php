@@ -49,6 +49,8 @@ class QuotationSent extends Mailable
                 'downPayment' => $this->serviceRequest->quote_down_payment,
                 'totalAmount' => $this->serviceRequest->quote_amount,
                 'notes' => $this->serviceRequest->quote_notes,
+                'mpesaPaybill' => config('services.mpesa.shortcode'),
+                'mpesaAccountRef' => $this->serviceRequest->request_id,
             ]
         );
     }

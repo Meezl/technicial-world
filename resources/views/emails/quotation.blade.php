@@ -265,6 +265,28 @@
             @endif
         </div>
 
+        @if(!empty($mpesaPaybill))
+        <div class="section" style="background:#ECFDF5;border-color:#A7F3D0;">
+            <h3 style="color:#065F46;border-bottom-color:#16A34A;">Pay via M-Pesa</h3>
+            <p style="margin: 4px 0 12px;font-size:14px;color:#065F46;">
+                Once you approve the quotation, you can pay using M-Pesa Paybill.
+            </p>
+            <div style="background:#ffffff;border:1px solid #A7F3D0;border-radius:6px;padding:14px;">
+                <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #D1FAE5;font-size:14px;">
+                    <strong style="color:#065F46;">Paybill Number</strong>
+                    <span style="font-family:'Courier New',monospace;font-weight:700;color:#0F172A;">{{ $mpesaPaybill }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:14px;">
+                    <strong style="color:#065F46;">Account Number</strong>
+                    <span style="font-family:'Courier New',monospace;font-weight:700;color:#0F172A;">{{ $mpesaAccountRef }}</span>
+                </div>
+            </div>
+            <p style="font-size:12.5px;color:#065F46;margin:12px 0 0;">
+                Use <strong>{{ $mpesaAccountRef }}</strong> as the account reference so we can automatically link your payment to this request.
+            </p>
+        </div>
+        @endif
+
         @if($notes)
         <div class="section">
             <h3>Additional Notes</h3>

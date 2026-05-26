@@ -394,8 +394,11 @@
                                         </select>
                                     </div>
                                     <div class="form-group" v-if="!isEditing">
-                                        <label>Password <span class="req">*</span></label>
-                                        <input type="password" v-model="form.password" :required="!isEditing" placeholder="Enter password">
+                                        <label>Login Credentials</label>
+                                        <div class="auto-credential-note">
+                                            <i class="fas fa-envelope-circle-check"></i>
+                                            <span>A secure temporary password will be auto-generated and emailed to the technician on save.</span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -996,8 +999,8 @@ const deleteTechnician = (tech) => {
 }
 
 const goToStep2 = () => {
-    // Validate step 1 fields
-    if (!form.value.name || !form.value.email || !form.value.specialization || !form.value.location || !form.value.password) {
+    // Validate step 1 fields (password is auto-generated on save, no longer required here)
+    if (!form.value.name || !form.value.email || !form.value.specialization || !form.value.location) {
         alert('Please fill in all required fields before proceeding.')
         return
     }
@@ -1137,6 +1140,22 @@ defineOptions({ layout: null })
 .technicians-page {
     background: radial-gradient(circle at top right, rgba(14, 165, 233, 0.1), transparent 24rem), linear-gradient(180deg, #f8fbfd 0%, #f3f6f8 100%);
 }
+
+/* Auto-credential note shown in place of the manual password field */
+.auto-credential-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+    padding: 0.65rem 0.8rem;
+    background: #ECFDF5;
+    border: 1px solid #A7F3D0;
+    border-left: 3px solid #16A34A;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    color: #065F46;
+    line-height: 1.4;
+}
+.auto-credential-note i { color: #16A34A; margin-top: 2px; }
 
 .technicians-hero {
     display: grid;
