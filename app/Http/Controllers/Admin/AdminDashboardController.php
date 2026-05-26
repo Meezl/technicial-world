@@ -191,10 +191,11 @@ class AdminDashboardController extends Controller
 
     public function storeTechnician(Request $request)
     {
+        // Password is no longer entered by the admin — the system generates a
+        // strong temporary password and emails it to the technician (#17).
         $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
-            'password' => 'required|string|min:8',
             'phone' => 'nullable|string|max:20',
             'specialization' => 'required|string|max:255',
             'location' => 'required|string|max:255',
@@ -215,11 +216,16 @@ class AdminDashboardController extends Controller
             'doc_kra_pin.required' => 'KRA PIN Certificate is required.',
         ]);
 
+        // Auto-generate a 12-char temporary password (mixed case + digits) so
+        // there's no manual password field to mistype or forget. The technician
+        // changes it on first sign-in from their profile screen.
+        $temporaryPassword = $this->generateTemporaryPassword();
+
         // Create user first
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
-            'password' => Hash::make($request->password),
+            'password' => Hash::make($temporaryPassword),
             'phone' => $request->phone,
             'role' => 'technician',
         ]);
@@ -262,7 +268,38 @@ class AdminDashboardController extends Controller
             }
         }
 
-        return redirect()->route('admin.technicians')->with('success', 'Technician created successfully!');
+        // Email the credentials. Wrap in try/catch so a transient mail failure
+        // doesn't roll back the technician record — the admin can resend later.
+        $mailWarning = null;
+        try {
+            Mail::to($user->email)->send(new \App\Mail\TechnicianAccountCreated($user, $technician, $temporaryPassword));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('TechnicianAccountCreated email failed', [
+                'technician_id' => $technician->id,
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+            $mailWarning = ' (warning: credential email could not be sent — please resend manually)';
+        }
+
+        return redirect()->route('admin.technicians')->with('success',
+            "Technician created. Login credentials emailed to {$user->email}." . ($mailWarning ?? '')
+        );
+    }
+
+    /**
+     * Generates a strong, human-typeable temporary password (12 chars,
+     * mixed case + digits, avoids ambiguous chars like 0/O, l/1).
+     */
+    private function generateTemporaryPassword(): string
+    {
+        $alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        $len = strlen($alphabet);
+        $password = '';
+        for ($i = 0; $i < 12; $i++) {
+            $password .= $alphabet[random_int(0, $len - 1)];
+        }
+        return $password;
     }
 
     public function updateTechnician(Request $request, Technician $technician)
@@ -1359,6 +1396,7 @@ class AdminDashboardController extends Controller
             'down_payment' => 'nullable|numeric|min:0',
             'total_amount' => 'required|numeric|min:0',
             'notes' => 'nullable|string',
+            'is_revision' => 'nullable|boolean',
             'materials_file' => 'nullable|file|mimes:pdf,docx,xlsx,xls|max:10240',
         ]);
 
@@ -1379,6 +1417,16 @@ class AdminDashboardController extends Controller
             ])->withInput();
         }
 
+        // A revision is any submission where the admin explicitly clicked
+        // "Revise" OR an existing quoted/approved quotation is being
+        // re-submitted (#5).
+        $isRevision = (bool) $request->boolean('is_revision')
+            || in_array(
+                $serviceRequest->rfq_status,
+                [ServiceRequest::RFQ_STATUS_QUOTED, ServiceRequest::RFQ_STATUS_APPROVED],
+                true,
+            );
+
         $updateData = [
             'rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED,
             'quote_amount' => $totalAmount,
@@ -1387,11 +1435,18 @@ class AdminDashboardController extends Controller
             'quote_transport_cost' => (float) ($request->transport_cost ?? 0),
             'quote_down_payment' => $downPayment,
             'quote_notes' => $request->notes,
-            'quote_materials_file_path' => $filePath,
+            'quote_materials_file_path' => $filePath ?? $serviceRequest->quote_materials_file_path,
         ];
 
-        // Transition status to awaiting_quote_approval
-        if (in_array($serviceRequest->status, [
+        if ($isRevision) {
+            $updateData['quote_revision_count'] = (int) ($serviceRequest->quote_revision_count ?? 0) + 1;
+            $updateData['quote_last_revised_at'] = now();
+        }
+
+        // Transition status to awaiting_quote_approval (also resets the cycle
+        // if a previously-approved quotation is being revised so the client
+        // can re-approve the new figures).
+        if ($isRevision || in_array($serviceRequest->status, [
             ServiceRequest::STATUS_AWAITING_QUOTE_GENERATION,
             ServiceRequest::STATUS_PENDING,
             'pending',
@@ -1401,10 +1456,26 @@ class AdminDashboardController extends Controller
 
         $serviceRequest->update($updateData);
 
-        // Send email notification to client
-        Mail::to($serviceRequest->user->email)->send(new QuotationSent($serviceRequest));
+        // Send the appropriate email
+        try {
+            if ($isRevision) {
+                Mail::to($serviceRequest->user->email)->send(new \App\Mail\QuotationRevised($serviceRequest->fresh()));
+            } else {
+                Mail::to($serviceRequest->user->email)->send(new QuotationSent($serviceRequest));
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Quotation email failed', [
+                'service_request_id' => $serviceRequest->id,
+                'is_revision' => $isRevision,
+                'error' => $e->getMessage(),
+            ]);
+        }
 
-        return redirect()->route('admin.rfq')->with('success', 'Quotation sent to client successfully!');
+        $message = $isRevision
+            ? "Revised quotation (revision #{$updateData['quote_revision_count']}) sent to client."
+            : 'Quotation sent to client successfully!';
+
+        return redirect()->route('admin.rfq')->with('success', $message);
     }
 
     public function rejectRFQ(Request $request, ServiceRequest $serviceRequest)
