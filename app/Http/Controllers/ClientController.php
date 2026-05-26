@@ -169,24 +169,40 @@ class ClientController extends Controller
 
         // Ensure the RFQ is in quoted status
         if ($serviceRequest->rfq_status !== ServiceRequest::RFQ_STATUS_QUOTED) {
-            return response()->json(['error' => 'RFQ cannot be approved in current status'], 400);
+            return response()->json([
+                'error' => "Quotation cannot be approved (current status: {$serviceRequest->rfq_status})",
+            ], 400);
         }
 
-        $updateData = [
-            'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
-        ];
+        try {
+            $updateData = [
+                'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
+            ];
 
-        // Transition status to awaiting_payment when quotation is approved
-        if (in_array($serviceRequest->status, [
-            ServiceRequest::STATUS_AWAITING_QUOTE_APPROVAL,
-            'pending',
-        ])) {
-            $updateData['status'] = ServiceRequest::STATUS_AWAITING_PAYMENT;
+            // Transition status to awaiting_payment when quotation is approved
+            if (in_array($serviceRequest->status, [
+                ServiceRequest::STATUS_AWAITING_QUOTE_APPROVAL,
+                'pending',
+            ])) {
+                $updateData['status'] = ServiceRequest::STATUS_AWAITING_PAYMENT;
+            }
+
+            $serviceRequest->update($updateData);
+
+            return response()->json(['success' => true, 'message' => 'Quotation approved successfully']);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('approveRFQ failed', [
+                'service_request_id' => $serviceRequest->id,
+                'user_id' => Auth::id(),
+                'rfq_status' => $serviceRequest->rfq_status,
+                'status' => $serviceRequest->status,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return response()->json([
+                'error' => 'Failed to approve quotation: ' . $e->getMessage(),
+            ], 500);
         }
-
-        $serviceRequest->update($updateData);
-
-        return response()->json(['success' => true, 'message' => 'Quotation approved successfully']);
     }
 
     public function declineRFQ(Request $request, ServiceRequest $serviceRequest)

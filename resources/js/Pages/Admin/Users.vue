@@ -142,7 +142,7 @@
 
 
     <!-- Create/Edit User Modal -->
-    <div v-if="showCreateModal || showEditModal" class="modal-overlay" @click="closeModals">
+    <div v-if="showCreateModal || showEditModal" class="modal-overlay">
         <div class="modal-content large" @click.stop>
             <div class="modal-header">
                 <h3>{{ showCreateModal ? 'Add New User' : 'Edit User' }}</h3>
@@ -251,7 +251,7 @@
     </div>
 
     <!-- View User Modal -->
-    <div v-if="showViewModal" class="modal-overlay" @click="closeViewModal">
+    <div v-if="showViewModal" class="modal-overlay">
         <div class="modal-content" @click.stop>
             <div class="modal-header">
                 <h3>User Details</h3>
@@ -349,7 +349,7 @@
     </div>
 
     <!-- Delete Confirmation Modal -->
-    <div v-if="showDeleteModal" class="modal-overlay" @click="closeDeleteModal">
+    <div v-if="showDeleteModal" class="modal-overlay">
         <div class="modal-content" @click.stop>
             <div class="modal-header">
                 <h3>Confirm Delete</h3>

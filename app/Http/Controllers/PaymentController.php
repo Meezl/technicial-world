@@ -267,37 +267,55 @@ class PaymentController extends Controller
             ], 422);
         }
 
-        // Mark payment as paid
-        $paymentRequest->markAsPaid($paymentRequest->payment_method);
+        try {
+            // markAsPaid is typed `string $method` — when admin confirms an offline
+            // payment that was generated before the client picked a method, the
+            // stored payment_method is null. Falling back to "cash" (or an
+            // explicitly supplied method) prevents a TypeError 500.
+            $method = $request->input('payment_method')
+                ?? $paymentRequest->payment_method
+                ?? PaymentRequest::METHOD_CASH ?? 'cash';
 
-        // Create payment record
-        Payment::create([
-            'payment_id' => Payment::generatePaymentId(),
-            'payment_request_id' => $paymentRequest->id,
-            'service_request_id' => $paymentRequest->service_request_id,
-            'user_id' => $paymentRequest->user_id,
-            'amount' => $paymentRequest->amount,
-            'status' => Payment::STATUS_COMPLETED,
-            'payment_method' => $paymentRequest->payment_method,
-            'phone_number' => $paymentRequest->user->phone ?? '',
-            'account_reference' => $paymentRequest->serviceRequest->request_id,
-            'paid_at' => now(),
-            'notes' => 'Offline payment confirmed by admin',
-        ]);
+            $paymentRequest->markAsPaid($method);
 
-        // Transition the service request status to ready_for_assignment
-        $serviceRequest = $paymentRequest->serviceRequest;
-        if ($serviceRequest && in_array($serviceRequest->status, [
-            ServiceRequest::STATUS_AWAITING_PAYMENT,
-            ServiceRequest::STATUS_PAYMENT_PENDING_APPROVAL,
-            'pending',
-        ])) {
-            $serviceRequest->update(['status' => ServiceRequest::STATUS_READY_FOR_ASSIGNMENT]);
+            // Create payment record
+            Payment::create([
+                'payment_id' => Payment::generatePaymentId(),
+                'payment_request_id' => $paymentRequest->id,
+                'service_request_id' => $paymentRequest->service_request_id,
+                'user_id' => $paymentRequest->user_id,
+                'amount' => $paymentRequest->amount,
+                'status' => Payment::STATUS_COMPLETED,
+                'payment_method' => $method,
+                'phone_number' => $paymentRequest->user->phone ?? '',
+                'account_reference' => $paymentRequest->serviceRequest->request_id,
+                'paid_at' => now(),
+                'notes' => 'Offline payment confirmed by admin',
+            ]);
+
+            // Transition the service request status to ready_for_assignment
+            $serviceRequest = $paymentRequest->serviceRequest;
+            if ($serviceRequest && in_array($serviceRequest->status, [
+                ServiceRequest::STATUS_AWAITING_PAYMENT,
+                ServiceRequest::STATUS_PAYMENT_PENDING_APPROVAL,
+                'pending',
+            ])) {
+                $serviceRequest->update(['status' => ServiceRequest::STATUS_READY_FOR_ASSIGNMENT]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Payment confirmed successfully!',
+            ]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('confirmOfflinePayment failed', [
+                'payment_request_id' => $paymentRequest->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return response()->json([
+                'error' => 'Failed to approve payment: ' . $e->getMessage(),
+            ], 500);
         }
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Payment confirmed successfully!',
-        ]);
     }
 }

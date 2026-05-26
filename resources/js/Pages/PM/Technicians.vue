@@ -294,7 +294,7 @@
             </section>
         </section>
 
-        <div v-if="selectedTechnician" class="modal-overlay" @click="closeTechnicianModal">
+        <div v-if="selectedTechnician" class="modal-overlay">
             <div class="modal-card" @click.stop>
                 <div class="modal-header">
                     <div>

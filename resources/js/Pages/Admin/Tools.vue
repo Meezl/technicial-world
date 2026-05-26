@@ -119,7 +119,7 @@
         </main>
 
         <!-- Create/Edit Tool Modal -->
-        <div v-if="showModal" class="modal-overlay" @click="closeModal">
+        <div v-if="showModal" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
                     <h3>{{ isEditing ? 'Edit' : 'Add New' }} Tool</h3>
@@ -203,7 +203,7 @@
         </div>
 
         <!-- Assign Tool Modal -->
-        <div v-if="showAssignToolModal" class="modal-overlay" @click="closeAssignModal">
+        <div v-if="showAssignToolModal" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
                     <h3>Issue Tool: {{ selectedTool?.name }}</h3>

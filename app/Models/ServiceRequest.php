@@ -338,7 +338,26 @@ class ServiceRequest extends Model
         return $query->where('submission_mode', self::SUBMISSION_MODE_ADMIN_PROXY);
     }
 
+    /**
+     * Service requests visible to a project manager.
+     *
+     * Returns requests explicitly assigned to this PM AND any active
+     * request that has no PM assigned yet, so PMs can pick up incoming
+     * admin-created RFQs without needing the admin to pre-assign them.
+     */
     public function scopeForPm($query, int $pmId)
+    {
+        return $query->where(function ($q) use ($pmId) {
+            $q->where('assigned_pm_id', $pmId)
+                ->orWhereNull('assigned_pm_id');
+        });
+    }
+
+    /**
+     * Strictly assigned to this PM (no unassigned fallback).
+     * Use when ownership matters, e.g. for "my jobs only" filters.
+     */
+    public function scopeAssignedToPm($query, int $pmId)
     {
         return $query->where('assigned_pm_id', $pmId);
     }

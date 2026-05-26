@@ -237,7 +237,7 @@
         </main>
 
         <!-- Add Task Modal -->
-        <div v-if="showAddTask" class="modal-overlay" @click="showAddTask = false">
+        <div v-if="showAddTask" class="modal-overlay">
             <div class="modal-content" @click.stop style="max-width: 600px;">
                 <div class="modal-header">
                     <h3>Add New Task</h3>

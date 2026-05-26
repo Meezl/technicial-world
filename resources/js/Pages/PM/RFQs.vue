@@ -323,7 +323,7 @@
             </div>
         </section>
 
-        <div v-if="showQuoteModal" class="modal-overlay" @click.self="showQuoteModal = false">
+        <div v-if="showQuoteModal" class="modal-overlay">
             <div class="modal-content large">
                 <div class="modal-header">
                     <div>
@@ -430,7 +430,7 @@
             </div>
         </div>
 
-        <div v-if="showAssignModal" class="modal-overlay" @click.self="showAssignModal = false">
+        <div v-if="showAssignModal" class="modal-overlay">
             <div class="modal-content">
                 <div class="modal-header">
                     <div>

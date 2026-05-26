@@ -434,7 +434,7 @@
         </main>
 
         <!-- View RFQ Details Modal -->
-        <div v-if="showViewModal" class="modal-overlay" @click="closeViewModal">
+        <div v-if="showViewModal" class="modal-overlay">
             <div class="modal-content large" @click.stop>
                 <div class="modal-header">
                     <h3>Service Request Details</h3>
@@ -590,7 +590,7 @@
         </div>
 
         <!-- RFQ Review/Edit Modal -->
-        <div v-if="showReviewModal" class="modal-overlay" @click="closeReviewModal">
+        <div v-if="showReviewModal" class="modal-overlay">
             <div class="modal-content extra-large" @click.stop>
                 <div class="modal-header">
                     <h3>Create Quotation - {{ selectedRFQ?.request_id || `REQ-${selectedRFQ?.id}` }}</h3>
@@ -708,7 +708,7 @@
         </div>
 
         <!-- Proxy Payment Confirmation Modal (admin-assisted RFQs only) -->
-        <div v-if="showProxyPaymentModal" class="modal-overlay" @click="closeProxyPaymentModal">
+        <div v-if="showProxyPaymentModal" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
                     <h3><i class="fas fa-cash-register" style="margin-right:0.5rem;color:#0f766e;"></i>Confirm Payment Received</h3>
@@ -800,7 +800,7 @@
         </div>
 
         <!-- Request Payment Modal -->
-        <div v-if="showPaymentModal" class="modal-overlay" @click="closePaymentModal">
+        <div v-if="showPaymentModal" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
                     <h3>Request Payment</h3>
@@ -918,7 +918,7 @@
         </div>
 
         <!-- Proxy Approval Modal -->
-        <div v-if="showApproveOnBehalfModal" class="modal-overlay" @click="closeApproveOnBehalfModal">
+        <div v-if="showApproveOnBehalfModal" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
                     <h3>Approve On Behalf Of Client</h3>
@@ -985,7 +985,7 @@
         </div>
 
         <!-- Rejection Modal -->
-        <div v-if="showRejectModal" class="modal-overlay" @click="closeRejectModal">
+        <div v-if="showRejectModal" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
                     <h3>Reject Service Request</h3>
