@@ -3,6 +3,25 @@
         <AdminSidebar current-page="rfq" />
 
         <main class="main-content rfq-page">
+            <transition name="flash">
+                <div v-if="flashSuccess" class="flash-banner flash-banner-success">
+                    <i class="fas fa-check-circle"></i>
+                    <span>{{ flashSuccess }}</span>
+                    <button class="flash-close" @click="flashSuccess = ''" aria-label="Dismiss">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </transition>
+            <transition name="flash">
+                <div v-if="flashError" class="flash-banner flash-banner-error">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span>{{ flashError }}</span>
+                    <button class="flash-close" @click="flashError = ''" aria-label="Dismiss">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </transition>
+
             <!-- Hero Section -->
             <section class="rfq-hero">
                 <div class="hero-copy">
@@ -599,7 +618,7 @@
                                         <div class="material-inputs">
                                             <input v-model="material.name" type="text" placeholder="Material name" class="form-control material-name" required>
                                             <input v-model="material.quantity" type="number" min="1" placeholder="Qty" class="form-control material-qty" required>
-                                            <input v-model="material.unit_price" type="number" step="0.01" placeholder="Unit Price (KSH)" class="form-control material-price" required>
+                                            <CurrencyInput v-model="material.unit_price" placeholder="Unit Price (KSH)" class="material-price" required />
                                             <div class="material-total">KSH {{ formatCurrency((material.quantity || 0) * (material.unit_price || 0)) }}</div>
                                             <button @click="removeMaterial(index)" type="button" class="btn-remove" :disabled="quotationForm.materials.length === 1">
                                                 <i class="fas fa-trash"></i>
@@ -623,7 +642,7 @@
                                 <div class="form-row">
                                     <div class="form-group">
                                         <label><i class="fas fa-tools"></i> Labor Cost (KSH):</label>
-                                        <input v-model="quotationForm.labor_cost" type="number" step="0.01" class="form-control" placeholder="0.00" required>
+                                        <CurrencyInput v-model="quotationForm.labor_cost" placeholder="0.00" required />
                                     </div>
                                     <div class="form-group">
                                         <label><i class="fas fa-sticky-note"></i> Additional Notes:</label>
@@ -904,9 +923,30 @@
 
 <script setup>
 import AdminSidebar from '../../Components/AdminSidebar.vue'
-import { ref, computed } from 'vue'
-import { Link, router } from '@inertiajs/vue3'
+import CurrencyInput from '../../Components/CurrencyInput.vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { Link, router, usePage } from '@inertiajs/vue3'
 import axios from 'axios'
+
+const inertiaPage = usePage()
+const flashSuccess = ref('')
+const flashError = ref('')
+
+function showFlash() {
+    const s = inertiaPage.props.flash?.success
+    const e = inertiaPage.props.flash?.error
+    if (s) {
+        flashSuccess.value = s
+        setTimeout(() => { flashSuccess.value = '' }, 6000)
+    }
+    if (e) {
+        flashError.value = e
+        setTimeout(() => { flashError.value = '' }, 7000)
+    }
+}
+
+onMounted(showFlash)
+watch(() => inertiaPage.props.flash, showFlash, { deep: true })
 
 const props = defineProps({
     rfqs: { type: Object, default: () => ({ data: [], current_page: 1, last_page: 1, total: 0, from: 0, to: 0 }) },
@@ -1031,8 +1071,10 @@ const activeFilterChips = computed(() => {
     return chips
 })
 
-const materialsTotal = computed(() => quotationForm.value.materials.reduce((t, m) => t + (m.quantity * m.unit_price), 0))
-const totalQuoteAmount = computed(() => materialsTotal.value + (quotationForm.value.labor_cost || 0))
+const materialsTotal = computed(() => roundCurrency(
+    quotationForm.value.materials.reduce((t, m) => t + roundCurrency((Number(m.quantity) || 0) * (Number(m.unit_price) || 0)), 0)
+))
+const totalQuoteAmount = computed(() => roundCurrency(materialsTotal.value + (Number(quotationForm.value.labor_cost) || 0)))
 const canSubmitQuote = computed(() => quotationForm.value.materials.some(m => m.name && m.quantity > 0 && m.unit_price > 0) && quotationForm.value.labor_cost >= 0)
 const calculatedPaymentAmount = computed(() => {
     if (!selectedRFQ.value?.quote_amount || !paymentRequestForm.value.percentage) return 0
@@ -1167,7 +1209,19 @@ const submitApproveOnBehalf = () => {
 // --- Helpers ---
 const formatDate = (date) => date ? new Date(date).toLocaleDateString() : 'N/A'
 const formatDateTime = (date) => date ? new Date(date).toLocaleString() : 'N/A'
-const formatCurrency = (amount) => new Intl.NumberFormat('en-KE').format(amount || 0)
+
+/**
+ * Round to 2 decimal places using safe integer math to avoid
+ * floating-point drift (e.g. 22000 ending up as 21999.99 after
+ * intermediate computations).
+ */
+const roundCurrency = (value) => Math.round((Number(value) || 0) * 100) / 100
+
+const formatCurrency = (amount) => new Intl.NumberFormat('en-KE', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+}).format(roundCurrency(amount))
+
 const truncateText = (text, length) => (!text ? '' : text.length > length ? text.substring(0, length) + '...' : text)
 
 const getDaysOpenLabel = (date) => {
@@ -1463,4 +1517,25 @@ defineOptions({ layout: null })
 .evidence-placeholder small { font-size: 0.78rem; }
 .evidence-selected { display: flex; align-items: center; gap: 0.65rem; color: #0f172a; font-weight: 500; }
 .remove-evidence-btn { margin-left: auto; border: none; background: transparent; color: #b91c1c; font-size: 1rem; cursor: pointer; }
+
+/* Flash banners */
+.flash-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.85rem 1.1rem;
+    border-radius: 12px;
+    margin-bottom: 1rem;
+    font-weight: 500;
+    border: 1px solid transparent;
+}
+.flash-banner-success { background: #ECFDF5; color: #065F46; border-color: #A7F3D0; }
+.flash-banner-error { background: #FEF2F2; color: #991B1B; border-color: #FECACA; }
+.flash-banner i.fas { font-size: 1.1rem; }
+.flash-banner span { flex: 1; }
+.flash-close { background: transparent; border: none; cursor: pointer; color: inherit; opacity: 0.6; padding: 4px 6px; }
+.flash-close:hover { opacity: 1; }
+.flash-enter-active, .flash-leave-active { transition: opacity 0.25s ease, transform 0.25s ease; }
+.flash-enter-from { opacity: 0; transform: translateY(-6px); }
+.flash-leave-to { opacity: 0; transform: translateY(-6px); }
 </style>

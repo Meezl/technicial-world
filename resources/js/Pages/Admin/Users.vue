@@ -46,6 +46,7 @@
                                 <option value="all">All Roles</option>
                                 <option value="client">Clients</option>
                                 <option value="technician">Technicians</option>
+                                <option value="project_manager">Project Managers</option>
                                 <option value="admin">Admins</option>
                             </select>
                             <div class="search-box">
@@ -177,6 +178,7 @@
                                         <option value="">Select Role</option>
                                         <option value="client">Client</option>
                                         <option value="technician">Technician</option>
+                                        <option value="project_manager">Project Manager</option>
                                         <option value="admin">Admin</option>
                                     </select>
                                 </div>
@@ -445,6 +447,7 @@ const formatRole = (role) => {
     const roles = {
         'client': 'Client',
         'technician': 'Technician',
+        'project_manager': 'Project Manager',
         'admin': 'Administrator'
     }
     return roles[role] || role
@@ -718,6 +721,11 @@ defineOptions({
 .role-badge.admin {
     background: #F3E8FF;
     color: #7C3AED;
+}
+
+.role-badge.project_manager {
+    background: #CFFAFE;
+    color: #0E7490;
 }
 
 .status-badge.verified {
