@@ -150,6 +150,34 @@
             <p>Service Quotation</p>
         </div>
 
+        <!-- Approve/decline actions placed at the top so they remain visible
+             in Gmail and other clients that collapse long emails under a
+             "quoted text" or "..." expander. The full breakdown follows. -->
+        <div class="actions" style="margin:18px 0 24px;text-align:center;">
+            <p style="margin:0 0 12px;font-size:15px;color:#0F172A;">
+                <strong>Please review the quotation and let us know your decision.</strong>
+            </p>
+            <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto;">
+                <tr>
+                    <td style="padding:0 6px;">
+                        <a href="{{ url('/client/request-status/' . $serviceRequest->id) }}"
+                           style="display:inline-block;padding:12px 24px;background:#16A34A;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:15px;">
+                            ✓ Approve Quotation
+                        </a>
+                    </td>
+                    <td style="padding:0 6px;">
+                        <a href="{{ url('/client/request-status/' . $serviceRequest->id) }}"
+                           style="display:inline-block;padding:12px 24px;background:#DC2626;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;font-size:15px;">
+                            ✕ Decline Quotation
+                        </a>
+                    </td>
+                </tr>
+            </table>
+            <p style="margin:14px 0 0;font-size:13px;color:#64748B;">
+                Both buttons open your secure quote page where you can confirm or decline.
+            </p>
+        </div>
+
         <div class="section">
             <h3>Request Details</h3>
             <div class="info-grid">
@@ -212,6 +240,12 @@
                 <span>KSH {{ number_format(collect($materials)->sum(function($item) { return $item['quantity'] * $item['unit_price']; }), 2) }}</span>
             </div>
             @endif
+            @if(($transportCost ?? 0) > 0)
+            <div class="total-line">
+                <span>Transport:</span>
+                <span>KSH {{ number_format($transportCost, 2) }}</span>
+            </div>
+            @endif
             <div class="total-line">
                 <span>Labor Cost:</span>
                 <span>KSH {{ number_format($laborCost ?? 0, 2) }}</span>
@@ -220,6 +254,15 @@
                 <span>Total Amount:</span>
                 <span>KSH {{ number_format($totalAmount ?? 0, 2) }}</span>
             </div>
+            @if(!empty($downPayment) && $downPayment > 0)
+            <div class="total-line" style="margin-top:12px;padding-top:12px;border-top:1px dashed #d1d5db;">
+                <span style="color:#92400E;font-weight:600;">Required Down Payment:</span>
+                <span style="color:#92400E;font-weight:600;">KSH {{ number_format($downPayment, 2) }}</span>
+            </div>
+            <p style="font-size:13px;color:#64748B;margin:8px 0 0;">
+                A deposit of KSH {{ number_format($downPayment, 2) }} is required to proceed once you approve the quotation.
+            </p>
+            @endif
         </div>
 
         @if($notes)
@@ -230,7 +273,7 @@
         @endif
 
         <div class="actions">
-            <p><strong>Please review the quotation and let us know your decision.</strong></p>
+            <p><strong>Ready to proceed? Review and respond above, or use these buttons.</strong></p>
             <a href="{{ url('/client/request-status/' . $serviceRequest->id) }}" class="btn btn-success">
                 Approve Quotation
             </a>

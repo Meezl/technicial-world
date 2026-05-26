@@ -1351,6 +1351,8 @@ class AdminDashboardController extends Controller
             'materials.*.quantity' => 'required|numeric|min:1',
             'materials.*.unit_price' => 'required|numeric|min:0',
             'labor_cost' => 'required|numeric|min:0',
+            'transport_cost' => 'nullable|numeric|min:0',
+            'down_payment' => 'nullable|numeric|min:0',
             'total_amount' => 'required|numeric|min:0',
             'notes' => 'nullable|string',
             'materials_file' => 'nullable|file|mimes:pdf,docx,xlsx,xls|max:10240',
@@ -1365,11 +1367,21 @@ class AdminDashboardController extends Controller
             $filePath = $file->storeAs('quotes', $fileName, 'public');
         }
 
+        $totalAmount = (float) $request->total_amount;
+        $downPayment = $request->filled('down_payment') ? (float) $request->down_payment : null;
+        if ($downPayment !== null && $downPayment > $totalAmount) {
+            return back()->withErrors([
+                'down_payment' => 'Down payment cannot exceed the total quotation amount.',
+            ])->withInput();
+        }
+
         $updateData = [
             'rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED,
-            'quote_amount' => $request->total_amount,
+            'quote_amount' => $totalAmount,
             'quote_materials' => $request->materials,
             'quote_labor_cost' => $request->labor_cost,
+            'quote_transport_cost' => (float) ($request->transport_cost ?? 0),
+            'quote_down_payment' => $downPayment,
             'quote_notes' => $request->notes,
             'quote_materials_file_path' => $filePath,
         ];
@@ -1648,9 +1660,17 @@ class AdminDashboardController extends Controller
     public function requestPayment(Request $request, ServiceRequest $serviceRequest)
     {
         $request->validate([
-            'percentage' => 'required|numeric|min:1|max:100',
+            'percentage' => 'nullable|numeric|min:0|max:100',
+            'amount' => 'nullable|numeric|min:1',
+            'is_down_payment' => 'nullable|boolean',
             'notes' => 'nullable|string|max:500',
         ]);
+
+        if (!$request->filled('percentage') && !$request->filled('amount')) {
+            return response()->json([
+                'error' => 'Either a percentage or a fixed amount is required.',
+            ], 422);
+        }
 
         // Check if RFQ is approved
         if ($serviceRequest->rfq_status !== ServiceRequest::RFQ_STATUS_APPROVED) {
@@ -1670,9 +1690,54 @@ class AdminDashboardController extends Controller
             ], 422);
         }
 
-        // Calculate amount based on percentage
-        $percentage = $request->percentage;
-        $amount = ($percentage / 100) * $serviceRequest->quote_amount;
+        $quoteAmount = (float) $serviceRequest->quote_amount;
+        if ($quoteAmount <= 0) {
+            return response()->json([
+                'error' => 'Cannot bill against a zero-value quotation.',
+            ], 422);
+        }
+
+        // #14a: Compute amount, then enforce the approved-quote cap so the
+        // sum of all non-cancelled billings stays at or below quote_amount.
+        if ($request->filled('amount')) {
+            $amount = (float) $request->amount;
+            $percentage = round(($amount / $quoteAmount) * 100, 2);
+        } else {
+            $percentage = (float) $request->percentage;
+            $amount = round(($percentage / 100) * $quoteAmount, 2);
+        }
+
+        $alreadyBilled = (float) PaymentRequest::where('service_request_id', $serviceRequest->id)
+            ->whereIn('status', [
+                PaymentRequest::STATUS_PENDING,
+                PaymentRequest::STATUS_PAID,
+            ])
+            ->sum('amount');
+
+        $remaining = round($quoteAmount - $alreadyBilled, 2);
+
+        if ($amount > $remaining + 0.001) {
+            return response()->json([
+                'error' => sprintf(
+                    'This request (KES %s) exceeds the remaining approved balance (KES %s of KES %s already billed). Request additional client approval before billing beyond the quotation.',
+                    number_format($amount, 2),
+                    number_format($alreadyBilled, 2),
+                    number_format($quoteAmount, 2)
+                ),
+                'remaining' => $remaining,
+                'already_billed' => $alreadyBilled,
+                'quote_amount' => $quoteAmount,
+            ], 422);
+        }
+
+        // #14b: Determine if this should be treated as the down payment and
+        // block duplicate down-payment requests.
+        $isDownPayment = $request->boolean('is_down_payment', $alreadyBilled <= 0);
+        if ($isDownPayment && $serviceRequest->down_payment_requested) {
+            return response()->json([
+                'error' => 'A down payment has already been requested for this job. Send a progress payment request instead.',
+            ], 422);
+        }
 
         // Create payment request
         $paymentRequest = PaymentRequest::create([
@@ -1685,6 +1750,10 @@ class AdminDashboardController extends Controller
             'status' => PaymentRequest::STATUS_PENDING,
             'notes' => $request->notes,
         ]);
+
+        if ($isDownPayment) {
+            $serviceRequest->update(['down_payment_requested' => true]);
+        }
 
         // Send notification to client
         $serviceRequest->user->notify(new PaymentRequestNotification($paymentRequest));
