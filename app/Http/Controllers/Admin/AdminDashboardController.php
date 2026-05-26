@@ -1783,15 +1783,35 @@ class AdminDashboardController extends Controller
         }
 
         $request->validate([
-            'percentage'    => 'required|numeric|min:1|max:100',
-            'payment_method'=> 'required|in:cash,cheque,bank_deposit',
-            'cheque_number' => 'required_if:payment_method,cheque|nullable|string|max:50',
-            'bank_reference'=> 'required_if:payment_method,bank_deposit|nullable|string|max:100',
-            'notes'         => 'nullable|string|max:500',
-            'evidence'      => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:10240',
+            'percentage'           => 'required|numeric|min:1|max:100',
+            'payment_method'       => 'required|in:cash,cheque,bank_deposit,mpesa',
+            'cheque_number'        => 'required_if:payment_method,cheque|nullable|string|max:50',
+            'bank_reference'       => 'required_if:payment_method,bank_deposit|nullable|string|max:100',
+            'mpesa_receipt_number' => 'required_if:payment_method,mpesa|nullable|string|max:20',
+            'phone_number'         => 'nullable|string|max:20',
+            'notes'                => 'nullable|string|max:500',
+            'evidence'             => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:10240',
         ]);
 
         $amount = ($request->percentage / 100) * $serviceRequest->quote_amount;
+
+        $paymentPayload = [
+            'requested_by'         => auth()->id(),
+            'percentage'           => $request->percentage,
+            'amount'               => $amount,
+            'notes'                => $request->notes,
+            'payment_method'       => $request->payment_method,
+            'cheque_number'        => $request->cheque_number,
+            'bank_reference'       => $request->bank_reference,
+            'mpesa_receipt_number' => $request->mpesa_receipt_number,
+            'phone_number'         => $request->phone_number,
+        ];
+
+        if ($request->payment_method === 'mpesa' && $request->mpesa_receipt_number) {
+            // Mirror the receipt into the legacy transaction id field used by
+            // the M-Pesa callback handler so downstream reporting can find it.
+            $paymentPayload['mpesa_transaction_id'] = $request->mpesa_receipt_number;
+        }
 
         // Reuse any existing pending payment request for this SR (may exist from an earlier
         // attempt or a mistakenly sent normal request) — update it with the new details.
@@ -1800,30 +1820,15 @@ class AdminDashboardController extends Controller
             ->first();
 
         if ($existingPending) {
-            $existingPending->update([
-                'requested_by'   => auth()->id(),
-                'percentage'     => $request->percentage,
-                'amount'         => $amount,
-                'notes'          => $request->notes,
-                'payment_method' => $request->payment_method,
-                'cheque_number'  => $request->cheque_number,
-                'bank_reference' => $request->bank_reference,
-            ]);
+            $existingPending->update($paymentPayload);
             $paymentRequest = $existingPending->fresh();
         } else {
-            $paymentRequest = PaymentRequest::create([
+            $paymentRequest = PaymentRequest::create(array_merge([
                 'payment_request_id' => PaymentRequest::generatePaymentRequestId(),
                 'service_request_id' => $serviceRequest->id,
                 'user_id'            => $serviceRequest->user_id,
-                'requested_by'       => auth()->id(),
-                'percentage'         => $request->percentage,
-                'amount'             => $amount,
                 'status'             => PaymentRequest::STATUS_PENDING,
-                'notes'              => $request->notes,
-                'payment_method'     => $request->payment_method,
-                'cheque_number'      => $request->cheque_number,
-                'bank_reference'     => $request->bank_reference,
-            ]);
+            ], $paymentPayload));
         }
 
         // Store proof of payment if uploaded
@@ -1837,17 +1842,19 @@ class AdminDashboardController extends Controller
 
         // Create the Payment record
         Payment::create([
-            'payment_id'          => Payment::generatePaymentId(),
-            'payment_request_id'  => $paymentRequest->id,
-            'service_request_id'  => $serviceRequest->id,
-            'user_id'             => $serviceRequest->user_id,
-            'amount'              => $amount,
-            'status'              => Payment::STATUS_COMPLETED,
-            'payment_method'      => $request->payment_method,
-            'phone_number'        => $serviceRequest->user->phone ?? '',
-            'account_reference'   => $serviceRequest->request_id,
-            'paid_at'             => now(),
-            'notes'               => 'Payment confirmed on behalf of client by admin (' . auth()->user()->name . ')',
+            'payment_id'           => Payment::generatePaymentId(),
+            'payment_request_id'   => $paymentRequest->id,
+            'service_request_id'   => $serviceRequest->id,
+            'user_id'              => $serviceRequest->user_id,
+            'amount'               => $amount,
+            'status'               => Payment::STATUS_COMPLETED,
+            'payment_method'       => $request->payment_method,
+            'phone_number'         => $request->phone_number ?: ($serviceRequest->user->phone ?? ''),
+            'mpesa_receipt_number' => $request->mpesa_receipt_number,
+            'mpesa_transaction_id' => $request->mpesa_receipt_number,
+            'account_reference'    => $serviceRequest->request_id,
+            'paid_at'              => now(),
+            'notes'                => 'Payment confirmed on behalf of client by admin (' . auth()->user()->name . ')',
         ]);
 
         // Advance the service request status

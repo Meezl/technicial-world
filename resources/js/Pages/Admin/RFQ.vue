@@ -749,12 +749,31 @@
                             <label>Payment Method</label>
                             <select v-model="proxyPaymentForm.payment_method" class="form-control" required>
                                 <option value="">Select method...</option>
+                                <option value="mpesa">M-Pesa</option>
                                 <option value="cash">Cash</option>
                                 <option value="cheque">Cheque</option>
                                 <option value="bank_deposit">Bank Deposit</option>
                             </select>
                         </div>
 
+                        <div v-if="proxyPaymentForm.payment_method === 'mpesa'" class="form-group" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:0.85rem;">
+                            <label style="color:#065f46;font-weight:600;">
+                                <i class="fab fa-google-pay" style="color:#16a34a;"></i> M-Pesa Receipt Details
+                            </label>
+                            <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:0.75rem;margin-top:0.5rem;">
+                                <div>
+                                    <label style="font-size:0.85rem;">M-Pesa Receipt *</label>
+                                    <input v-model="proxyPaymentForm.mpesa_receipt_number" type="text" class="form-control" placeholder="e.g. SHL3K8M2X1" required>
+                                </div>
+                                <div>
+                                    <label style="font-size:0.85rem;">Client Phone</label>
+                                    <input v-model="proxyPaymentForm.phone_number" type="text" class="form-control" placeholder="e.g. 254712345678">
+                                </div>
+                            </div>
+                            <small style="color:#065f46;font-size:0.78rem;display:block;margin-top:0.5rem;">
+                                The 10-character M-Pesa confirmation code (sender's "MPESA Transaction Cost"  SMS). Use the RFQ reference as the account number when instructing the client to pay.
+                            </small>
+                        </div>
                         <div class="form-group" v-if="proxyPaymentForm.payment_method === 'cheque'">
                             <label>Cheque Number *</label>
                             <input v-model="proxyPaymentForm.cheque_number" type="text" class="form-control" placeholder="e.g. 001234" required>
@@ -1249,7 +1268,16 @@ const closePaymentModal = () => { showPaymentModal.value = false; selectedRFQ.va
 
 const openProxyPaymentModal = (rfq) => {
     selectedRFQ.value = rfq
-    proxyPaymentForm.value = { percentage: 50, payment_method: '', cheque_number: '', bank_reference: '', notes: '', evidence: null }
+    proxyPaymentForm.value = {
+        percentage: 50,
+        payment_method: '',
+        cheque_number: '',
+        bank_reference: '',
+        mpesa_receipt_number: '',
+        phone_number: '',
+        notes: '',
+        evidence: null,
+    }
     showProxyPaymentModal.value = true
 }
 const closeProxyPaymentModal = () => {
@@ -1266,6 +1294,8 @@ const submitProxyPayment = () => {
     fd.append('payment_method', proxyPaymentForm.value.payment_method)
     if (proxyPaymentForm.value.cheque_number) fd.append('cheque_number', proxyPaymentForm.value.cheque_number)
     if (proxyPaymentForm.value.bank_reference) fd.append('bank_reference', proxyPaymentForm.value.bank_reference)
+    if (proxyPaymentForm.value.mpesa_receipt_number) fd.append('mpesa_receipt_number', proxyPaymentForm.value.mpesa_receipt_number)
+    if (proxyPaymentForm.value.phone_number) fd.append('phone_number', proxyPaymentForm.value.phone_number)
     if (proxyPaymentForm.value.notes) fd.append('notes', proxyPaymentForm.value.notes)
     if (proxyPaymentForm.value.evidence) fd.append('evidence', proxyPaymentForm.value.evidence)
     axios.post(`/admin/rfq/${selectedRFQ.value.id}/confirm-payment-on-behalf`, fd, {
