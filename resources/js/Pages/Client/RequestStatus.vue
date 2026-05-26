@@ -464,6 +464,24 @@
                             </div>
                         </div>
 
+                        <div :class="['timeline-item', { completed: paymentReceived }]">
+                            <div class="timeline-marker">
+                                <i class="fas fa-money-bill-wave"></i>
+                            </div>
+                            <div class="timeline-content">
+                                <h4>Payment Received</h4>
+                                <p v-if="latestPaidAt">{{ formatDate(latestPaidAt) }}</p>
+                                <span class="timeline-description">
+                                    <template v-if="paymentReceived">
+                                        {{ paidMethodLabel ? `Payment confirmed via ${paidMethodLabel}.` : 'Your payment has been received and validated.' }}
+                                    </template>
+                                    <template v-else>
+                                        Waiting for deposit payment to be confirmed.
+                                    </template>
+                                </span>
+                            </div>
+                        </div>
+
                         <div :class="['timeline-item', { completed: ['assigned', 'in_progress', 'completed'].includes(serviceRequest.status) }]">
                             <div class="timeline-marker">
                                 <i class="fas fa-user-plus"></i>
@@ -617,6 +635,34 @@ const processingAction = ref(false)
 const processingPayment = ref(false)
 const showDeclineModal = ref(false)
 const declineReason = ref('')
+
+// Payment Received timeline stage (#10) — reuses the existing
+// `paidPaymentRequests` computed defined later in this file, plus a
+// `payments` fallback when the legacy table holds the receipt.
+const paidPaymentsList = computed(() => {
+    const list = props.serviceRequest.payments || []
+    return list.filter((p) => p.status === 'completed' || p.status === 'paid')
+})
+const paymentReceived = computed(() => paidPaymentRequests.value.length > 0 || paidPaymentsList.value.length > 0)
+const latestPaidAt = computed(() => {
+    const candidates = [
+        ...paidPaymentRequests.value.map((pr) => pr.paid_at),
+        ...paidPaymentsList.value.map((p) => p.paid_at),
+    ].filter(Boolean)
+    if (!candidates.length) return null
+    return candidates.sort().slice(-1)[0]
+})
+const paidMethodLabel = computed(() => {
+    const methodMap = { mpesa: 'M-Pesa', cheque: 'Cheque', cash: 'Cash', bank_deposit: 'Bank Deposit' }
+    const latest = paidPaymentRequests.value[paidPaymentRequests.value.length - 1]
+        || paidPaymentsList.value[paidPaymentsList.value.length - 1]
+    if (!latest) return null
+    const m = latest.payment_method
+        || (latest.mpesa_receipt_number ? 'mpesa' : null)
+        || (latest.cheque_number ? 'cheque' : null)
+        || (latest.bank_reference ? 'bank_deposit' : null)
+    return m ? (methodMap[m] || m) : null
+})
 const selectedPaymentMethod = ref(null)
 
 const mpesaForm = reactive({
@@ -657,7 +703,7 @@ const pendingPaymentRequest = computed(() => {
 })
 
 const paidPaymentRequests = computed(() => {
-    return props.serviceRequest.payment_requests?.filter(pr => pr.status === 'paid') || []
+    return (props.serviceRequest.payment_requests || []).filter(pr => pr.status === 'paid' || pr.status === 'completed')
 })
 
 const formatStatus = (status) => {

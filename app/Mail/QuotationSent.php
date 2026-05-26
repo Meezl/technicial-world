@@ -45,6 +45,8 @@ class QuotationSent extends Mailable
                 'serviceRequest' => $this->serviceRequest,
                 'materials' => $this->serviceRequest->quote_materials,
                 'laborCost' => $this->serviceRequest->quote_labor_cost,
+                'transportCost' => $this->serviceRequest->quote_transport_cost ?? 0,
+                'downPayment' => $this->serviceRequest->quote_down_payment,
                 'totalAmount' => $this->serviceRequest->quote_amount,
                 'notes' => $this->serviceRequest->quote_notes,
             ]

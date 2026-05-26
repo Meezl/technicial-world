@@ -641,8 +641,21 @@
                             <div class="form-section">
                                 <div class="form-row">
                                     <div class="form-group">
+                                        <label><i class="fas fa-truck"></i> Transport Cost (KSH):</label>
+                                        <input v-model="quotationForm.transport_cost" type="number" step="0.01" class="form-control" placeholder="0.00">
+                                    </div>
+                                    <div class="form-group">
                                         <label><i class="fas fa-tools"></i> Labor Cost (KSH):</label>
                                         <CurrencyInput v-model="quotationForm.labor_cost" placeholder="0.00" required />
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label><i class="fas fa-hand-holding-usd"></i> Down Payment (KSH):</label>
+                                        <input v-model="quotationForm.down_payment" type="number" step="0.01" class="form-control" placeholder="Leave blank for 50% of total">
+                                        <small style="color: var(--text-muted); font-size: 0.8rem; display: block; margin-top: 0.2rem;">
+                                            Fixed KES amount required upfront. Shown in the client's quotation email and pre-fills the first payment request.
+                                        </small>
                                     </div>
                                     <div class="form-group">
                                         <label><i class="fas fa-sticky-note"></i> Additional Notes:</label>
@@ -660,12 +673,20 @@
                                             <span>KSH {{ formatCurrency(materialsTotal) }}</span>
                                         </div>
                                         <div class="cost-item">
+                                            <span>Transport:</span>
+                                            <span>KSH {{ formatCurrency(quotationForm.transport_cost || 0) }}</span>
+                                        </div>
+                                        <div class="cost-item">
                                             <span>Labor Cost:</span>
                                             <span>KSH {{ formatCurrency(quotationForm.labor_cost || 0) }}</span>
                                         </div>
                                         <div class="cost-item total">
                                             <span>Total Amount:</span>
                                             <span>KSH {{ formatCurrency(totalQuoteAmount) }}</span>
+                                        </div>
+                                        <div v-if="quotationForm.down_payment" class="cost-item" style="border-top: 1px dashed #e5e7eb; margin-top: 0.4rem; padding-top: 0.4rem;">
+                                            <span>Required Down Payment:</span>
+                                            <span>KSH {{ formatCurrency(quotationForm.down_payment) }}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -803,23 +824,76 @@
                                 <span class="label">Total Quote Amount:</span>
                                 <span class="value highlight">KSH {{ formatCurrency(selectedRFQ?.quote_amount) }}</span>
                             </div>
+                            <div class="info-row">
+                                <span class="label">Already Billed:</span>
+                                <span class="value">KSH {{ formatCurrency(alreadyBilledAmount) }}</span>
+                            </div>
+                            <div class="info-row" :style="remainingAmount <= 0 ? 'color:#b91c1c;font-weight:600;' : 'color:#0f766e;font-weight:600;'">
+                                <span class="label">Remaining Approved Balance:</span>
+                                <span class="value">KSH {{ formatCurrency(remainingAmount) }}</span>
+                            </div>
                         </div>
 
-                        <div class="form-group">
-                            <label>Payment Percentage (%)</label>
-                            <input
-                                v-model.number="paymentRequestForm.percentage"
-                                type="number"
-                                min="1"
-                                max="100"
-                                class="form-control"
-                                required
-                            >
+                        <div v-if="priorPaymentRequests.length" class="prior-payments-list" style="margin: 1rem 0; padding: 0.75rem; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
+                            <strong style="font-size: 0.85rem; color: #475569; display: block; margin-bottom: 0.5rem;">
+                                <i class="fas fa-history"></i> Prior payment requests
+                            </strong>
+                            <div v-for="pr in priorPaymentRequests" :key="pr.id" style="display: flex; justify-content: space-between; font-size: 0.85rem; padding: 0.35rem 0; border-bottom: 1px solid #e2e8f0;">
+                                <span>{{ pr.payment_request_id }}</span>
+                                <span>KSH {{ formatCurrency(pr.amount) }}</span>
+                                <span :style="pr.status === 'paid' ? 'color:#059669;' : pr.status === 'pending' ? 'color:#92400E;' : 'color:#64748B;'">
+                                    {{ pr.status }}
+                                </span>
+                            </div>
                         </div>
 
-                        <div class="calculated-amount" v-if="paymentRequestForm.percentage > 0">
+                        <div v-if="!hasPriorPayments && selectedRFQ?.quote_down_payment > 0" style="margin: 0.75rem 0; padding: 0.65rem 0.85rem; background: #ECFDF5; border-left: 3px solid #10b981; font-size: 0.85rem; color: #065F46;">
+                            <i class="fas fa-info-circle"></i> Down payment KSH {{ formatCurrency(selectedRFQ.quote_down_payment) }} was specified on this quotation.
+                        </div>
+
+                        <div class="form-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                            <div class="form-group">
+                                <label>Payment Percentage (%)</label>
+                                <input
+                                    v-model.number="paymentRequestForm.percentage"
+                                    @input="onPercentageInput"
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    step="0.01"
+                                    class="form-control"
+                                >
+                            </div>
+                            <div class="form-group">
+                                <label>Or Fixed Amount (KSH)</label>
+                                <input
+                                    v-model.number="paymentRequestForm.amount"
+                                    @input="onAmountInput"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    class="form-control"
+                                    :placeholder="`Max KSH ${formatCurrency(remainingAmount)}`"
+                                >
+                            </div>
+                        </div>
+
+                        <div class="calculated-amount" v-if="resolvedPaymentAmount > 0">
                             <span class="label">Amount to Request:</span>
-                            <span class="amount">KSH {{ formatCurrency(calculatedPaymentAmount) }}</span>
+                            <span class="amount" :style="resolvedPaymentAmount > remainingAmount ? 'color:#b91c1c;' : ''">
+                                KSH {{ formatCurrency(resolvedPaymentAmount) }}
+                            </span>
+                        </div>
+
+                        <div v-if="capExceeded" style="margin: 0.75rem 0; padding: 0.7rem 0.85rem; background: #FEF2F2; border-left: 3px solid #DC2626; font-size: 0.85rem; color: #991B1B;">
+                            <i class="fas fa-exclamation-triangle"></i> This amount exceeds the remaining approved balance. Reduce it or request additional client approval first.
+                        </div>
+
+                        <div class="form-group" v-if="!hasPriorPayments">
+                            <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal;">
+                                <input type="checkbox" v-model="paymentRequestForm.is_down_payment" />
+                                <span>Treat as down payment (sets the deposit flag on this job)</span>
+                            </label>
                         </div>
 
                         <div class="form-group">
@@ -870,8 +944,18 @@
                             </div>
                         </div>
 
+                        <div v-if="selectedRFQ?.submission_mode !== 'admin_proxy'" style="margin: 0.75rem 0; padding: 0.75rem; background: #FEF2F2; border-left: 3px solid #DC2626; font-size: 0.85rem; color: #991B1B;">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            Proxy approval is only available for admin-assisted RFQs. This request was submitted directly by the client and must be approved by them.
+                        </div>
+
+                        <div v-else-if="selectedRFQ?.rfq_status !== 'quoted'" style="margin: 0.75rem 0; padding: 0.75rem; background: #FEF3C7; border-left: 3px solid #F59E0B; font-size: 0.85rem; color: #92400E;">
+                            <i class="fas fa-info-circle"></i>
+                            This quotation is in "{{ selectedRFQ?.rfq_status }}" status — only "quoted" quotations can be proxy-approved.
+                        </div>
+
                         <div class="form-group">
-                            <label>Approval note</label>
+                            <label>Approval note <span style="color:#DC2626;">*</span></label>
                             <textarea
                                 v-model="proxyApprovalNote"
                                 class="form-control"
@@ -879,13 +963,20 @@
                                 placeholder="Document how the client approved this quotation offline."
                                 required
                             ></textarea>
-                            <small class="helper-text">Example: Client approved via signed quote received by email on 12 May 2026.</small>
+                            <small class="helper-text">
+                                Example: Client approved via signed quote received by email on 12 May 2026.
+                                Minimum 10 characters. <strong>{{ proxyApprovalNote.length }}/10</strong>
+                            </small>
                         </div>
                     </div>
 
                     <div class="modal-footer">
                         <button type="button" @click="closeApproveOnBehalfModal" class="btn btn-secondary">Cancel</button>
-                        <button type="submit" class="btn btn-warning" :disabled="proxyApprovalNote.trim().length < 10">
+                        <button
+                            type="submit"
+                            class="btn btn-warning"
+                            :disabled="proxyApprovalNote.trim().length < 10 || selectedRFQ?.submission_mode !== 'admin_proxy' || selectedRFQ?.rfq_status !== 'quoted'"
+                        >
                             <i class="fas fa-user-check"></i> Confirm Proxy Approval
                         </button>
                     </div>
@@ -987,14 +1078,43 @@ const proxyPaymentForm = ref({
 const quotationForm = ref({
     materials: [{ name: '', quantity: 1, unit_price: 0 }],
     labor_cost: 0,
+    transport_cost: 0,
+    down_payment: null,
     notes: '',
     materials_file: null,
 })
 
 const paymentRequestForm = ref({
     percentage: 50,
+    amount: null,
+    is_down_payment: false,
     notes: '',
 })
+
+// Prior payment requests on the selected RFQ (#14a display + #14b detection)
+const priorPaymentRequests = computed(() => {
+    const list = selectedRFQ.value?.payment_requests || []
+    // Don't include cancelled/failed in the "billed" stack
+    return list.filter((pr) => !['cancelled', 'failed'].includes(pr.status))
+})
+const hasPriorPayments = computed(() => priorPaymentRequests.value.length > 0)
+const alreadyBilledAmount = computed(() => priorPaymentRequests.value.reduce((sum, pr) => sum + (Number(pr.amount) || 0), 0))
+const remainingAmount = computed(() => Math.max(0, (Number(selectedRFQ.value?.quote_amount) || 0) - alreadyBilledAmount.value))
+
+// Keep percentage <-> amount in sync so admin can type either
+const onPercentageInput = () => {
+    const pct = Number(paymentRequestForm.value.percentage) || 0
+    const total = Number(selectedRFQ.value?.quote_amount) || 0
+    paymentRequestForm.value.amount = total > 0 ? Math.round(((pct / 100) * total) * 100) / 100 : null
+}
+const onAmountInput = () => {
+    const amt = Number(paymentRequestForm.value.amount) || 0
+    const total = Number(selectedRFQ.value?.quote_amount) || 0
+    paymentRequestForm.value.percentage = total > 0 ? Math.round(((amt / total) * 100) * 100) / 100 : 0
+}
+
+const resolvedPaymentAmount = computed(() => Number(paymentRequestForm.value.amount) || 0)
+const capExceeded = computed(() => resolvedPaymentAmount.value > remainingAmount.value + 0.001)
 
 // --- Server-side pagination / filtering ---
 const applyFilters = () => {
@@ -1074,13 +1194,21 @@ const activeFilterChips = computed(() => {
 const materialsTotal = computed(() => roundCurrency(
     quotationForm.value.materials.reduce((t, m) => t + roundCurrency((Number(m.quantity) || 0) * (Number(m.unit_price) || 0)), 0)
 ))
-const totalQuoteAmount = computed(() => roundCurrency(materialsTotal.value + (Number(quotationForm.value.labor_cost) || 0)))
+const totalQuoteAmount = computed(() => roundCurrency(
+    materialsTotal.value
+    + (Number(quotationForm.value.labor_cost) || 0)
+    + (Number(quotationForm.value.transport_cost) || 0)
+))
 const canSubmitQuote = computed(() => quotationForm.value.materials.some(m => m.name && m.quantity > 0 && m.unit_price > 0) && quotationForm.value.labor_cost >= 0)
 const calculatedPaymentAmount = computed(() => {
     if (!selectedRFQ.value?.quote_amount || !paymentRequestForm.value.percentage) return 0
     return (paymentRequestForm.value.percentage / 100) * selectedRFQ.value.quote_amount
 })
-const canSubmitPaymentRequest = computed(() => paymentRequestForm.value.percentage > 0 && paymentRequestForm.value.percentage <= 100 && selectedRFQ.value?.id)
+const canSubmitPaymentRequest = computed(() =>
+    resolvedPaymentAmount.value > 0
+    && !capExceeded.value
+    && selectedRFQ.value?.id
+)
 
 // --- Modal actions ---
 const viewRFQ = (rfq) => { selectedRFQ.value = rfq; showViewModal.value = true }
@@ -1093,7 +1221,28 @@ const rejectRFQ = () => { showRejectModal.value = true }
 
 const initiatePaymentRequest = (rfq) => {
     selectedRFQ.value = rfq
-    paymentRequestForm.value = { percentage: 50, notes: '' }
+
+    // If this is the first request and admin specified a down payment on the
+    // quotation, pre-fill it. Otherwise fall back to 50% of the quote.
+    const noPrior = !(rfq.payment_requests || []).some((pr) => !['cancelled', 'failed'].includes(pr.status))
+    const downPayment = Number(rfq.quote_down_payment) || 0
+    const total = Number(rfq.quote_amount) || 0
+
+    let initialAmount = null
+    let initialPercentage = 50
+    if (noPrior && downPayment > 0) {
+        initialAmount = downPayment
+        initialPercentage = total > 0 ? Math.round(((downPayment / total) * 100) * 100) / 100 : 50
+    } else if (total > 0) {
+        initialAmount = Math.round((0.5 * total) * 100) / 100
+    }
+
+    paymentRequestForm.value = {
+        percentage: initialPercentage,
+        amount: initialAmount,
+        is_down_payment: noPrior,
+        notes: '',
+    }
     showPaymentModal.value = true
 }
 const closePaymentModal = () => { showPaymentModal.value = false; selectedRFQ.value = null }
@@ -1145,7 +1294,14 @@ const closeApproveOnBehalfModal = () => {
 }
 
 const resetQuotationForm = () => {
-    quotationForm.value = { materials: [{ name: '', quantity: 1, unit_price: 0 }], labor_cost: 0, notes: '', materials_file: null }
+    quotationForm.value = {
+        materials: [{ name: '', quantity: 1, unit_price: 0 }],
+        labor_cost: 0,
+        transport_cost: 0,
+        down_payment: null,
+        notes: '',
+        materials_file: null,
+    }
 }
 
 const addMaterial = () => { quotationForm.value.materials.push({ name: '', quantity: 1, unit_price: 0 }) }
@@ -1156,6 +1312,8 @@ const submitQuote = () => {
         service_request_id: selectedRFQ.value.id,
         materials: quotationForm.value.materials.filter(m => m.name && m.quantity > 0),
         labor_cost: quotationForm.value.labor_cost,
+        transport_cost: quotationForm.value.transport_cost || 0,
+        down_payment: quotationForm.value.down_payment || null,
         total_amount: totalQuoteAmount.value,
         notes: quotationForm.value.notes,
         materials_file: quotationForm.value.materials_file,
@@ -1179,6 +1337,8 @@ const submitPaymentRequest = () => {
     isSubmittingPayment.value = true
     axios.post(`/admin/rfq/${selectedRFQ.value.id}/request-payment`, {
         percentage: paymentRequestForm.value.percentage,
+        amount: paymentRequestForm.value.amount,
+        is_down_payment: paymentRequestForm.value.is_down_payment,
         notes: paymentRequestForm.value.notes,
     }).then(response => {
         if (response.data.success) {
@@ -1194,14 +1354,23 @@ const submitPaymentRequest = () => {
 
 const submitApproveOnBehalf = () => {
     if (!selectedRFQ.value?.id) return
+    if (proxyApprovalNote.value.trim().length < 10) {
+        alert('Please add a note (at least 10 characters) explaining how the client approved.')
+        return
+    }
 
     router.post(`/admin/rfq/${selectedRFQ.value.id}/approve-on-behalf`, {
         note: proxyApprovalNote.value,
     }, {
         preserveState: false,
+        preserveScroll: false,
         onSuccess: () => {
             closeApproveOnBehalfModal()
             closeViewModal()
+        },
+        onError: (errors) => {
+            const firstError = Object.values(errors || {})[0]
+            alert(firstError || 'Failed to approve on behalf. Please ensure this is an admin-assisted RFQ in "quoted" status and try again.')
         },
     })
 }

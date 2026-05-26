@@ -97,7 +97,7 @@ class ServiceRequestController extends Controller
             abort(403);
         }
 
-        $serviceRequest->load(['serviceCategory', 'technician.user', 'paymentRequests']);
+        $serviceRequest->load(['serviceCategory', 'technician.user', 'paymentRequests', 'payments']);
 
         return Inertia::render('Client/RequestStatus', [
             'serviceRequest' => $serviceRequest
