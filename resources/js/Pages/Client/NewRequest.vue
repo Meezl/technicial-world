@@ -137,6 +137,21 @@
 
                         <div class="form-row">
                             <div class="form-group full-width">
+                                <label for="additional-notes">Additional Notes <span class="optional-tag">(optional)</span></label>
+                                <textarea
+                                    id="additional-notes"
+                                    v-model="additionalNotes"
+                                    rows="4"
+                                    placeholder="e.g.&#10;• Site availability: Weekdays from 9am–4pm&#10;• Regulated working hours: No work after 6pm&#10;• Access restrictions: Lift only operates until 8pm&#10;• Building age, parking, security check-in, anything else the technician should know"
+                                ></textarea>
+                                <small class="form-hint">
+                                    Include details such as site availability, regulated working hours, access restrictions, or any other relevant site conditions.
+                                </small>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group full-width">
                                 <label>Upload Supporting Files (e.g., photos, drawings)</label>
                                 <div class="file-upload-box" @click="triggerFileUpload" @drop.prevent="handleFileDrop" @dragover.prevent>
                                     <i class="fas fa-cloud-upload-alt"></i>
@@ -265,6 +280,8 @@ const form = useForm({
     files: [],
 })
 
+const additionalNotes = ref('')
+
 const selectedCategory = computed(() => {
     return availableCategories.value.find((category) => category.id === form.service_category_id) || null
 })
@@ -339,6 +356,12 @@ function goToReviewStep() {
 function submitRequest() {
     clearFeedback()
     form.files = selectedFiles.value
+
+    // Append additional notes (site availability, hours, access, etc.) to description on submit
+    const notes = additionalNotes.value.trim()
+    if (notes.length > 0 && !form.description.includes('Additional Notes:')) {
+        form.description = `${form.description.trim()}\n\nAdditional Notes:\n${notes}`
+    }
 
     form.post(route('service-requests.store'), {
         preserveScroll: true,
@@ -596,5 +619,20 @@ defineOptions({
     .form-step-actions-split .btn {
         width: 100%;
     }
+}
+
+.optional-tag {
+    font-weight: 500;
+    font-size: 0.78rem;
+    color: #64748b;
+    margin-left: 0.35rem;
+}
+
+.form-hint {
+    display: block;
+    font-size: 0.78rem;
+    color: #64748b;
+    margin-top: 0.4rem;
+    line-height: 1.5;
 }
 </style>

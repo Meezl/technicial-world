@@ -237,10 +237,10 @@
                                         </td>
                                         <td><strong>{{ formatCurrency(pr.amount) }}</strong></td>
                                         <td>
-                                            <span class="method-badge" v-if="pr.payment_method">
-                                                {{ formatMethod(pr.payment_method) }}
+                                            <span class="method-badge" v-if="inferredMethod(pr)">
+                                                {{ formatMethod(inferredMethod(pr)) }}
                                             </span>
-                                            <span v-else class="method-badge pending-method">Not selected</span>
+                                            <span v-else class="method-badge pending-method">Not recorded</span>
                                         </td>
                                         <td>
                                             <span :class="['status-badge', getPaymentStatusClass(pr.status)]">
@@ -369,11 +369,25 @@ const formatMethod = (method) => {
     return methods[method] || method.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
 }
 
+// Some legacy paid payment requests have `payment_method` null but still carry the
+// underlying receipt fields. Infer the method so the client always sees how a
+// validated payment was received.
+const inferredMethod = (pr) => {
+    if (!pr) return null
+    if (pr.payment_method) return pr.payment_method
+    if (pr.mpesa_receipt_number) return 'mpesa'
+    if (pr.cheque_number) return 'cheque'
+    if (pr.bank_reference) return 'bank_deposit'
+    return null
+}
+
 const formatPaymentStatus = (status) => {
+    // "completed" and "paid" represent the same end state in the payments flow;
+    // unify them so the client sees a single Pending → Paid transition.
     const map = {
         pending: 'Pending',
         paid: 'Paid',
-        completed: 'Completed',
+        completed: 'Paid',
         cancelled: 'Cancelled',
         failed: 'Failed',
     }
@@ -404,7 +418,7 @@ const formatMilestoneStatus = (status) => {
         pending: 'Pending',
         invoiced: 'Invoiced',
         paid: 'Paid',
-        completed: 'Completed',
+        completed: 'Paid',
     }
     return map[status] || status?.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || 'Pending'
 }

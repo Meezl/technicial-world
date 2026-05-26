@@ -93,7 +93,7 @@
                     <div v-else-if="serviceRequest.rfq_status === 'approved'" class="rfq-approved">
                         <div class="success-message">
                             <i class="fas fa-check-circle"></i>
-                            <p>Quotation approved! Your service request will now be assigned to a technician.</p>
+                            <p>Quotation approved! You will shortly receive a deposit payment request as per the approved quotation. A technician will be assigned once the deposit is confirmed.</p>
                             <div class="approved-amount">
                                 <span>Approved Amount: <strong>KSH {{ formatCurrency(serviceRequest.quote_amount) }}</strong></span>
                             </div>

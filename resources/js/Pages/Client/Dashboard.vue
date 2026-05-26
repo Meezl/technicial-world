@@ -446,7 +446,15 @@ defineOptions({
 }
 
 .dashboard-hero {
-    grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.95fr);
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 0.95fr);
+}
+
+.client-dashboard h1,
+.client-dashboard h2,
+.client-dashboard h3,
+.client-dashboard p {
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .hero-card,
@@ -807,7 +815,7 @@ defineOptions({
     color: #0f172a;
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1100px) {
     .submission-banner {
         flex-direction: column;
         align-items: flex-start;
