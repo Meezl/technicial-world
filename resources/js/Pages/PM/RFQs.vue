@@ -174,6 +174,15 @@
                                         Quote v{{ rfq.latest_quotation.version }} • {{ formatQuoteStatus(rfq.latest_quotation.status) }}
                                     </small>
                                     <small v-else>No quotation created yet</small>
+                                    <button
+                                        v-if="rfq.latest_quotation"
+                                        type="button"
+                                        class="btn btn-secondary btn-xs quote-view-button"
+                                        @click="openQuotePreview(rfq)"
+                                    >
+                                        <i class="fas fa-eye"></i>
+                                        View Quote
+                                    </button>
                                 </div>
                             </td>
                             <td>
@@ -250,6 +259,15 @@
                         <div class="metric-item">
                             <span>Quote</span>
                             <strong>{{ formatCurrency(rfq.quote_amount || rfq.latest_quotation?.grand_total || 0) }}</strong>
+                            <button
+                                v-if="rfq.latest_quotation"
+                                type="button"
+                                class="btn btn-secondary btn-xs quote-view-button"
+                                @click="openQuotePreview(rfq)"
+                            >
+                                <i class="fas fa-eye"></i>
+                                View
+                            </button>
                         </div>
                         <div class="metric-item">
                             <span>Technician</span>
@@ -324,23 +342,27 @@
         </section>
 
         <div v-if="showQuoteModal" class="modal-overlay">
-            <div class="modal-content large">
+            <div class="modal-content large quote-modal">
                 <div class="modal-header">
                     <div>
-                        <h3>Create Quotation</h3>
-                        <p class="modal-subtitle">{{ selectedRfq?.job_reference || selectedRfq?.request_id }} • {{ selectedRfq?.user?.name }}</p>
+                        <h3>{{ quoteModalTitle }}</h3>
+                        <p class="modal-subtitle">
+                            {{ selectedRfq?.job_reference || selectedRfq?.request_id }} • {{ selectedRfq?.user?.name }}
+                            <span v-if="selectedRfq?.latest_quotation"> • v{{ selectedRfq.latest_quotation.version }}</span>
+                        </p>
                     </div>
-                    <button class="modal-close" @click="showQuoteModal = false">&times;</button>
+                    <button class="modal-close" @click="closeQuoteModal" aria-label="Close quotation modal">&times;</button>
                 </div>
-                <div class="modal-body">
+                <div class="modal-body quote-modal-body">
                     <form @submit.prevent="submitQuotation">
-                        <div class="form-section">
+                        <fieldset class="quote-fieldset" :disabled="isQuotePreview">
+                        <div class="form-section quote-form-section">
                             <div class="section-heading compact-heading">
                                 <div>
                                     <p class="section-kicker">Line Items</p>
-                                    <h3>Quotation Builder</h3>
+                                    <h3>{{ isQuotePreview ? 'Quotation Details' : 'Quotation Builder' }}</h3>
                                 </div>
-                                <button type="button" class="btn btn-secondary btn-sm" @click="addLineItem">
+                                <button v-if="!isQuotePreview" type="button" class="btn btn-secondary btn-sm" @click="addLineItem">
                                     <i class="fas fa-plus"></i>
                                     Add Item
                                 </button>
@@ -350,7 +372,7 @@
                                 <div class="line-item-head">
                                     <strong>Item {{ index + 1 }}</strong>
                                     <button
-                                        v-if="quoteForm.line_items.length > 1"
+                                        v-if="!isQuotePreview && quoteForm.line_items.length > 1"
                                         type="button"
                                         class="btn btn-sm btn-danger-soft"
                                         @click="removeLineItem(index)"
@@ -418,13 +440,22 @@
                             <label>Notes</label>
                             <textarea v-model="quoteForm.notes" rows="3" placeholder="Additional notes for the client..."></textarea>
                         </div>
+                        </fieldset>
                     </form>
                 </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" @click="showQuoteModal = false">Cancel</button>
-                    <button class="btn btn-primary" @click="submitQuotation" :disabled="submitting">
+                <div class="modal-footer quote-modal-footer">
+                    <button class="btn btn-secondary" @click="closeQuoteModal">{{ isQuotePreview ? 'Close' : 'Cancel' }}</button>
+                    <button
+                        v-if="isQuotePreview"
+                        class="btn btn-primary"
+                        @click="startQuoteRevision"
+                    >
+                        <i class="fas fa-redo"></i>
+                        Revise Quotation
+                    </button>
+                    <button v-else class="btn btn-primary" @click="submitQuotation" :disabled="submitting">
                         <i class="fas fa-paper-plane"></i>
-                        {{ submitting ? 'Sending...' : 'Create & Send Quotation' }}
+                        {{ submitting ? 'Sending...' : quoteSubmitLabel }}
                     </button>
                 </div>
             </div>
@@ -508,6 +539,7 @@ const showQuoteModal = ref(false)
 const showAssignModal = ref(false)
 const selectedRfq = ref(null)
 const submitting = ref(false)
+const quoteModalMode = ref('create')
 
 const quoteForm = ref({
     line_items: [{ category: 'material', description: '', quantity: 1, unit: 'pcs', unit_price: 0 }],
@@ -528,6 +560,15 @@ const assignForm = ref({
 const grandTotal = computed(() => (
     quoteForm.value.line_items.reduce((sum, item) => sum + (item.quantity || 0) * (item.unit_price || 0), 0)
 ))
+
+const isQuotePreview = computed(() => quoteModalMode.value === 'preview')
+const isQuoteRevision = computed(() => quoteModalMode.value === 'revision')
+const quoteModalTitle = computed(() => {
+    if (isQuotePreview.value) return 'View Quotation'
+    if (isQuoteRevision.value) return 'Revise Quotation'
+    return 'Create Quotation'
+})
+const quoteSubmitLabel = computed(() => (isQuoteRevision.value ? 'Send Revised Quotation' : 'Create & Send Quotation'))
 
 const activeStatusLabel = computed(() => {
     const labels = {
@@ -551,6 +592,7 @@ const removeLineItem = (index) => {
 
 const openQuoteModal = (rfq) => {
     selectedRfq.value = rfq
+    quoteModalMode.value = 'create'
     quoteForm.value = {
         line_items: [{ category: 'material', description: '', quantity: 1, unit: 'pcs', unit_price: 0 }],
         delivery_timeline: '',
@@ -559,6 +601,43 @@ const openQuoteModal = (rfq) => {
         send_immediately: true,
     }
     showQuoteModal.value = true
+}
+
+const normaliseDateInput = (value) => {
+    if (!value) return ''
+    return String(value).slice(0, 10)
+}
+
+const quotationToForm = (quotation) => ({
+    line_items: quotation?.line_items?.length
+        ? quotation.line_items.map((item) => ({
+            category: item.category || 'material',
+            description: item.description || '',
+            quantity: Number(item.quantity || 1),
+            unit: item.unit || 'pcs',
+            unit_price: Number(item.unit_price || 0),
+        }))
+        : [{ category: 'material', description: '', quantity: 1, unit: 'pcs', unit_price: 0 }],
+    delivery_timeline: quotation?.delivery_timeline || '',
+    valid_until: normaliseDateInput(quotation?.valid_until),
+    notes: quotation?.notes || '',
+    send_immediately: true,
+})
+
+const openQuotePreview = (rfq) => {
+    selectedRfq.value = rfq
+    quoteModalMode.value = 'preview'
+    quoteForm.value = quotationToForm(rfq.latest_quotation)
+    showQuoteModal.value = true
+}
+
+const startQuoteRevision = () => {
+    quoteModalMode.value = 'revision'
+}
+
+const closeQuoteModal = () => {
+    showQuoteModal.value = false
+    quoteModalMode.value = 'create'
 }
 
 const openAssignModal = (rfq) => {
@@ -575,9 +654,13 @@ const openAssignModal = (rfq) => {
 
 const submitQuotation = () => {
     submitting.value = true
-    router.post(`/pm/rfqs/${selectedRfq.value.id}/quotation`, quoteForm.value, {
+    const url = isQuoteRevision.value && selectedRfq.value.latest_quotation
+        ? `/pm/quotations/${selectedRfq.value.latest_quotation.id}/revise`
+        : `/pm/rfqs/${selectedRfq.value.id}/quotation`
+
+    router.post(url, quoteForm.value, {
         onSuccess: () => {
-            showQuoteModal.value = false
+            closeQuoteModal()
             submitting.value = false
         },
         onError: () => {
@@ -601,7 +684,10 @@ const submitAssignment = () => {
 
 const reviseQuote = (rfq) => {
     if (rfq.latest_quotation) {
-        router.post(`/pm/quotations/${rfq.latest_quotation.id}/revise`)
+        selectedRfq.value = rfq
+        quoteModalMode.value = 'revision'
+        quoteForm.value = quotationToForm(rfq.latest_quotation)
+        showQuoteModal.value = true
     }
 }
 
@@ -1082,6 +1168,21 @@ defineOptions({ layout: null })
     color: #ffffff;
 }
 
+.btn-xs {
+    min-height: 2rem;
+    padding: 0.38rem 0.65rem;
+    font-size: 0.72rem;
+    line-height: 1;
+}
+
+.quote-view-button {
+    width: fit-content;
+    margin-top: 0.45rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
 .mobile-card-list {
     display: none;
     gap: 1rem;
@@ -1116,6 +1217,7 @@ defineOptions({ layout: null })
     padding: 0.8rem;
     border-radius: 16px;
     background: rgba(255, 255, 255, 0.85);
+    min-width: 0;
 }
 
 .metric-item strong {
@@ -1150,6 +1252,45 @@ defineOptions({ layout: null })
 
 .compact-heading {
     margin-bottom: 1rem;
+}
+
+.quote-modal {
+    display: flex;
+    flex-direction: column;
+    width: min(96vw, 1000px);
+    max-height: min(92dvh, 900px);
+    overflow: hidden;
+}
+
+.quote-modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.quote-fieldset {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.quote-fieldset:disabled {
+    color: inherit;
+}
+
+.quote-fieldset:disabled input,
+.quote-fieldset:disabled select,
+.quote-fieldset:disabled textarea {
+    background: #f8fafc;
+    color: #334155;
+    opacity: 1;
+    -webkit-text-fill-color: #334155;
+}
+
+.quote-form-section {
+    margin-bottom: 1.1rem;
 }
 
 .line-item-card {
@@ -1195,11 +1336,16 @@ defineOptions({ layout: null })
 
 .modal-subtitle {
     margin: 0.3rem 0 0;
+    line-height: 1.45;
 }
 
 .btn-danger-soft {
     background: rgba(239, 68, 68, 0.12);
     color: #b91c1c;
+}
+
+.quote-modal-footer {
+    flex-shrink: 0;
 }
 
 @media (max-width: 1180px) {
@@ -1229,6 +1375,94 @@ defineOptions({ layout: null })
     .hero-card,
     .queue-panel {
         padding: 1.1rem;
+    }
+
+    .rfq-card-head,
+    .section-heading,
+    .line-item-head,
+    .compact-heading {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .rfq-card-head .status-badge,
+    .line-item-head .btn,
+    .compact-heading .btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .quote-modal {
+        width: 100%;
+        height: calc(100dvh - 0.75rem);
+        max-height: calc(100dvh - 0.75rem);
+        margin: 0;
+        border-radius: 18px 18px 0 0;
+    }
+
+    .quote-modal .modal-header {
+        padding: 1rem;
+        gap: 0.75rem;
+    }
+
+    .quote-modal .modal-header h3 {
+        font-size: 1.05rem;
+        line-height: 1.25;
+    }
+
+    .quote-modal .modal-close {
+        flex: 0 0 40px;
+    }
+
+    .quote-modal-body {
+        padding: 1rem;
+    }
+
+    .quote-modal-footer {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.65rem;
+        padding: 0.9rem 1rem calc(0.9rem + env(safe-area-inset-bottom));
+    }
+
+    .quote-modal-footer .btn {
+        width: 100%;
+        min-height: 2.75rem;
+        justify-content: center;
+    }
+
+    .line-item-card {
+        border-radius: 18px;
+        padding: 0.9rem;
+    }
+
+    .total-banner,
+    .line-item-total {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 0.35rem;
+    }
+}
+
+@media (max-width: 420px) {
+    .rfq-card {
+        padding: 0.85rem;
+    }
+
+    .rfq-metrics {
+        gap: 0.6rem;
+    }
+
+    .metric-item,
+    .line-item-card {
+        padding: 0.8rem;
+    }
+
+    .quote-modal .modal-header,
+    .quote-modal-body,
+    .quote-modal-footer {
+        padding-left: 0.8rem;
+        padding-right: 0.8rem;
     }
 }
 </style>

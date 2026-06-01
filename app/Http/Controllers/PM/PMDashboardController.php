@@ -5,6 +5,7 @@ namespace App\Http\Controllers\PM;
 use App\Http\Controllers\Controller;
 use App\Models\ServiceRequest;
 use App\Models\Quotation;
+use App\Models\QuotationLineItem;
 use App\Models\Technician;
 use App\Models\TechnicianPaymentSheet;
 use App\Models\JobAssignment;
@@ -79,7 +80,7 @@ class PMDashboardController extends Controller
         ];
 
         $rfqs = ServiceRequest::forPm($pmId)
-            ->with(['user', 'serviceCategory', 'technician.user', 'latestQuotation'])
+            ->with(['user', 'serviceCategory', 'technician.user', 'latestQuotation.lineItems'])
             ->when($request->status, fn($q, $s) => $q->where('status', $s))
             ->when($request->search, function ($query, $search) {
                 $query->where(function ($query) use ($search) {
@@ -151,9 +152,49 @@ class PMDashboardController extends Controller
     /**
      * Revise an existing quotation.
      */
-    public function reviseQuotation(Quotation $quotation)
+    public function reviseQuotation(Request $request, Quotation $quotation)
     {
         $this->authorizeForPm($quotation->serviceRequest);
+
+        if ($request->has('line_items')) {
+            $request->validate([
+                'line_items' => 'required|array|min:1',
+                'line_items.*.category' => 'required|in:material,labor,transport,other',
+                'line_items.*.description' => 'required|string',
+                'line_items.*.quantity' => 'required|numeric|min:0.01',
+                'line_items.*.unit' => 'required|string',
+                'line_items.*.unit_price' => 'required|numeric|min:0',
+                'payment_terms' => 'nullable|array',
+                'delivery_timeline' => 'nullable|string',
+                'valid_until' => 'nullable|date|after:today',
+                'notes' => 'nullable|string',
+            ]);
+
+            $newQuotation = $this->quotationService->revise($quotation);
+            $newQuotation->lineItems()->delete();
+            $newQuotation->update($request->only(['payment_terms', 'delivery_timeline', 'valid_until', 'notes']));
+
+            foreach ($request->line_items as $index => $item) {
+                QuotationLineItem::create([
+                    'quotation_id' => $newQuotation->id,
+                    'category' => $item['category'] ?? 'material',
+                    'description' => $item['description'],
+                    'quantity' => $item['quantity'] ?? 1,
+                    'unit' => $item['unit'] ?? 'pcs',
+                    'unit_price' => $item['unit_price'],
+                    'sort_order' => $index,
+                ]);
+            }
+
+            $newQuotation->recalculateTotals();
+
+            if ($request->boolean('send_immediately', true)) {
+                $this->quotationService->send($newQuotation);
+                $this->notificationService->notifyQuotationSent($newQuotation->serviceRequest);
+            }
+
+            return redirect()->back()->with('success', 'Revised quotation sent!');
+        }
 
         $newQuotation = $this->quotationService->revise($quotation);
 

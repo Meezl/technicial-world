@@ -628,8 +628,16 @@
                                             <input v-model="material.quantity" type="number" min="1" placeholder="Qty" class="form-control material-qty" required>
                                             <CurrencyInput v-model="material.unit_price" placeholder="Unit Price (KSH)" class="material-price" required />
                                             <div class="material-total">KSH {{ formatCurrency((material.quantity || 0) * (material.unit_price || 0)) }}</div>
-                                            <button @click="removeMaterial(index)" type="button" class="btn-remove" :disabled="quotationForm.materials.length === 1">
+                                            <button
+                                                v-if="quotationForm.materials.length > 1"
+                                                @click="removeMaterial(index)"
+                                                type="button"
+                                                class="btn-remove"
+                                                aria-label="Remove material"
+                                                title="Remove material"
+                                            >
                                                 <i class="fas fa-trash"></i>
+                                                <span class="remove-material-text">Remove</span>
                                             </button>
                                         </div>
                                     </div>
@@ -1710,9 +1718,10 @@ defineOptions({ layout: null })
 .material-row { margin-bottom: 1rem; }
 .material-inputs { display: grid; grid-template-columns: 2fr 100px 120px 100px 40px; gap: 0.75rem; align-items: center; }
 .material-total { font-weight: 600; color: var(--success-color); text-align: right; font-size: 0.9rem; }
-.btn-remove { background: var(--danger-color); color: white; border: none; border-radius: 4px; padding: 0.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; min-width: 35px; height: 35px; }
+.btn-remove { background: var(--danger-color, #DC2626); color: white; border: none; border-radius: 4px; padding: 0.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 0.45rem; min-width: 35px; height: 35px; }
 .btn-remove:hover:not(:disabled) { background: #DC2626; }
 .btn-remove:disabled { background: #ccc; cursor: not-allowed; }
+.remove-material-text { display: none; }
 .add-material-btn { margin-top: 1rem; border: 2px dashed var(--primary-color); background: transparent; color: var(--primary-color); padding: 0.75rem 1rem; }
 .add-material-btn:hover { background: var(--primary-color); color: white; }
 .form-row { display: grid; grid-template-columns: 1fr 2fr; gap: 2rem; }
@@ -1753,6 +1762,15 @@ defineOptions({ layout: null })
     .desktop-table { display: none; }
     .mobile-rfq-list { display: grid; margin-top: 0; }
     .material-inputs { grid-template-columns: 1fr; gap: 0.5rem; }
+    .material-total { text-align: left; }
+    .btn-remove {
+        width: 100%;
+        min-height: 2.5rem;
+        height: auto;
+        border-radius: 10px;
+        font-weight: 700;
+    }
+    .remove-material-text { display: inline; }
     .form-row { grid-template-columns: 1fr; gap: 1rem; }
     .modal-content.extra-large { width: 98%; max-height: 95vh; }
     .material-item-view { flex-direction: column; align-items: flex-start; gap: 0.25rem; }
