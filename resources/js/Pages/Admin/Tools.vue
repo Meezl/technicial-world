@@ -12,6 +12,46 @@
                 </div>
             </header>
 
+            <!-- Pending tool requests from technicians -->
+            <section v-if="toolRequests.length > 0" class="main-panel">
+                <div class="panel-card full-width tool-requests-panel">
+                    <div class="card-header">
+                        <h3>
+                            <i class="fas fa-hand-holding"></i>
+                            Pending Tool Requests
+                            <span class="badge-pending">{{ toolRequests.length }}</span>
+                        </h3>
+                    </div>
+                    <div class="tool-request-list">
+                        <div v-for="req in toolRequests" :key="`treq-${req.id}`" class="tool-request-row">
+                            <div class="tr-main">
+                                <strong>{{ req.tool?.name || req.tool_name_requested }}</strong>
+                                <span class="tr-sub">
+                                    Requested by {{ req.technician?.user?.name || 'Technician' }}
+                                    · Qty {{ req.quantity }}
+                                    · <span :class="['urgency-tag', `urgency-tag-${req.urgency}`]">{{ formatUrgency(req.urgency) }}</span>
+                                </span>
+                                <span class="tr-sub">
+                                    <template v-if="req.service_request">
+                                        Job {{ req.service_request.job_reference || req.service_request.request_id }} ·
+                                    </template>
+                                    {{ formatDateShort(req.created_at) }}
+                                </span>
+                                <p v-if="req.notes" class="tr-notes">"{{ req.notes }}"</p>
+                            </div>
+                            <div class="tr-actions">
+                                <button class="btn btn-success btn-sm" @click="approveToolRequest(req)">
+                                    <i class="fas fa-check"></i> Approve
+                                </button>
+                                <button class="btn btn-danger btn-sm" @click="rejectToolRequest(req)">
+                                    <i class="fas fa-times"></i> Reject
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <section class="main-panel">
                 <div class="panel-card full-width">
                     <div class="card-header">
@@ -294,8 +334,53 @@ const props = defineProps({
     activeJobs: {
         type: Array,
         default: () => []
+    },
+    toolRequests: {
+        type: Array,
+        default: () => []
     }
 })
+
+// ---- Tool request actions ----
+const approveToolRequest = (req) => {
+    let toolId = null
+    if (!req.tool_id) {
+        const tool = props.tools.find((t) => t.status === 'available')
+        if (!tool) {
+            alert('No available tools in inventory to issue. Add one first.')
+            return
+        }
+        toolId = prompt(
+            `This is a freeform request for "${req.tool_name_requested}". Enter the tool ID from inventory to issue, or leave blank to just mark as acknowledged.`,
+            ''
+        )
+        if (toolId === null) return
+        toolId = toolId.trim() ? Number(toolId) : null
+    }
+
+    if (!confirm(`Approve request from ${req.technician?.user?.name}?`)) return
+
+    router.post(`/admin/tool-requests/${req.id}/approve`, { tool_id: toolId }, {
+        preserveScroll: true,
+    })
+}
+
+const rejectToolRequest = (req) => {
+    const reason = prompt('Reason for rejecting this request:')
+    if (!reason || reason.trim().length < 3) {
+        if (reason !== null) alert('Please provide a brief reason (3+ characters).')
+        return
+    }
+    router.post(`/admin/tool-requests/${req.id}/reject`, { decision_notes: reason.trim() }, {
+        preserveScroll: true,
+    })
+}
+
+const formatUrgency = (u) => {
+    const map = { low: 'Low', normal: 'Normal', high: 'High' }
+    return map[u] || u
+}
+const formatDateShort = (date) => date ? new Date(date).toLocaleDateString('en-KE', { day: 'numeric', month: 'short' }) : ''
 
 const searchQuery = ref('')
 const statusFilter = ref('')
@@ -484,6 +569,60 @@ defineOptions({
 
 <style>
 @import url('../../../css/dashboard-app.css');
+
+/* Pending tool requests panel */
+.tool-requests-panel { border-left: 4px solid #F59E0B; background: #FFFBEB; }
+.tool-requests-panel .card-header h3 { display: flex; align-items: center; gap: 0.5rem; color: #92400E; }
+.tool-requests-panel .card-header h3 i { color: #F59E0B; }
+.badge-pending {
+    background: #F59E0B;
+    color: #fff;
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+.tool-request-list { display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem; }
+.tool-request-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    background: #fff;
+    border: 1px solid #FCD34D;
+    border-radius: 12px;
+    padding: 0.85rem 1rem;
+}
+.tr-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+.tr-main strong { font-size: 0.95rem; }
+.tr-sub { font-size: 0.78rem; color: #64748B; }
+.tr-notes {
+    font-size: 0.82rem;
+    color: #475569;
+    background: #F8FAFC;
+    border-left: 3px solid #cbd5e1;
+    padding: 0.4rem 0.7rem;
+    margin: 0.4rem 0 0;
+    border-radius: 6px;
+    font-style: italic;
+}
+.tr-actions { display: flex; flex-direction: column; gap: 0.4rem; flex-shrink: 0; }
+.urgency-tag {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+.urgency-tag-low { background: #E0F2FE; color: #075985; }
+.urgency-tag-normal { background: #E2E8F0; color: #475569; }
+.urgency-tag-high { background: #FEE2E2; color: #991B1B; }
+
+@media (max-width: 640px) {
+    .tool-request-row { flex-direction: column; }
+    .tr-actions { flex-direction: row; width: 100%; }
+    .tr-actions .btn { flex: 1; }
+}
 
 .modal-overlay {
     position: fixed;
