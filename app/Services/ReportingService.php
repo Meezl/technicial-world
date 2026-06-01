@@ -389,7 +389,11 @@ class ReportingService
             $outstanding = max($agreedCompensation - $paidToDate, 0);
             $overpaid = max($paidToDate - $agreedCompensation, 0);
 
-            $history = $jobDirectPayments->map(function ($payment) {
+            // Map into plain arrays first, then merge as a *base* Collection.
+            // Calling ->merge() on an Eloquent Collection invokes getKey() on
+            // each item, which throws a TypeError when the items are arrays
+            // (not models). collect()->merge(...->all()) sidesteps this.
+            $directHistory = $jobDirectPayments->map(function ($payment) {
                 return [
                     'type' => 'direct_payment',
                     'label' => 'Direct payout',
@@ -400,7 +404,9 @@ class ReportingService
                     'method' => $payment->payment_method,
                     'notes' => $payment->notes,
                 ];
-            })->merge($jobSheetEntries->map(function ($entry) {
+            })->all();
+
+            $sheetHistory = $jobSheetEntries->map(function ($entry) {
                 return [
                     'type' => 'payment_sheet',
                     'label' => 'Payment sheet',
@@ -413,7 +419,10 @@ class ReportingService
                         ? 'Coverage: ' . $entry->paymentSheet->period_start . ' to ' . $entry->paymentSheet->period_end
                         : null,
                 ];
-            }))
+            })->all();
+
+            $history = collect($directHistory)
+                ->merge($sheetHistory)
                 ->sortByDesc('date')
                 ->values()
                 ->all();
@@ -449,7 +458,8 @@ class ReportingService
             })
             ->values();
 
-        $paymentHistory = $periodDirectPayments->map(function ($payment) {
+        // Same Eloquent-Collection-merge guard as the per-job history above.
+        $directPaymentHistory = $periodDirectPayments->map(function ($payment) {
             $serviceRequest = $payment->serviceRequest;
 
             return [
@@ -463,7 +473,9 @@ class ReportingService
                 'method' => $payment->payment_method,
                 'notes' => $payment->notes,
             ];
-        })->merge($periodSheetEntries->map(function ($entry) {
+        })->all();
+
+        $sheetPaymentHistory = $periodSheetEntries->map(function ($entry) {
             $serviceRequest = $entry->serviceRequest;
 
             return [
@@ -479,7 +491,10 @@ class ReportingService
                     ? 'Coverage: ' . $entry->paymentSheet->period_start . ' to ' . $entry->paymentSheet->period_end
                     : null,
             ];
-        }))
+        })->all();
+
+        $paymentHistory = collect($directPaymentHistory)
+            ->merge($sheetPaymentHistory)
             ->sortByDesc('date')
             ->values();
 
