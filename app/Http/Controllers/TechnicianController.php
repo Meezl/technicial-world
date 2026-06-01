@@ -10,6 +10,7 @@ use App\Models\ServiceRequest;
 use App\Models\Technician;
 use App\Models\TechnicianDocument;
 use App\Models\Tool;
+use App\Models\ToolRequest;
 use App\Services\ProgressService;
 use App\Services\ReportingService;
 use Carbon\Carbon;
@@ -234,21 +235,59 @@ class TechnicianController extends Controller
 
         $issuedTools = collect();
         $returnHistory = collect();
+        $availableTools = collect();
+        $pendingRequests = collect();
+        $recentDecisions = collect();
+        $activeJobs = collect();
 
         if ($technician) {
             $issuedTools = Tool::where('technician_id', $technician->id)
-                ->where('status', 'issued') // Using string 'issued' as verified in previous context
-                ->with('serviceRequest')
+                ->where('status', Tool::STATUS_ISSUED)
+                ->with('serviceRequest:id,request_id,job_reference')
                 ->get();
 
-            // Recently returned tools (tools that were returned and have this technician in their history)
-            // Note: This assumes we track history or simply showing tools returned by this tech.
-            // For now, let's just query tools returned by this technician if we had a returned_by column,
-            // but since we might not, we'll list tools that are available but were last assigned to this tech if we had history.
-            // A simpler approach for now based on typical schema:
             $returnHistory = Tool::where('technician_id', $technician->id)
-                ->where('status', '!=', 'issued')
+                ->where('status', '!=', Tool::STATUS_ISSUED)
                 ->limit(20)
+                ->get();
+
+            // Inventory of tools currently available to request
+            $availableTools = Tool::where('status', Tool::STATUS_AVAILABLE)
+                ->orderBy('name')
+                ->get(['id', 'name', 'serial_number', 'category', 'condition', 'location']);
+
+            // Active jobs the technician can attach a request to
+            $activeJobs = ServiceRequest::where('technician_id', $technician->id)
+                ->whereIn('status', [
+                    ServiceRequest::STATUS_ASSIGNED,
+                    ServiceRequest::STATUS_IN_PROGRESS,
+                    ServiceRequest::STATUS_QUEUED,
+                    'pending',
+                ])
+                ->orderByDesc('created_at')
+                ->limit(20)
+                ->get(['id', 'request_id', 'job_reference']);
+
+            $pendingRequests = ToolRequest::where('technician_id', $technician->id)
+                ->where('status', ToolRequest::STATUS_PENDING)
+                ->with(['tool:id,name,serial_number', 'serviceRequest:id,request_id,job_reference'])
+                ->orderByDesc('created_at')
+                ->get();
+
+            $recentDecisions = ToolRequest::where('technician_id', $technician->id)
+                ->whereIn('status', [
+                    ToolRequest::STATUS_APPROVED,
+                    ToolRequest::STATUS_REJECTED,
+                    ToolRequest::STATUS_CANCELLED,
+                ])
+                ->with([
+                    'tool:id,name,serial_number',
+                    'serviceRequest:id,request_id,job_reference',
+                    'decidedBy:id,name',
+                ])
+                ->orderByDesc('decided_at')
+                ->orderByDesc('updated_at')
+                ->limit(10)
                 ->get();
         }
 
@@ -256,7 +295,92 @@ class TechnicianController extends Controller
             'technician' => $technician,
             'issuedTools' => $issuedTools,
             'returnHistory' => $returnHistory,
+            'availableTools' => $availableTools,
+            'activeJobs' => $activeJobs,
+            'pendingRequests' => $pendingRequests,
+            'recentDecisions' => $recentDecisions,
         ]);
+    }
+
+    /**
+     * Submit a tool request from the technician portal. Either a specific
+     * tool from inventory OR a freeform name when the item isn't tracked
+     * yet. Goes into the admin queue for approval.
+     */
+    public function storeToolRequest(Request $request)
+    {
+        $user = auth()->user();
+        $technician = $user->technician;
+
+        if (!$technician) {
+            return back()->withErrors(['toolRequest' => 'Only technicians can request tools.']);
+        }
+
+        $data = $request->validate([
+            'tool_id' => 'nullable|integer|exists:tools,id',
+            'tool_name_requested' => 'nullable|string|max:150',
+            'service_request_id' => 'nullable|integer|exists:service_requests,id',
+            'quantity' => 'nullable|integer|min:1|max:50',
+            'urgency' => 'nullable|in:low,normal,high',
+            'notes' => 'nullable|string|max:1000',
+        ]);
+
+        if (empty($data['tool_id']) && empty($data['tool_name_requested'])) {
+            return back()->withErrors([
+                'tool_id' => 'Pick a tool from the available list or enter a tool name to describe what you need.',
+            ]);
+        }
+
+        // If a specific tool was picked, make sure it's actually available so
+        // technicians can't fight for the same tool.
+        if (!empty($data['tool_id'])) {
+            $tool = Tool::find($data['tool_id']);
+            if (!$tool || $tool->status !== Tool::STATUS_AVAILABLE) {
+                return back()->withErrors([
+                    'tool_id' => 'That tool is no longer available. Please refresh and pick another.',
+                ]);
+            }
+        }
+
+        ToolRequest::create([
+            'technician_id' => $technician->id,
+            'tool_id' => $data['tool_id'] ?? null,
+            'tool_name_requested' => $data['tool_name_requested'] ?? null,
+            'service_request_id' => $data['service_request_id'] ?? null,
+            'quantity' => $data['quantity'] ?? 1,
+            'urgency' => $data['urgency'] ?? ToolRequest::URGENCY_NORMAL,
+            'notes' => $data['notes'] ?? null,
+            'status' => ToolRequest::STATUS_PENDING,
+        ]);
+
+        return back()->with('success', 'Tool request submitted. An admin will review it shortly.');
+    }
+
+    /**
+     * Technician cancels their own pending request before an admin acts.
+     */
+    public function cancelToolRequest(ToolRequest $toolRequest)
+    {
+        $user = auth()->user();
+        $technician = $user->technician;
+
+        if (!$technician || $toolRequest->technician_id !== $technician->id) {
+            abort(403);
+        }
+
+        if (!$toolRequest->isPending()) {
+            return back()->withErrors([
+                'toolRequest' => 'Only pending requests can be cancelled.',
+            ]);
+        }
+
+        $toolRequest->update([
+            'status' => ToolRequest::STATUS_CANCELLED,
+            'decided_at' => now(),
+            'decision_notes' => 'Cancelled by technician.',
+        ]);
+
+        return back()->with('success', 'Tool request cancelled.');
     }
 
     /**

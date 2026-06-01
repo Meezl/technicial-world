@@ -980,11 +980,103 @@ class AdminDashboardController extends Controller
             ->orderBy('created_at', 'desc')
             ->get();
 
+        // Pending tool requests from technicians awaiting admin decision.
+        $toolRequests = \App\Models\ToolRequest::pending()
+            ->with([
+                'technician.user:id,name,email',
+                'tool:id,name,serial_number,status,condition',
+                'serviceRequest:id,request_id,job_reference',
+            ])
+            ->orderByDesc('created_at')
+            ->get();
+
         return Inertia::render('Admin/Tools', [
             'tools' => $tools,
             'technicians' => $technicians,
-            'activeJobs' => $activeJobs
+            'activeJobs' => $activeJobs,
+            'toolRequests' => $toolRequests,
         ]);
+    }
+
+    /**
+     * Approve a pending tool request. If a specific tool was requested,
+     * issue it to the technician immediately. If it was a freeform
+     * request the admin still has to issue an actual tool manually after
+     * approving — the request is just acknowledged so the technician
+     * knows it's being acted on.
+     */
+    public function approveToolRequest(Request $request, \App\Models\ToolRequest $toolRequest)
+    {
+        if (!$toolRequest->isPending()) {
+            return back()->withErrors(['toolRequest' => 'Only pending requests can be approved.']);
+        }
+
+        $request->validate([
+            'tool_id' => 'nullable|integer|exists:tools,id',
+            'expected_return_date' => 'nullable|date|after:today',
+            'decision_notes' => 'nullable|string|max:500',
+        ]);
+
+        $toolToIssue = null;
+        if ($request->filled('tool_id')) {
+            $toolToIssue = Tool::find($request->tool_id);
+        } elseif ($toolRequest->tool_id) {
+            $toolToIssue = Tool::find($toolRequest->tool_id);
+        }
+
+        if ($toolToIssue) {
+            if ($toolToIssue->status !== Tool::STATUS_AVAILABLE) {
+                return back()->withErrors([
+                    'tool_id' => 'That tool is no longer available. Pick another or reject this request.',
+                ]);
+            }
+            $serviceRequest = $toolRequest->service_request_id
+                ? ServiceRequest::find($toolRequest->service_request_id)
+                : null;
+            $toolToIssue->assignTo(
+                $toolRequest->technician,
+                $serviceRequest,
+                $request->expected_return_date,
+                $toolRequest->notes
+            );
+        }
+
+        $toolRequest->update([
+            'status' => \App\Models\ToolRequest::STATUS_APPROVED,
+            'tool_id' => $toolToIssue?->id ?? $toolRequest->tool_id,
+            'decided_by' => auth()->id(),
+            'decided_at' => now(),
+            'decision_notes' => $request->decision_notes,
+        ]);
+
+        return redirect()->route('admin.tools')->with('success',
+            $toolToIssue
+                ? "Request approved and {$toolToIssue->name} issued to {$toolRequest->technician->user->name}."
+                : 'Request acknowledged. Remember to issue an actual tool when ready.'
+        );
+    }
+
+    /**
+     * Reject a pending tool request with a short reason.
+     */
+    public function rejectToolRequest(Request $request, \App\Models\ToolRequest $toolRequest)
+    {
+        if (!$toolRequest->isPending()) {
+            return back()->withErrors(['toolRequest' => 'Only pending requests can be rejected.']);
+        }
+
+        $request->validate([
+            'decision_notes' => 'required|string|min:3|max:500',
+        ]);
+
+        $toolRequest->update([
+            'status' => \App\Models\ToolRequest::STATUS_REJECTED,
+            'decided_by' => auth()->id(),
+            'decided_at' => now(),
+            'decision_notes' => $request->decision_notes,
+        ]);
+
+        return redirect()->route('admin.tools')->with('success', 'Tool request rejected.');
     }
 
     public function storeTool(Request $request)
