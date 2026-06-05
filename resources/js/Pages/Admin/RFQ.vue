@@ -550,9 +550,17 @@
                                 </div>
 
                                 <div class="cost-summary">
+                                    <div v-if="Number(selectedRFQ?.quote_transport_cost) > 0" class="cost-line">
+                                        <span>Transport:</span>
+                                        <span>KSH {{ formatCurrency(selectedRFQ?.quote_transport_cost) }}</span>
+                                    </div>
                                     <div class="cost-line">
                                         <span>Labor Cost:</span>
                                         <span>KSH {{ formatCurrency(selectedRFQ?.quote_labor_cost || 0) }}</span>
+                                    </div>
+                                    <div v-if="Number(selectedRFQ?.quote_down_payment) > 0" class="cost-line" style="margin-top: 6px; padding-top: 8px; border-top: 1px dashed #d1d5db; color: #92400E; font-weight: 600;">
+                                        <span>Required Down Payment:</span>
+                                        <span>KSH {{ formatCurrency(selectedRFQ?.quote_down_payment) }}</span>
                                     </div>
                                 </div>
 
@@ -716,8 +724,9 @@
                         <i class="fas fa-times"></i> Reject Request
                     </button>
                     <button @click="closeReviewModal" class="btn btn-secondary">Cancel</button>
-                    <button @click="submitQuote" class="btn btn-success" :disabled="!canSubmitQuote">
-                        <i class="fas fa-paper-plane"></i> Send Quotation
+                    <button @click="submitQuote" class="btn btn-success" :disabled="!canSubmitQuote || isSubmittingQuote">
+                        <i class="fas fa-paper-plane"></i>
+                        {{ isSubmittingQuote ? 'Sending...' : (isRevision ? 'Send Revised Quotation' : 'Send Quotation') }}
                     </button>
                 </div>
             </div>
@@ -1426,7 +1435,15 @@ const reviseExistingQuotation = (rfq) => {
 const addMaterial = () => { quotationForm.value.materials.push({ name: '', quantity: 1, unit_price: 0 }) }
 const removeMaterial = (index) => { if (quotationForm.value.materials.length > 1) quotationForm.value.materials.splice(index, 1) }
 
+const isSubmittingQuote = ref(false)
+
 const submitQuote = () => {
+    // Guard against double-tap / re-entry. The technician reported that
+    // tapping Send a second time during the in-flight request caused the
+    // backend to treat the second submission as a revision (#3).
+    if (isSubmittingQuote.value || !canSubmitQuote.value) return
+    isSubmittingQuote.value = true
+
     router.post('/admin/rfq/quote', {
         service_request_id: selectedRFQ.value.id,
         materials: quotationForm.value.materials.filter(m => m.name && m.quantity > 0),
@@ -1441,6 +1458,7 @@ const submitQuote = () => {
         preserveState: false,
         onSuccess: () => closeReviewModal(),
         onError: (errors) => console.error('Quote submission failed:', errors),
+        onFinish: () => { isSubmittingQuote.value = false },
     })
 }
 

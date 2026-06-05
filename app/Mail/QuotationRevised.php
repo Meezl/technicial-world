@@ -46,7 +46,9 @@ class QuotationRevised extends Mailable
                 'downPayment'     => $this->serviceRequest->quote_down_payment,
                 'totalAmount'     => $this->serviceRequest->quote_amount,
                 'notes'           => $this->serviceRequest->quote_notes,
-                'revisionCount'   => $this->serviceRequest->quote_revision_count,
+                // Floor at 1 so the email never displays "Revision #0" — every
+                // revision sent IS at least the first revision (#3).
+                'revisionCount'   => max(1, (int) $this->serviceRequest->quote_revision_count),
                 'mpesaPaybill'    => config('services.mpesa.shortcode'),
                 'mpesaAccountRef' => $this->serviceRequest->request_id,
             ]

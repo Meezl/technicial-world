@@ -62,6 +62,10 @@
                                     <span>Materials Total:</span>
                                     <span>KSH {{ formatCurrency(getMaterialsTotal()) }}</span>
                                 </div>
+                                <div v-if="Number(serviceRequest.quote_transport_cost) > 0" class="cost-line">
+                                    <span>Transport:</span>
+                                    <span>KSH {{ formatCurrency(serviceRequest.quote_transport_cost) }}</span>
+                                </div>
                                 <div class="cost-line">
                                     <span>Labor Cost:</span>
                                     <span>KSH {{ formatCurrency(serviceRequest.quote_labor_cost || 0) }}</span>
@@ -69,6 +73,10 @@
                                 <div class="cost-line total">
                                     <span>Total Amount:</span>
                                     <span>KSH {{ formatCurrency(serviceRequest.quote_amount) }}</span>
+                                </div>
+                                <div v-if="Number(serviceRequest.quote_down_payment) > 0" class="cost-line" style="border-top: 1px dashed #d1d5db; margin-top: 6px; padding-top: 8px; color: #92400E; font-weight: 600;">
+                                    <span>Required Down Payment:</span>
+                                    <span>KSH {{ formatCurrency(serviceRequest.quote_down_payment) }}</span>
                                 </div>
                             </div>
 
@@ -756,14 +764,19 @@ const getMaterialsTotal = () => {
 const approveQuote = async () => {
     processingQuote.value = true
     try {
-        // Make API call to approve quotation
+        // Send the revision number the client is currently viewing so the
+        // server can reject the action if a newer revision has been issued
+        // after this page was rendered (#19 — superseded quote guard).
+        const seenRevision = Number(props.serviceRequest.quote_revision_count) || 0
+
         const response = await fetch(`/client/rfq/${props.serviceRequest.id}/approve`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
                 'Accept': 'application/json'
-            }
+            },
+            body: JSON.stringify({ seen_revision: seenRevision }),
         })
 
         // Parse defensively — when Laravel returns HTML (CSRF expired / 419 / 500

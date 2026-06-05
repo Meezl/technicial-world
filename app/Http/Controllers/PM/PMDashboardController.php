@@ -650,11 +650,33 @@ class PMDashboardController extends Controller
         return "{$label}-{$from}-to-{$to}.{$extension}";
     }
 
+    /**
+     * Authorize a PM to act on this service request.
+     *
+     * PMs can act on RFQs that are either:
+     *  - explicitly assigned to them, OR
+     *  - currently unassigned (in which case taking the first action
+     *    auto-claims the RFQ for that PM, mirroring the broadened
+     *    visibility from Batch C — #16).
+     *
+     * RFQs assigned to a different PM remain locked.
+     */
     private function authorizeForPm(ServiceRequest $serviceRequest): void
     {
-        if ($serviceRequest->assigned_pm_id !== auth()->id()) {
-            abort(403, 'This RFQ is not assigned to you.');
+        $pmId = auth()->id();
+
+        if ($serviceRequest->assigned_pm_id === $pmId) {
+            return;
         }
+
+        if ($serviceRequest->assigned_pm_id === null) {
+            // Auto-claim so subsequent actions and metrics roll up correctly.
+            $serviceRequest->update(['assigned_pm_id' => $pmId]);
+            $serviceRequest->refresh();
+            return;
+        }
+
+        abort(403, 'This RFQ is assigned to another project manager.');
     }
 
     private function calculateCompletionRate(int $pmId): string
