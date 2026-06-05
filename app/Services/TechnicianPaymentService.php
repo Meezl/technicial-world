@@ -189,16 +189,18 @@ class TechnicianPaymentService
 
     public function resolveApprovedAmount(ServiceRequest $serviceRequest, int $technicianId): float
     {
+        // #9 — Pick the LATEST active assignment for this technician on
+        // this job. Previously this summed across all matching rows which
+        // double-counted re-assignments and the status filter excluded
+        // valid assignments that hadn't transitioned yet. Take the
+        // most recent row instead.
         $assignment = JobAssignment::where('service_request_id', $serviceRequest->id)
             ->where('technician_id', $technicianId)
-            ->whereIn('status', [
-                JobAssignment::STATUS_PENDING,
-                JobAssignment::STATUS_ACCEPTED,
-                JobAssignment::STATUS_COMPLETED,
-            ])
-            ->sum('agreed_compensation');
+            ->whereNotIn('status', [JobAssignment::STATUS_DECLINED])
+            ->orderByDesc('id')
+            ->first();
 
-        $approvedAmount = (float) $assignment;
+        $approvedAmount = $assignment ? (float) ($assignment->agreed_compensation ?? 0) : 0.0;
 
         if ($approvedAmount <= 0) {
             $subTaskAmount = (float) $serviceRequest->subTasks()
@@ -211,10 +213,11 @@ class TechnicianPaymentService
             $approvedAmount = (float) $serviceRequest->technician_payout;
         }
 
-        if ($approvedAmount <= 0 && $serviceRequest->quote_labor_cost > 0) {
-            $approvedAmount = (float) $serviceRequest->quote_labor_cost;
-        }
-
+        // Note: deliberately NOT falling back to quote_labor_cost here.
+        // quote_labor_cost is the project-wide labor budget, not what a
+        // specific technician is owed. Returning 0 when no allocation
+        // exists makes the admin enter the correct number explicitly
+        // rather than over-paying the total budget to a single technician.
         return round($approvedAmount, 2);
     }
 

@@ -336,19 +336,77 @@ class AdminDashboardController extends Controller
 
     public function destroyTechnician(Technician $technician)
     {
-        // Check if technician has active jobs
-        $activeJobs = $technician->serviceRequests()->whereIn('status', ['assigned', 'in_progress'])->count();
-
-        if ($activeJobs > 0) {
-            return redirect()->route('admin.technicians')->with('error', 'Cannot delete technician with active jobs.');
+        $admin = auth()->user();
+        if (!$admin || !in_array($admin->role, ['admin', 'project_manager'], true)) {
+            abort(403);
         }
 
-        // Delete technician and associated user
-        $user = $technician->user;
-        $technician->delete();
-        $user->delete();
+        // Surface a clear, actionable error before attempting the delete (#41).
+        // Active jobs must be reassigned first — admins can't simply orphan
+        // an in-flight job by removing the technician.
+        $activeJobs = $technician->serviceRequests()
+            ->whereIn('status', [
+                ServiceRequest::STATUS_ASSIGNED,
+                ServiceRequest::STATUS_IN_PROGRESS,
+                ServiceRequest::STATUS_QUEUED,
+                ServiceRequest::STATUS_AWAITING_TECH_AVAILABILITY,
+            ])
+            ->pluck('request_id')
+            ->take(5);
 
-        return redirect()->route('admin.technicians')->with('success', 'Technician deleted successfully!');
+        if ($activeJobs->isNotEmpty()) {
+            $jobList = $activeJobs->implode(', ');
+            return redirect()->route('admin.technicians')->with(
+                'error',
+                "Cannot delete technician — they still have active jobs ({$jobList}). Reassign these jobs first, then retry the delete."
+            );
+        }
+
+        try {
+            \DB::transaction(function () use ($technician) {
+                $user = $technician->user;
+                // Clean up child records that don't cascade automatically.
+                $technician->documents()->delete();
+                $technician->delete();
+                if ($user) {
+                    $user->delete();
+                }
+            });
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('destroyTechnician failed', [
+                'technician_id' => $technician->id,
+                'error' => $e->getMessage(),
+            ]);
+            return redirect()->route('admin.technicians')->with(
+                'error',
+                'Could not delete the technician: ' . $e->getMessage()
+            );
+        }
+
+        return redirect()->route('admin.technicians')->with('success', 'Technician deleted successfully.');
+    }
+
+    /**
+     * Stream a technician document through Laravel so the response is
+     * properly auth-gated. Avoids the public storage symlink edge cases
+     * (#40 — clients see "Forbidden" when the symlink, file permissions,
+     * or web server config blocks direct /storage/ access).
+     */
+    public function showTechnicianDocument(\App\Models\TechnicianDocument $document)
+    {
+        $user = auth()->user();
+        if (!$user || !in_array($user->role, ['admin', 'project_manager'], true)) {
+            abort(403);
+        }
+
+        if (!$document->file_path || !\Illuminate\Support\Facades\Storage::disk('public')->exists($document->file_path)) {
+            abort(404, 'Document not found on disk.');
+        }
+
+        return \Illuminate\Support\Facades\Storage::disk('public')->response(
+            $document->file_path,
+            $document->file_name ?? basename($document->file_path)
+        );
     }
 
     /**

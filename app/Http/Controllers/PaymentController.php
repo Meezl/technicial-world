@@ -234,7 +234,20 @@ class PaymentController extends Controller
             $updateData['evidence_path'] = $path;
         }
 
-        $paymentRequest->update($updateData);
+        try {
+            $paymentRequest->update($updateData);
+        } catch (\Throwable $e) {
+            // Don't leak the raw SQL exception text to the client (#7).
+            \Illuminate\Support\Facades\Log::error('recordOfflinePayment failed', [
+                'payment_request_id' => $paymentRequest->id,
+                'user_id'            => auth()->id(),
+                'payment_method'     => $paymentMethod,
+                'error'              => $e->getMessage(),
+            ]);
+            return response()->json([
+                'error' => 'We could not record your payment right now. The team has been notified — please try again or contact support.',
+            ], 422);
+        }
 
         $messages = [
             'cheque' => 'Cheque payment recorded. Please submit the cheque to our office for confirmation.',

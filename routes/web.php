@@ -169,6 +169,7 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::get('/technicians/{technician}/report', [AdminDashboardController::class, 'technicianReport'])->name('admin.technicians.report');
     Route::post('/technicians/{technician}/documents', [AdminDashboardController::class, 'uploadTechnicianDocument'])->name('admin.technicians.documents.upload');
     Route::post('/technician-documents/{document}/verify', [AdminDashboardController::class, 'verifyTechnicianDocument'])->name('admin.technicians.documents.verify');
+    Route::get('/technician-documents/{document}/download', [AdminDashboardController::class, 'showTechnicianDocument'])->name('admin.technicians.documents.show');
 
     // Job management
     Route::get('/jobs', [AdminDashboardController::class, 'jobs'])->name('admin.jobs');

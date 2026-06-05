@@ -216,8 +216,8 @@
                                 </td>
                                 <td>
                                     <div class="entity-block compact">
-                                        <strong>{{ request.latest_quotation ? `Quote v${request.latest_quotation.version}` : 'Not issued yet' }}</strong>
-                                        <span>{{ request.latest_quotation ? formatQuoteStatus(request.latest_quotation.status) : 'Awaiting quotation' }}</span>
+                                        <strong>{{ quotationHeadline(request) }}</strong>
+                                        <span>{{ quotationSubline(request) }}</span>
                                     </div>
                                 </td>
                                 <td>
@@ -249,7 +249,7 @@
                             </div>
                             <div class="meta-chip">
                                 <span>Quotation</span>
-                                <strong>{{ request.latest_quotation ? `v${request.latest_quotation.version}` : 'Pending' }}</strong>
+                                <strong>{{ quotationHeadline(request) }}</strong>
                             </div>
                         </div>
 
@@ -320,6 +320,50 @@ function formatStatus(status) {
 
 function formatQuoteStatus(status) {
     return (status || 'pending').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+/**
+ * Quotation status displayed on the Recent Requests cards (#4 / #13).
+ *
+ * Real quotation data lives inline on the service_request row
+ * (rfq_status, quote_amount, quote_revision_count, etc.) — there's no
+ * separate Quotation row most of the time, so `latest_quotation` is
+ * usually null. Derive the headline/subline from those fields directly.
+ */
+function quotationHeadline(request) {
+    if (request.latest_quotation?.version) {
+        return `Quote v${request.latest_quotation.version}`
+    }
+    const ref = request.job_reference || request.request_id
+    const rev = Number(request.quote_revision_count) || 0
+    switch (request.rfq_status) {
+        case 'quoted':
+            return rev > 0 ? `Revised Quote · ${ref}` : `Quoted · ${ref}`
+        case 'approved':
+            return `Approved · ${ref}`
+        case 'rejected':
+            return 'Declined'
+        case 'pending':
+        default:
+            return 'Not issued yet'
+    }
+}
+
+function quotationSubline(request) {
+    if (request.latest_quotation?.status) {
+        return formatQuoteStatus(request.latest_quotation.status)
+    }
+    switch (request.rfq_status) {
+        case 'quoted':
+            return 'Awaiting your approval'
+        case 'approved':
+            return 'Approved — awaiting payment'
+        case 'rejected':
+            return request.rejection_reason ? 'Declined' : 'Declined by client'
+        case 'pending':
+        default:
+            return 'Awaiting quotation'
+    }
 }
 
 function statusTone(status) {

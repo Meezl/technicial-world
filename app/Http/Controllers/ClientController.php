@@ -174,6 +174,20 @@ class ClientController extends Controller
             ], 400);
         }
 
+        // #19 — Reject approval if the client is acting on a superseded
+        // version of the quotation. The frontend sends the revision number
+        // it rendered; if the server-side count is higher, an admin has
+        // issued a fresh revision since this page was loaded.
+        $seenRevision = (int) $request->input('seen_revision', 0);
+        $currentRevision = (int) ($serviceRequest->quote_revision_count ?? 0);
+        if ($seenRevision < $currentRevision) {
+            return response()->json([
+                'error' => 'A revised quotation has been issued since you opened this page. Please refresh to review the latest figures before approving.',
+                'current_revision' => $currentRevision,
+                'seen_revision' => $seenRevision,
+            ], 409);
+        }
+
         try {
             $updateData = [
                 'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
