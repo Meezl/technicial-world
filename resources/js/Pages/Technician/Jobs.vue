@@ -126,8 +126,28 @@ const getStatusClass = (status) => {
 };
 
 const formatStatus = (status) => {
-    return status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
-};
+    // #28 — Make status labels descriptive instead of just "Pending".
+    const friendly = {
+        pending: 'Awaiting Assignment',
+        awaiting_quote_generation: 'Awaiting Quote',
+        awaiting_quote_approval: 'Awaiting Client Approval',
+        awaiting_payment: 'Awaiting Client Payment',
+        payment_pending_approval: 'Verifying Payment',
+        ready_for_assignment: 'Ready for You',
+        assigned: 'Assigned to You',
+        queued: 'Queued',
+        in_progress: 'Work In Progress',
+        delayed: 'Delayed',
+        suspended: 'Suspended',
+        completed: 'Completed',
+        completed_pending_confirmation: 'Completed · Awaiting Client Confirmation',
+        closed: 'Closed',
+        archived: 'Archived',
+        cancelled: 'Cancelled',
+    }
+    if (!status) return 'Unknown'
+    return friendly[status] || status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+}
 
 const getCategoryIcon = (category) => {
     const map = {

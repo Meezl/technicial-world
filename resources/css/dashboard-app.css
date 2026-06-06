@@ -278,6 +278,13 @@
 .dashboard-container .sidebar-footer {
     border-top: 1px solid rgba(148, 163, 184, 0.14);
     padding: 0.95rem 0.9rem 1rem;
+    /* Pin the logout footer so the button stays fully visible at the
+       bottom of the mobile drawer even when nav-nav is long (#36). */
+    flex-shrink: 0;
+    /* Account for the home-bar safe area on iOS so the button isn't
+       under the system gesture strip. */
+    padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+    background: rgba(0, 51, 75, 0.92);
 }
 
 .dashboard-container .nav-item-logout {
@@ -294,6 +301,11 @@
     padding: 2rem;
     background-color: var(--light-grey);
     min-height: 100vh;
+    /* Sit above the sidebar in the stacking context so a long header
+       never visually overlaps the sidebar during route transitions (#5). */
+    position: relative;
+    z-index: 1;
+    min-width: 0;
 }
 
 .dashboard-container .main-header {
@@ -301,12 +313,19 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 2rem;
+    gap: 1rem;
+    flex-wrap: wrap;
 }
 
 .dashboard-container .main-header h1 {
     margin: 0;
     font-size: 1.8rem;
     color: var(--dark-grey);
+    /* Defensive wrap — long titles can't bleed left into the sidebar */
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    min-width: 0;
+    flex: 1 1 auto;
 }
 
 /* Buttons */

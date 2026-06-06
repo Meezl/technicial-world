@@ -224,7 +224,9 @@
                                 </p>
                             </div>
                             <span :class="['status-badge', report.is_validated ? 'status-approved' : 'status-pending']">
-                                {{ report.is_validated ? `Approved ${report.validated_percent ?? report.percent_complete}%` : `Pending ${report.percent_complete}%` }}
+                                {{ report.is_validated
+                                    ? `Approved · ${report.validated_percent ?? report.percent_complete}%`
+                                    : `Awaiting PM validation · ${report.percent_complete}% submitted` }}
                             </span>
                         </div>
 

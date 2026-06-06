@@ -353,11 +353,35 @@ function quotationSubline(request) {
     if (request.latest_quotation?.status) {
         return formatQuoteStatus(request.latest_quotation.status)
     }
+    // Once an RFQ is approved, the visible quotation status should reflect
+    // what is happening downstream — payment, technician work, completion —
+    // rather than stay on "approved" forever (#35).
+    if (request.rfq_status === 'approved') {
+        switch (request.status) {
+            case 'awaiting_payment':
+            case 'payment_pending_approval':
+                return 'Approved — awaiting payment'
+            case 'ready_for_assignment':
+                return 'Paid — awaiting technician assignment'
+            case 'assigned':
+                return 'Approved — technician assigned'
+            case 'queued':
+            case 'awaiting_tech_availability':
+                return 'Approved — queued for execution'
+            case 'in_progress':
+                return 'Approved — work in progress'
+            case 'completed':
+            case 'completed_pending_confirmation':
+            case 'closed':
+            case 'archived':
+                return 'Approved — job completed'
+            default:
+                return 'Approved'
+        }
+    }
     switch (request.rfq_status) {
         case 'quoted':
             return 'Awaiting your approval'
-        case 'approved':
-            return 'Approved — awaiting payment'
         case 'rejected':
             return request.rejection_reason ? 'Declined' : 'Declined by client'
         case 'pending':

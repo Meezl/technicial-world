@@ -1568,12 +1568,16 @@ class AdminDashboardController extends Controller
         }
 
         // A revision is any submission where the admin explicitly clicked
-        // "Revise" OR an existing quoted/approved quotation is being
-        // re-submitted (#5).
+        // "Revise" OR an existing quoted/approved/rejected quotation is
+        // being re-submitted (#5 + #8).
         $isRevision = (bool) $request->boolean('is_revision')
             || in_array(
                 $serviceRequest->rfq_status,
-                [ServiceRequest::RFQ_STATUS_QUOTED, ServiceRequest::RFQ_STATUS_APPROVED],
+                [
+                    ServiceRequest::RFQ_STATUS_QUOTED,
+                    ServiceRequest::RFQ_STATUS_APPROVED,
+                    ServiceRequest::RFQ_STATUS_REJECTED,
+                ],
                 true,
             );
 

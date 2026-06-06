@@ -74,7 +74,7 @@
                             <i class="fas fa-phone"></i>
                             <div>
                                 <h4>Phone</h4>
-                                <p>+254 700 000 000</p>
+                                <p>0117 962 395</p>
                             </div>
                         </div>
                         <div class="contact-item">
