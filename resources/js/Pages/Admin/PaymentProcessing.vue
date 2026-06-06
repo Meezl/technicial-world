@@ -84,7 +84,7 @@
                                         <th style="width:2.5rem;">#</th>
                                         <th>Job Reference</th>
                                         <th>Technician</th>
-                                        <th>Approved Amount (KES)</th>
+                                        <th>Total Payable (KES)</th>
                                         <th>Cum. Progress</th>
                                         <th>Cum. Due (KES)</th>
                                         <th>Prev. Paid (KES)</th>
@@ -136,16 +136,21 @@
                                             </select>
                                         </td>
 
-                                        <!-- Approved Amount (auto-populated, editable) -->
+                                        <!-- Total Payable / Technician Dues (locked to the value from
+                                             JobAssignment.agreed_compensation — #29 / #30. To change,
+                                             go via Job Management or Assign Technician). -->
                                         <td>
                                             <input
                                                 type="number"
                                                 v-model="row.approved_amount"
                                                 min="0"
                                                 step="0.01"
-                                                class="cell-input"
+                                                class="cell-input readonly-input"
                                                 placeholder="0.00"
-                                                @input="recalcRow(row)"
+                                                readonly
+                                                :title="row.approved_amount > 0
+                                                    ? 'Locked — sourced from this technician\'s job assignment. Edit the assignment to change.'
+                                                    : 'No allocation found on the job assignment. Set agreed compensation on the assignment first.'"
                                             />
                                         </td>
 
@@ -285,7 +290,7 @@
                                         <th>#</th>
                                         <th>Technician</th>
                                         <th>Job Reference</th>
-                                        <th>Approved Amount</th>
+                                        <th>Total Payable</th>
                                         <th>Cum. Progress</th>
                                         <th>Cum. Due</th>
                                         <th>Prev. Paid</th>
@@ -795,6 +800,16 @@ const truncate = (text, len) => {
     box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.1);
     background: #fff;
 }
+
+.cell-input.readonly-input,
+.cell-input[readonly] {
+    background: #F1F5F9;
+    color: #475569;
+    cursor: not-allowed;
+    border-color: #E2E8F0;
+    font-weight: 600;
+}
+.cell-input.readonly-input:focus { box-shadow: none; }
 
 .pct-input {
     width: 4rem;

@@ -160,6 +160,44 @@ class ClientController extends Controller
         ]);
     }
 
+    /**
+     * Client portal profile page. Computes the Account Statistics tiles
+     * (#12 — these were rendering 0 because the route closure passed no
+     * props, so the Vue default fell through to zero).
+     */
+    public function profile(Request $request)
+    {
+        $userId = Auth::id();
+        $requests = ServiceRequest::where('user_id', $userId);
+
+        $total = (clone $requests)->count();
+        $completed = (clone $requests)
+            ->whereIn('status', [
+                'completed',
+                'completed_pending_confirmation',
+                'closed',
+                'archived',
+            ])
+            ->count();
+        $pending = (clone $requests)
+            ->whereNotIn('status', [
+                'completed',
+                'completed_pending_confirmation',
+                'closed',
+                'archived',
+                'cancelled',
+            ])
+            ->count();
+
+        return Inertia::render('Client/Profile', [
+            'stats' => [
+                'total_requests' => $total,
+                'completed_requests' => $completed,
+                'pending_requests' => $pending,
+            ],
+        ]);
+    }
+
     public function approveRFQ(Request $request, ServiceRequest $serviceRequest)
     {
         // Ensure the service request belongs to the authenticated user

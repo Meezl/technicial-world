@@ -67,9 +67,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/client/support', function () {
         return Inertia::render('Client/Support');
     })->name('client.support');
-    Route::get('/client/profile', function () {
-        return Inertia::render('Client/Profile');
-    })->name('client.profile');
+    Route::get('/client/profile', [\App\Http\Controllers\ClientController::class, 'profile'])->name('client.profile');
 
     // Quotation approval/decline
     Route::post('/client/quotations/{quotation}/approve', [\App\Http\Controllers\ClientController::class, 'approveQuotation'])->name('client.quotation.approve');

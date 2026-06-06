@@ -500,8 +500,20 @@ defineOptions({ layout: null })
 }
 
 .dashboard-hero {
-    grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.9fr);
+    grid-template-columns: minmax(0, 1.55fr) minmax(0, 0.9fr);
     margin-bottom: 1.25rem;
+}
+
+/* Defensive wrapping so long headings never overlap the focus card or
+   the sidebar at narrow viewports (#5). */
+.dashboard-hero h1,
+.dashboard-hero h2,
+.dashboard-hero h3,
+.dashboard-hero p,
+.dashboard-hero .hero-kicker {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    min-width: 0;
 }
 
 .hero-card,
@@ -870,8 +882,13 @@ defineOptions({ layout: null })
     line-height: 1.55;
 }
 
+@media (max-width: 1400px) {
+    .dashboard-hero {
+        grid-template-columns: 1fr;
+    }
+}
+
 @media (max-width: 1280px) {
-    .dashboard-hero,
     .kpi-grid,
     .insights-grid,
     .action-grid {

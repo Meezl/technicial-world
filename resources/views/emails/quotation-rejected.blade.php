@@ -170,7 +170,7 @@
 
         <div class="footer">
             <p>Thank you for considering Technician World for your service needs.</p>
-            <p>For any questions, please contact us at info@technicianworld.com or call +254 700 000 000</p>
+            <p>For any questions, please contact us at info@technicianworld.com or call 0117 962 395</p>
             <p>This is an automated email. Please do not reply directly to this message.</p>
         </div>
     </div>

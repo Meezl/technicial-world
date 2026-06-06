@@ -168,7 +168,7 @@
         @endif
 
         <div class="footer">
-            <p>Thank you for your patience. If anything is unclear, reply to this email or call us at +254 700 000 000.</p>
+            <p>Thank you for your patience. If anything is unclear, reply to this email or call us at 0117 962 395.</p>
             <p>&copy; {{ date('Y') }} Technician World. This is an automated email — please don't reply directly.</p>
         </div>
     </div>

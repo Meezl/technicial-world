@@ -586,12 +586,15 @@
                         <i class="fas fa-edit"></i> Create Quotation
                     </button>
                     <button
-                        v-if="['quoted', 'approved'].includes(selectedRFQ?.rfq_status)"
+                        v-if="['quoted', 'approved', 'rejected'].includes(selectedRFQ?.rfq_status)"
                         @click="reviseExistingQuotation(selectedRFQ)"
                         class="btn btn-primary"
-                        title="Send a revised quotation. Client will be asked to disregard the previous one."
+                        :title="selectedRFQ?.rfq_status === 'rejected'
+                            ? 'Send a revised quotation that addresses the client\'s rejection.'
+                            : 'Send a revised quotation. Client will be asked to disregard the previous one.'"
                     >
-                        <i class="fas fa-pen-to-square"></i> Revise Quotation
+                        <i class="fas fa-pen-to-square"></i>
+                        {{ selectedRFQ?.rfq_status === 'rejected' ? 'Revise &amp; Resubmit' : 'Revise Quotation' }}
                     </button>
                     <button
                         v-if="selectedRFQ?.rfq_status === 'quoted' && selectedRFQ?.submission_mode === 'admin_proxy'"
@@ -631,22 +634,25 @@
                                 <h4><i class="fas fa-boxes"></i> Materials Required</h4>
                                 <div class="materials-container">
                                     <div v-for="(material, index) in quotationForm.materials" :key="index" class="material-row">
+                                        <div class="material-row-head">
+                                            <span class="material-row-label">Material #{{ index + 1 }}</span>
+                                            <button
+                                                @click="removeMaterial(index)"
+                                                type="button"
+                                                class="btn-remove-row"
+                                                :disabled="quotationForm.materials.length <= 1"
+                                                :title="quotationForm.materials.length <= 1 ? 'Add another material before removing this one' : 'Delete this material row'"
+                                                aria-label="Delete material row"
+                                            >
+                                                <i class="fas fa-trash"></i>
+                                                <span>Delete row</span>
+                                            </button>
+                                        </div>
                                         <div class="material-inputs">
                                             <input v-model="material.name" type="text" placeholder="Material name" class="form-control material-name" required>
                                             <input v-model="material.quantity" type="number" min="1" placeholder="Qty" class="form-control material-qty" required>
                                             <CurrencyInput v-model="material.unit_price" placeholder="Unit Price (KSH)" class="material-price" required />
                                             <div class="material-total">KSH {{ formatCurrency((material.quantity || 0) * (material.unit_price || 0)) }}</div>
-                                            <button
-                                                v-if="quotationForm.materials.length > 1"
-                                                @click="removeMaterial(index)"
-                                                type="button"
-                                                class="btn-remove"
-                                                aria-label="Remove material"
-                                                title="Remove material"
-                                            >
-                                                <i class="fas fa-trash"></i>
-                                                <span class="remove-material-text">Remove</span>
-                                            </button>
                                         </div>
                                     </div>
                                     <button @click="addMaterial" type="button" class="btn btn-sm btn-outline-primary add-material-btn">
@@ -906,9 +912,18 @@
                             </div>
                         </div>
 
-                        <!-- Input fields -->
+                        <!-- Input fields. Down-payment percentage is locked to
+                             the quotation value (#31): when the admin specified a
+                             quote_down_payment on the quotation, both fields are
+                             read-only and reflect that amount so it stays
+                             consistent with the agreed deposit terms. -->
                         <div class="pr-section">
-                            <label class="pr-section-label">Bill the client</label>
+                            <label class="pr-section-label">
+                                Bill the client
+                                <span v-if="downPaymentLocked" class="pr-locked-pill">
+                                    <i class="fas fa-lock"></i> Locked to quotation deposit
+                                </span>
+                            </label>
                             <div class="pr-input-grid">
                                 <div class="pr-input-field">
                                     <label>Percentage</label>
@@ -921,6 +936,7 @@
                                             max="100"
                                             step="0.01"
                                             class="pr-input"
+                                            :readonly="downPaymentLocked"
                                         >
                                         <span class="pr-input-suffix">%</span>
                                     </div>
@@ -938,6 +954,7 @@
                                             step="0.01"
                                             class="pr-input pr-input-with-prefix"
                                             :placeholder="`Max ${formatCurrency(remainingAmount)}`"
+                                            :readonly="downPaymentLocked"
                                         >
                                     </div>
                                 </div>
@@ -1197,6 +1214,18 @@ const onAmountInput = () => {
 
 const resolvedPaymentAmount = computed(() => Number(paymentRequestForm.value.amount) || 0)
 const capExceeded = computed(() => resolvedPaymentAmount.value > remainingAmount.value + 0.001)
+
+/**
+ * Lock the down-payment row to the value specified on the quotation
+ * (#31). Triggers only when this would be the first billing AND the
+ * admin set quote_down_payment when sending the quote. Subsequent
+ * progress payments stay editable.
+ */
+const downPaymentLocked = computed(() => {
+    return !hasPriorPayments.value
+        && Number(selectedRFQ.value?.quote_down_payment) > 0
+        && Boolean(paymentRequestForm.value.is_down_payment)
+})
 
 // --- Server-side pagination / filtering ---
 const applyFilters = () => {
@@ -1733,13 +1762,52 @@ defineOptions({ layout: null })
 .form-section { margin-bottom: 2rem; padding: 1.5rem; background: #fafafa; border-radius: 8px; border: 1px solid #e9ecef; }
 .form-section h4 { margin: 0 0 1.5rem 0; color: var(--primary-color); display: flex; align-items: center; gap: 0.5rem; border-bottom: 2px solid var(--primary-color); padding-bottom: 0.5rem; }
 .materials-container { background: white; padding: 1rem; border-radius: 6px; border: 1px solid #dee2e6; }
-.material-row { margin-bottom: 1rem; }
-.material-inputs { display: grid; grid-template-columns: 2fr 100px 120px 100px 40px; gap: 0.75rem; align-items: center; }
+.material-row {
+    margin-bottom: 1rem;
+    padding: 0.85rem 0.85rem 1rem;
+    background: #FAFBFD;
+    border: 1px solid #E2E8F0;
+    border-radius: 12px;
+}
+.material-row-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.6rem;
+    gap: 0.5rem;
+}
+.material-row-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.btn-remove-row {
+    background: #FEE2E2;
+    color: #B91C1C;
+    border: 1px solid #FCA5A5;
+    border-radius: 8px;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.btn-remove-row:hover:not(:disabled) {
+    background: #DC2626;
+    color: #fff;
+    border-color: #DC2626;
+}
+.btn-remove-row:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.material-inputs { display: grid; grid-template-columns: 2fr 100px 120px 100px; gap: 0.75rem; align-items: center; }
 .material-total { font-weight: 600; color: var(--success-color); text-align: right; font-size: 0.9rem; }
-.btn-remove { background: var(--danger-color, #DC2626); color: white; border: none; border-radius: 4px; padding: 0.5rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 0.45rem; min-width: 35px; height: 35px; }
-.btn-remove:hover:not(:disabled) { background: #DC2626; }
-.btn-remove:disabled { background: #ccc; cursor: not-allowed; }
-.remove-material-text { display: none; }
 .add-material-btn { margin-top: 1rem; border: 2px dashed var(--primary-color); background: transparent; color: var(--primary-color); padding: 0.75rem 1rem; }
 .add-material-btn:hover { background: var(--primary-color); color: white; }
 .form-row { display: grid; grid-template-columns: 1fr 2fr; gap: 2rem; }
@@ -1781,14 +1849,7 @@ defineOptions({ layout: null })
     .mobile-rfq-list { display: grid; margin-top: 0; }
     .material-inputs { grid-template-columns: 1fr; gap: 0.5rem; }
     .material-total { text-align: left; }
-    .btn-remove {
-        width: 100%;
-        min-height: 2.5rem;
-        height: auto;
-        border-radius: 10px;
-        font-weight: 700;
-    }
-    .remove-material-text { display: inline; }
+    .btn-remove-row { padding: 0.5rem 0.85rem; font-size: 0.85rem; }
     .form-row { grid-template-columns: 1fr; gap: 1rem; }
     .modal-content.extra-large { width: 98%; max-height: 95vh; }
     .material-item-view { flex-direction: column; align-items: flex-start; gap: 0.25rem; }
@@ -2008,6 +2069,28 @@ defineOptions({ layout: null })
     color: #334155;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+}
+.pr-locked-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    background: #FEF3C7;
+    color: #92400E;
+    border-radius: 999px;
+    padding: 2px 9px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: none;
+    letter-spacing: 0;
+}
+.pr-input[readonly] {
+    background: #F1F5F9;
+    color: #475569;
+    cursor: not-allowed;
 }
 .pr-optional {
     text-transform: none;

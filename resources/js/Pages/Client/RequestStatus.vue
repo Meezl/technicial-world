@@ -441,9 +441,14 @@
                                 <p>{{ serviceRequest.technician?.user?.name }} is currently working on your request.</p>
                                 <div class="progress-display">
                                     <div class="progress-bar-large">
-                                        <div class="progress" :style="`width: ${serviceRequest.progress_percentage || 0}%`"></div>
+                                        <div class="progress" :style="`width: ${displayProgressPct}%`"></div>
                                     </div>
-                                    <span>{{ serviceRequest.progress_percentage || 0 }}% Complete</span>
+                                    <span>
+                                        {{ displayProgressPct }}% Complete
+                                        <small v-if="hasUnvalidatedProgress" class="pending-validation-pill">
+                                            <i class="fas fa-hourglass-half"></i> {{ latestSubmittedPct }}% reported, awaiting validation
+                                        </small>
+                                    </span>
                                 </div>
                             </div>
                         </div>
@@ -530,7 +535,7 @@
                 </div>
             </section>
 
-            <section class="panel-section" v-if="serviceRequest.status === 'completed' && !serviceRequest.rating">
+            <section class="panel-section" v-if="['completed', 'completed_pending_confirmation', 'closed'].includes(serviceRequest.status) && !serviceRequest.rating">
                 <div class="panel-card">
                     <div class="card-header">
                         <h3>Provide Feedback</h3>
@@ -539,16 +544,22 @@
                     <form @submit.prevent="submitFeedback" class="feedback-form">
                         <div class="form-group">
                             <label>Rate this service (1-5 stars)</label>
-                            <div class="star-rating">
+                            <div
+                                class="star-rating"
+                                @mouseleave="hoverRating = 0"
+                            >
                                 <button
                                     type="button"
                                     v-for="star in 5"
                                     :key="star"
-                                    :class="['star', { active: star <= feedback.rating }]"
+                                    :class="['star', { active: star <= (hoverRating || feedback.rating) }]"
                                     @click="feedback.rating = star"
+                                    @mouseenter="hoverRating = star"
+                                    :aria-label="`Rate ${star} of 5`"
                                 >
                                     <i class="fas fa-star"></i>
                                 </button>
+                                <span class="rating-readout">{{ feedback.rating ? `${feedback.rating} / 5` : 'Tap a star to rate' }}</span>
                             </div>
                         </div>
 
@@ -638,6 +649,33 @@ const feedback = reactive({
 })
 
 const submittingFeedback = ref(false)
+const hoverRating = ref(0)
+
+// #33 Progress bar — show the highest known progress, falling back to
+// the most recent submitted (but not-yet-validated) report so the bar
+// actually moves while the PM is reviewing.
+const latestValidatedPct = computed(() => {
+    const reports = props.serviceRequest.progress_reports || []
+    const validated = reports
+        .filter((r) => r.is_validated)
+        .map((r) => Number(r.validated_percent ?? r.percent_complete) || 0)
+    if (validated.length) return Math.max(...validated)
+    return Number(props.serviceRequest.progress_percentage) || 0
+})
+const latestSubmittedPct = computed(() => {
+    const reports = props.serviceRequest.progress_reports || []
+    if (!reports.length) return 0
+    const sorted = [...reports].sort((a, b) =>
+        new Date(b.report_date || b.created_at) - new Date(a.report_date || a.created_at),
+    )
+    return Number(sorted[0].percent_complete) || 0
+})
+const displayProgressPct = computed(() =>
+    Math.max(latestValidatedPct.value, latestSubmittedPct.value),
+)
+const hasUnvalidatedProgress = computed(() =>
+    latestSubmittedPct.value > latestValidatedPct.value,
+)
 const processingQuote = ref(false)
 const processingAction = ref(false)
 const processingPayment = ref(false)
@@ -1786,5 +1824,57 @@ defineOptions({
         grid-template-columns: 1fr;
     }
 }
+
+/* Pending-validation badge on progress (#33) */
+.pending-validation-pill {
+    display: inline-block;
+    margin-left: 0.5rem;
+    background: #FEF3C7;
+    color: #92400E;
+    border-radius: 999px;
+    padding: 1px 9px;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+/* Feedback star rating (#10) */
+.star-rating {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+    margin-top: 0.3rem;
+}
+.star-rating .star {
+    background: transparent;
+    border: 1px solid transparent;
+    padding: 6px;
+    cursor: pointer;
+    color: #CBD5E1;
+    font-size: 1.6rem;
+    line-height: 1;
+    border-radius: 8px;
+    transition: color 0.12s ease, transform 0.12s ease, background 0.12s ease;
+}
+.star-rating .star:hover,
+.star-rating .star:focus-visible {
+    background: #FFFBEB;
+    transform: scale(1.08);
+    outline: none;
+}
+.star-rating .star.active {
+    color: #F59E0B;
+}
+.star-rating .star.active i { filter: drop-shadow(0 1px 2px rgba(245, 158, 11, 0.4)); }
+.rating-readout {
+    margin-left: 0.5rem;
+    font-size: 0.85rem;
+    color: #64748B;
+    font-weight: 500;
+}
+
+/* Read-only stars elsewhere on the page */
+.rating-display .stars .fa-star { color: #CBD5E1; font-size: 1.05rem; }
+.rating-display .stars .fa-star.filled { color: #F59E0B; }
 </style>
 
