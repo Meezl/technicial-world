@@ -51,6 +51,15 @@
                                 </option>
                             </select>
                         </label>
+
+                        <label class="filter-field">
+                            <span>From</span>
+                            <input type="date" v-model="fromDate" class="status-filter" />
+                        </label>
+                        <label class="filter-field">
+                            <span>To</span>
+                            <input type="date" v-model="toDate" class="status-filter" />
+                        </label>
                     </div>
 
                     <div v-if="activeFilterChips.length" class="filter-chip-row">
@@ -715,6 +724,8 @@ const props = defineProps({
 
 const selectedSR = ref(props.filters?.service_request_id || '')
 const selectedTechnician = ref(props.filters?.technician_id || '')
+const fromDate = ref(props.filters?.from || '')
+const toDate = ref(props.filters?.to || '')
 const activeTab = ref('client')
 const showPaymentDetailModal = ref(false)
 const selectedPaymentDetail = ref(null)
@@ -945,10 +956,14 @@ const approveOfflinePayment = async (payment) => {
 }
 
 // ---- Filter ----
+// #43 — wire the date range through to the controller so the filter
+// actually narrows results.
 const filterByFilters = () => {
     const params = {}
     if (selectedSR.value) params.service_request_id = selectedSR.value
     if (selectedTechnician.value) params.technician_id = selectedTechnician.value
+    if (fromDate.value) params.from = fromDate.value
+    if (toDate.value) params.to = toDate.value
 
     router.get('/admin/payments', params, { preserveState: true, preserveScroll: true })
 }
@@ -956,6 +971,8 @@ const filterByFilters = () => {
 const clearFilters = () => {
     selectedSR.value = ''
     selectedTechnician.value = ''
+    fromDate.value = ''
+    toDate.value = ''
     router.get('/admin/payments', {}, { preserveState: true, preserveScroll: true })
 }
 

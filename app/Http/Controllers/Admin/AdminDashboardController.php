@@ -244,6 +244,13 @@ class AdminDashboardController extends Controller
             'skills' => $request->skills,
             'rating' => 0,
             'total_jobs' => 0,
+            // Admin is the vetting authority — they've uploaded the
+            // mandatory documents at creation, so mark approved. Without
+            // this the PM Assign Technician dropdown filters them out
+            // (#16).
+            'vetting_status' => Technician::VETTING_APPROVED,
+            'vetted_by' => auth()->id(),
+            'vetted_at' => now(),
         ]);
 
         // Store mandatory documents
@@ -598,6 +605,74 @@ class AdminDashboardController extends Controller
         }
 
         return redirect()->route('admin.jobs.show', $serviceRequest)->with('success', 'Lead technician assigned successfully!');
+    }
+
+    /**
+     * Update a technician's agreed compensation on an existing job
+     * assignment without going through the full reassignment flow (#22).
+     * Useful when a fee needs adjustment mid-job (e.g. scope change or
+     * negotiation) but the same technician stays on the work.
+     */
+    public function updateAssignmentCompensation(Request $request, ServiceRequest $serviceRequest)
+    {
+        $admin = auth()->user();
+        if (!$admin || !in_array($admin->role, ['admin', 'project_manager'], true)) {
+            abort(403);
+        }
+
+        $data = $request->validate([
+            'technician_id' => 'required|exists:technicians,id',
+            'agreed_compensation' => 'required|numeric|min:0',
+            'compensation_notes' => 'nullable|string|max:1000',
+        ]);
+
+        $assignment = JobAssignment::where('service_request_id', $serviceRequest->id)
+            ->where('technician_id', $data['technician_id'])
+            ->whereNotIn('status', [JobAssignment::STATUS_DECLINED])
+            ->orderByDesc('id')
+            ->first();
+
+        if (!$assignment) {
+            return redirect()->back()->with('error', 'No active assignment found for that technician on this job.');
+        }
+
+        // Re-run the labor budget guard so a fee bump doesn't blow the
+        // approved labor envelope without admin awareness.
+        try {
+            $this->ensureLaborBudgetCapacity(
+                $serviceRequest,
+                (float) $data['agreed_compensation'],
+                excludeAssignmentId: $assignment->id
+            );
+        } catch (\Throwable $e) {
+            return redirect()->back()->with('error', $e->getMessage());
+        }
+
+        $oldAmount = (float) ($assignment->agreed_compensation ?? 0);
+        $newAmount = (float) $data['agreed_compensation'];
+
+        $assignment->update([
+            'agreed_compensation' => $newAmount,
+            'compensation_notes' => $data['compensation_notes'] ?? $assignment->compensation_notes,
+        ]);
+
+        \App\Models\AuditLog::log(
+            \App\Models\AuditLog::ACTION_UPDATED,
+            $assignment,
+            ['agreed_compensation' => $oldAmount],
+            [
+                'agreed_compensation' => $newAmount,
+                'reason' => $data['compensation_notes'] ?? null,
+                'updated_by' => $admin->name,
+            ]
+        );
+
+        return redirect()->back()->with('success',
+            sprintf('Technician fee updated from KES %s to KES %s.',
+                number_format($oldAmount, 2),
+                number_format($newAmount, 2)
+            )
+        );
     }
 
     protected function findActivePrimaryAssignment(ServiceRequest $serviceRequest, ?int $technicianId = null): ?JobAssignment
@@ -1234,11 +1309,22 @@ class AdminDashboardController extends Controller
         $serviceRequestId = $request->input('service_request_id');
         $technicianId = $request->input('technician_id');
 
+        // #43 — parse the date filter sent from the Admin Payments page.
+        // Apply it against the "money moved" column on each table so the
+        // filter actually narrows results when the user changes the
+        // dates.
+        $fromInput = $request->input('from') ?: $request->input('date_from');
+        $toInput   = $request->input('to')   ?: $request->input('date_to');
+        $from = $fromInput ? \Carbon\Carbon::parse($fromInput)->startOfDay() : null;
+        $to   = $toInput   ? \Carbon\Carbon::parse($toInput)->endOfDay()   : null;
+
         // Client payments
         $paymentsQuery = Payment::with(['serviceRequest', 'user']);
         if ($serviceRequestId) {
             $paymentsQuery->where('service_request_id', $serviceRequestId);
         }
+        if ($from) { $paymentsQuery->where(function ($q) use ($from) { $q->where('paid_at', '>=', $from)->orWhere('created_at', '>=', $from); }); }
+        if ($to)   { $paymentsQuery->where(function ($q) use ($to)   { $q->where('paid_at', '<=', $to)->orWhere('created_at', '<=', $to); }); }
         $payments = $paymentsQuery->orderBy('created_at', 'desc')->get();
 
         // Payment requests
@@ -1246,6 +1332,8 @@ class AdminDashboardController extends Controller
         if ($serviceRequestId) {
             $paymentRequestsQuery->where('service_request_id', $serviceRequestId);
         }
+        if ($from) { $paymentRequestsQuery->where('created_at', '>=', $from); }
+        if ($to)   { $paymentRequestsQuery->where('created_at', '<=', $to); }
         $paymentRequests = $paymentRequestsQuery->orderBy('created_at', 'desc')->get();
 
         // Technician payments
@@ -1256,6 +1344,8 @@ class AdminDashboardController extends Controller
         if ($technicianId) {
             $techPaymentsQuery->where('technician_id', $technicianId);
         }
+        if ($from) { $techPaymentsQuery->where(function ($q) use ($from) { $q->where('paid_at', '>=', $from)->orWhere('created_at', '>=', $from); }); }
+        if ($to)   { $techPaymentsQuery->where(function ($q) use ($to)   { $q->where('paid_at', '<=', $to)->orWhere('created_at', '<=', $to); }); }
         $technicianPayments = $techPaymentsQuery->orderBy('created_at', 'desc')->get();
 
         // Expenditures
@@ -1263,6 +1353,8 @@ class AdminDashboardController extends Controller
         if ($serviceRequestId) {
             $expendituresQuery->where('service_request_id', $serviceRequestId);
         }
+        if ($from) { $expendituresQuery->where('created_at', '>=', $from); }
+        if ($to)   { $expendituresQuery->where('created_at', '<=', $to); }
         $expenditures = $expendituresQuery->orderBy('created_at', 'desc')->get();
 
         // KPI stats
@@ -1336,6 +1428,8 @@ class AdminDashboardController extends Controller
             'filters' => [
                 'service_request_id' => $serviceRequestId,
                 'technician_id' => $technicianId,
+                'from' => $from?->toDateString(),
+                'to' => $to?->toDateString(),
             ],
         ]);
     }
@@ -2019,7 +2113,11 @@ class AdminDashboardController extends Controller
             'mpesa_receipt_number' => 'required_if:payment_method,mpesa|nullable|string|max:20',
             'phone_number'         => 'nullable|string|max:20',
             'notes'                => 'nullable|string|max:500',
-            'evidence'             => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:10240',
+            // #42 — require supporting documentation for cheque, bank
+            // deposit, and M-Pesa confirmations. Cash payments are
+            // typically receipted offline, so evidence stays optional
+            // there but encouraged.
+            'evidence'             => 'required_if:payment_method,cheque|required_if:payment_method,bank_deposit|required_if:payment_method,mpesa|nullable|file|mimes:jpg,jpeg,png,pdf|max:10240',
         ]);
 
         $amount = ($request->percentage / 100) * $serviceRequest->quote_amount;

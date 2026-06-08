@@ -98,7 +98,17 @@ class PMDashboardController extends Controller
             ->paginate(12)
             ->withQueryString();
 
-        $technicians = Technician::with('user')->approved()->get();
+        // Show technicians that aren't outright rejected so PMs can also
+        // pick up newly-onboarded technicians whose vetting flag was left
+        // pending by a previous create flow (#16).
+        $technicians = Technician::with('user')
+            ->where('is_active', true)
+            ->whereIn('vetting_status', [
+                Technician::VETTING_APPROVED,
+                Technician::VETTING_PENDING,
+                Technician::VETTING_UNDER_REVIEW,
+            ])
+            ->get();
 
         return Inertia::render('PM/RFQs', [
             'rfqs' => $rfqs,
@@ -234,7 +244,17 @@ class PMDashboardController extends Controller
             ->paginate(12)
             ->withQueryString();
 
-        $technicians = Technician::with('user')->approved()->get();
+        // Show technicians that aren't outright rejected so PMs can also
+        // pick up newly-onboarded technicians whose vetting flag was left
+        // pending by a previous create flow (#16).
+        $technicians = Technician::with('user')
+            ->where('is_active', true)
+            ->whereIn('vetting_status', [
+                Technician::VETTING_APPROVED,
+                Technician::VETTING_PENDING,
+                Technician::VETTING_UNDER_REVIEW,
+            ])
+            ->get();
 
         return Inertia::render('PM/Jobs', [
             'jobs' => $jobs,

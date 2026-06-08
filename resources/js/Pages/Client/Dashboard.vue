@@ -131,7 +131,7 @@
                                     <span>{{ request.job_reference || request.request_id }}</span>
                                 </div>
                                 <span :class="['status-badge', statusTone(request.status)]">
-                                    {{ formatStatus(request.status) }}
+                                    {{ formatStatus(request.status, request) }}
                                 </span>
                             </div>
 
@@ -211,7 +211,7 @@
                                 <td>{{ formatDate(request.created_at) }}</td>
                                 <td>
                                     <span :class="['status-badge', statusTone(request.status)]">
-                                        {{ formatStatus(request.status) }}
+                                        {{ formatStatus(request.status, request) }}
                                     </span>
                                 </td>
                                 <td>
@@ -238,7 +238,7 @@
                                 <span>{{ request.job_reference || request.request_id }}</span>
                             </div>
                             <span :class="['status-badge', statusTone(request.status)]">
-                                {{ formatStatus(request.status) }}
+                                {{ formatStatus(request.status, request) }}
                             </span>
                         </div>
 
@@ -314,7 +314,16 @@ const heroMessage = computed(() => {
     return 'You can use this dashboard to track quotations, payments, and project updates once your service requests are in motion.'
 })
 
-function formatStatus(status) {
+/**
+ * Display the request status. For "awaiting_payment" we split into two
+ * cases (#13): if a payment request has been issued the label reads
+ * "Awaiting Payment"; if not, "Awaiting Payment Request from TW".
+ */
+function formatStatus(status, request) {
+    if (status === 'awaiting_payment') {
+        const hasPending = Number(request?.pending_payment_requests_count) > 0
+        return hasPending ? 'Awaiting Payment' : 'Awaiting Payment Request from TW'
+    }
     return (status || 'pending').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 

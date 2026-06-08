@@ -288,16 +288,38 @@ class ClientController extends Controller
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
-        // Ensure the request is in assigned status
-        if ($serviceRequest->status !== 'assigned') {
-            return response()->json(['error' => 'Cannot confirm arrival in current status'], 400);
+        // #34 — accept confirmation from either 'assigned' OR 'in_progress'.
+        // Previously the route required 'assigned', but the technician may
+        // have already tapped "Start Job" (which moves the request to
+        // 'in_progress'), leaving the client unable to confirm arrival.
+        $allowed = ['assigned', 'in_progress'];
+        if (!in_array($serviceRequest->status, $allowed, true)) {
+            return response()->json([
+                'error' => "Arrival can't be confirmed while the request is in status '{$serviceRequest->status}'.",
+            ], 400);
         }
 
-        $serviceRequest->update([
-            'status' => 'in_progress',
-            'technician_arrived' => true,
-            'started_at' => now()
-        ]);
+        // Idempotent: confirming twice is a no-op success.
+        $update = ['technician_arrived' => true];
+        if ($serviceRequest->status === 'assigned') {
+            $update['status'] = 'in_progress';
+        }
+        if (!$serviceRequest->started_at) {
+            $update['started_at'] = now();
+        }
+
+        try {
+            $serviceRequest->update($update);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('confirmArrival failed', [
+                'service_request_id' => $serviceRequest->id,
+                'user_id' => Auth::id(),
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'error' => 'Could not confirm arrival right now. Please try again.',
+            ], 500);
+        }
 
         return response()->json(['success' => true, 'message' => 'Technician arrival confirmed']);
     }

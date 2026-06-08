@@ -174,6 +174,7 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::get('/jobs/{serviceRequest}', [AdminDashboardController::class, 'showJob'])->name('admin.jobs.show');
     Route::post('/jobs/{serviceRequest}/assign', [AdminDashboardController::class, 'assignTechnician'])->name('admin.jobs.assign');
     Route::post('/jobs/{serviceRequest}/assign-lead', [AdminDashboardController::class, 'assignLeadTechnician'])->name('admin.jobs.assign-lead');
+    Route::post('/jobs/{serviceRequest}/assignment-fee', [AdminDashboardController::class, 'updateAssignmentCompensation'])->name('admin.jobs.assignment.fee');
     Route::post('/progress-reports/{progressReport}/validate', [AdminDashboardController::class, 'validateProgress'])->name('admin.progress.validate');
 
     // Payment Milestones

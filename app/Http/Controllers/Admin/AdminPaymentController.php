@@ -313,9 +313,33 @@ class AdminPaymentController extends Controller
             'status' => 'required|in:pending,reached,paid',
         ]);
 
+        $previousStatus = $milestone->status;
         $milestone->update($request->only(['progress_step', 'amount', 'notes', 'status']));
 
-        return back()->with('success', 'Milestone updated successfully.');
+        // #21 — When a milestone is validated/marked paid, build a friendly
+        // reminder pointing the admin at the next milestone that's now
+        // billable so they can dispatch the next invoice without
+        // hunting through the list.
+        $reminder = null;
+        if ($previousStatus !== 'paid' && $request->status === 'paid') {
+            $serviceRequest = $milestone->serviceRequest;
+            if ($serviceRequest) {
+                $nextMilestone = \App\Models\PaymentMilestone::where('service_request_id', $serviceRequest->id)
+                    ->where('status', 'pending')
+                    ->where('progress_step', '>', $milestone->progress_step)
+                    ->orderBy('progress_step')
+                    ->first();
+                if ($nextMilestone) {
+                    $reminder = sprintf(
+                        ' Next billable milestone: %d%% (KES %s). Issue the invoice when ready.',
+                        $nextMilestone->progress_step,
+                        number_format((float) $nextMilestone->amount, 2)
+                    );
+                }
+            }
+        }
+
+        return back()->with('success', 'Milestone updated successfully.' . ($reminder ?? ''));
     }
 
     /**

@@ -753,6 +753,13 @@ const paidPaymentRequests = computed(() => {
 })
 
 const formatStatus = (status) => {
+    // For awaiting_payment, distinguish "request not yet sent" from
+    // "request sent, awaiting payment" based on whether a pending
+    // PaymentRequest exists for this service request (#13).
+    if (status === 'awaiting_payment') {
+        const hasPending = (props.serviceRequest.payment_requests || []).some(pr => pr.status === 'pending')
+        return hasPending ? 'Awaiting Payment' : 'Awaiting Payment Request from TW'
+    }
     const statusMap = {
         'pending': 'Pending Review',
         'assigned': 'Technician Assigned',

@@ -287,6 +287,33 @@
         </div>
         @endif
 
+        @if(!empty($milestones) && count($milestones) > 0)
+        <div class="section">
+            <h3>Payment Milestones</h3>
+            <p style="font-size:13px;color:#555;margin:0 0 12px;">
+                The job is billed in stages tied to delivery progress. Each milestone is invoiced once the corresponding work is validated.
+            </p>
+            <table class="materials-table">
+                <thead>
+                    <tr>
+                        <th>Milestone</th>
+                        <th>Progress</th>
+                        <th>Amount (KSH)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach($milestones as $milestone)
+                    <tr>
+                        <td>{{ $milestone->notes ?: 'Milestone ' . $loop->iteration }}</td>
+                        <td>{{ $milestone->progress_step }}%</td>
+                        <td>{{ number_format((float) $milestone->amount, 2) }}</td>
+                    </tr>
+                    @endforeach
+                </tbody>
+            </table>
+        </div>
+        @endif
+
         @if($notes)
         <div class="section">
             <h3>Additional Notes</h3>
