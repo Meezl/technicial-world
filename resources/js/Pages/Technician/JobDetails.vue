@@ -193,8 +193,19 @@
 
                     <label class="form-field">
                         <span>Progress photos</span>
-                        <input ref="photoInput" type="file" accept=".jpg,.jpeg,.png,.webp" class="input" multiple>
+                        <!-- #27 — accept image/* (rather than a narrow extension
+                             whitelist) so iPhone HEIC photos and other camera
+                             outputs aren't blocked at the file picker. Mobile
+                             browsers also gain access to the camera + gallery. -->
+                        <input ref="photoInput" type="file" accept="image/*" class="input" multiple>
                         <small class="form-hint">Upload up to 6 photos to show actual site progress.</small>
+                        <!-- Camera shortcut: opens the rear camera directly on phones. -->
+                        <label class="camera-shortcut">
+                            <input type="file" accept="image/*" capture="environment" multiple style="display:none" @change="onCameraCapture" />
+                            <span class="btn btn-secondary btn-sm">
+                                <i class="fas fa-camera"></i> Take photo with camera
+                            </span>
+                        </label>
                     </label>
 
                     <button type="submit" class="btn btn-primary" :disabled="submittingReport">
@@ -296,6 +307,18 @@ const props = defineProps({
 })
 
 const photoInput = ref(null)
+const cameraQueue = ref([])  // photos captured via the camera shortcut
+
+/**
+ * The hidden camera input fires its own change event. Append the
+ * captured files to the queue so they get sent on submit, even if the
+ * regular file picker isn't used (#27).
+ */
+function onCameraCapture(event) {
+    const files = Array.from(event.target?.files || [])
+    if (files.length) cameraQueue.value.push(...files)
+    event.target.value = '' // allow re-capturing the same photo if needed
+}
 const submittingReport = ref(false)
 const progressForm = ref({
     percent_complete: Number(props.job.progress_percentage || 0),
@@ -379,7 +402,12 @@ function submitProgressReport() {
         formData.append('service_sub_task_id', progressForm.value.service_sub_task_id)
     }
 
-    Array.from(photoInput.value?.files || []).forEach((file, index) => {
+    // Combine file-picker selections with camera-shortcut captures (#27)
+    const allFiles = [
+        ...Array.from(photoInput.value?.files || []),
+        ...cameraQueue.value,
+    ].slice(0, 6)
+    allFiles.forEach((file, index) => {
         formData.append(`photos[${index}]`, file)
     })
 

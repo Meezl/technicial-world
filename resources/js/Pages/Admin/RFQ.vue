@@ -840,7 +840,14 @@
                     </div>
                     <div class="modal-footer">
                         <button type="button" @click="closeProxyPaymentModal" class="btn btn-secondary">Cancel</button>
-                        <button type="submit" class="btn btn-teal" :disabled="isSubmittingProxyPayment || !proxyPaymentForm.payment_method">
+                        <button type="submit"
+                            class="btn btn-teal"
+                            :disabled="isSubmittingProxyPayment
+                                || !proxyPaymentForm.payment_method
+                                || (['cheque','bank_deposit','mpesa'].includes(proxyPaymentForm.payment_method) && !proxyPaymentForm.evidence)"
+                            :title="(['cheque','bank_deposit','mpesa'].includes(proxyPaymentForm.payment_method) &amp;&amp; !proxyPaymentForm.evidence)
+                                ? 'Upload supporting documentation before confirming.'
+                                : ''">
                             <i class="fas fa-check-circle"></i>
                             {{ isSubmittingProxyPayment ? 'Confirming...' : 'Confirm Payment Received' }}
                         </button>

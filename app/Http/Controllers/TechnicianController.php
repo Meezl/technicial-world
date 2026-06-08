@@ -615,7 +615,10 @@ class TechnicianController extends Controller
             'report_date' => 'nullable|date',
             'service_sub_task_id' => 'nullable|exists:service_sub_tasks,id',
             'photos' => 'nullable|array|max:6',
-            'photos.*' => 'nullable|image|mimes:jpg,jpeg,png,webp|max:5120',
+            // #27 — accept HEIC/HEIF from iPhone cameras and bump the size
+            // ceiling to 10 MB so modern phone shots aren't silently
+            // rejected. The image rule still verifies content.
+            'photos.*' => 'nullable|image|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
         ]);
 
         if ($request->filled('service_sub_task_id')) {

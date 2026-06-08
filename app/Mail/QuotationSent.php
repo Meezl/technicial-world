@@ -39,6 +39,12 @@ class QuotationSent extends Mailable
      */
     public function content(): Content
     {
+        // #21 — surface defined payment milestones on the quotation so the
+        // client knows the staged billing plan up-front.
+        $milestones = $this->serviceRequest->milestones()
+            ->orderBy('progress_step')
+            ->get(['progress_step', 'amount', 'notes', 'status']);
+
         return new Content(
             view: 'emails.quotation',
             with: [
@@ -51,6 +57,7 @@ class QuotationSent extends Mailable
                 'notes' => $this->serviceRequest->quote_notes,
                 'mpesaPaybill' => config('services.mpesa.shortcode'),
                 'mpesaAccountRef' => $this->serviceRequest->request_id,
+                'milestones' => $milestones,
             ]
         );
     }

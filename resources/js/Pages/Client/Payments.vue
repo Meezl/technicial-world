@@ -118,7 +118,7 @@
                             <div class="job-meta-row">
                                 <span class="service-label">{{ job.service_name }}</span>
                                 <span :class="['status-badge', getJobStatusClass(job.status)]">
-                                    {{ formatJobStatus(job.status) }}
+                                    {{ formatJobStatus(job.status, job) }}
                                 </span>
                             </div>
                         </div>
@@ -401,8 +401,13 @@ const getPaymentStatusClass = (status) => {
     return 'pending'
 }
 
-const formatJobStatus = (status) => {
+const formatJobStatus = (status, job) => {
     if (!status) return ''
+    // #13 — split awaiting_payment by whether a pending payment request exists.
+    if (status === 'awaiting_payment' && job) {
+        const hasPending = (job.payment_requests || []).some(pr => pr.status === 'pending')
+        return hasPending ? 'Awaiting Payment' : 'Awaiting Payment Request from TW'
+    }
     return status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
 }
 

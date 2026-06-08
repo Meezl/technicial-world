@@ -28,6 +28,15 @@ class DashboardController extends Controller
 
         $serviceRequests = ServiceRequest::where('user_id', $user->id)
             ->with(['serviceCategory', 'technician.user', 'latestQuotation'])
+            ->withCount([
+                // For #13 — let the frontend distinguish "Awaiting payment
+                // request from TW" (admin hasn't billed yet) from
+                // "Awaiting payment" (admin sent a request, client hasn't
+                // paid).
+                'paymentRequests as pending_payment_requests_count' => function ($q) {
+                    $q->where('status', 'pending');
+                },
+            ])
             ->orderBy('created_at', 'desc')
             ->get();
 
