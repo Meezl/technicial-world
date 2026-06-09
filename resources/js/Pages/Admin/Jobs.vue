@@ -251,9 +251,9 @@ watch(statusFilter, (value) => {
 })
 
 const availableTechnicians = computed(() => {
-    if (!selectedJob.value?.service_category) return props.technicians
+    if (!selectedJob.value?.service_category) return excludeCurrentTechnician(props.technicians)
 
-    return [...props.technicians].sort((a, b) => {
+    return [...excludeCurrentTechnician(props.technicians)].sort((a, b) => {
         // Prioritize available technicians
         const aAvailable = a.availability === 'available'
         const bAvailable = b.availability === 'available'
@@ -338,8 +338,39 @@ const selectTechnician = (technician) => {
     selectedTechnician.value = technician
 }
 
+/**
+ * #24 — when reassigning, hide the technician currently on the job so
+ * the admin can't accidentally re-pick them.
+ */
+function excludeCurrentTechnician(list) {
+    if (!isReassigning.value || !selectedJob.value?.technician?.id) return list
+    return list.filter((t) => t.id !== selectedJob.value.technician.id)
+}
+
 const assignTechnician = () => {
     if (!selectedTechnician.value || !selectedJob.value) return
+
+    // #26 — mandatory confirmation on reassignment so the admin doesn't
+    // accidentally swap the live technician with a stray click.
+    if (isReassigning.value) {
+        const oldName = selectedJob.value.technician?.user?.name || 'the current technician'
+        const newName = selectedTechnician.value.user?.name || 'this technician'
+        const reason = prompt(
+            `Reassign job ${selectedJob.value.request_id} from ${oldName} to ${newName}? Enter a reason for the reassignment (this will be emailed to the client and logged).`,
+            ''
+        )
+        if (reason === null) return
+        const trimmed = reason.trim()
+        if (trimmed.length < 5) {
+            alert('Please provide a brief reason (at least 5 characters) for the reassignment.')
+            return
+        }
+        router.post(`/admin/jobs/${selectedJob.value.id}/assign`, {
+            technician_id: selectedTechnician.value.id,
+            reassignment_reason: trimmed,
+        }, { onSuccess: () => closeModal() })
+        return
+    }
 
     router.post(`/admin/jobs/${selectedJob.value.id}/assign`, {
         technician_id: selectedTechnician.value.id

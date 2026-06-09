@@ -14,6 +14,7 @@ class Technician extends Model
         'technician_id',
         'specialization',
         'trade',
+        'trades',
         'location',
         'availability',
         'rating',
@@ -31,6 +32,7 @@ class Technician extends Model
 
     protected $casts = [
         'skills' => 'array',
+        'trades' => 'array',
         'rating' => 'decimal:1',
         'vetted_at' => 'datetime',
         'is_active' => 'boolean',
@@ -155,6 +157,35 @@ class Technician extends Model
     public function scopeByTrade($query, string $trade)
     {
         return $query->where('trade', $trade);
+    }
+
+    /**
+     * Match technicians whose primary trade OR multi-trade list contains
+     * the given trade key (#25).
+     */
+    public function scopeWithTrade($query, string $trade)
+    {
+        return $query->where(function ($q) use ($trade) {
+            $q->where('trade', $trade)
+                ->orWhereJsonContains('trades', $trade);
+        });
+    }
+
+    /**
+     * Convenience helper for templates and queries that want every
+     * declared trade for a technician — primary + multi-trade list,
+     * unique and lowercased.
+     */
+    public function allTrades(): array
+    {
+        $list = collect([$this->trade])
+            ->merge($this->trades ?? [])
+            ->filter()
+            ->map(fn ($t) => strtolower((string) $t))
+            ->unique()
+            ->values()
+            ->all();
+        return $list;
     }
 
     // ==================== HELPERS ====================

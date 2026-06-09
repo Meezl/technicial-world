@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Payment;
 use App\Models\PaymentRequest;
 use App\Models\ServiceRequest;
+use App\Models\MpesaTransaction;
 use App\Services\MpesaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -79,6 +80,18 @@ class PaymentController extends Controller
 
         $callbackData = $request->all();
         $result = $this->mpesaService->processCallback($callbackData);
+
+        // Always log the M-Pesa transaction
+        MpesaTransaction::create([
+            'checkout_request_id' => $result['checkout_request_id'] ?? null,
+            'merchant_request_id' => $result['merchant_request_id'] ?? null,
+            'receipt_number' => $result['mpesa_receipt_number'] ?? null,
+            'amount' => $result['amount'] ?? null,
+            'phone_number' => $result['phone_number'] ?? null,
+            'result_code' => $result['result_code'] ?? null,
+            'result_desc' => $result['result_desc'] ?? null,
+            'transaction_date' => $result['transaction_date'] ?? null,
+        ]);
 
         if (!$result['success']) {
             // Payment failed or was cancelled

@@ -20,40 +20,30 @@ class ToolRequest extends Model
 
     protected $fillable = [
         'technician_id',
-        'tool_id',
-        'tool_name_requested',
         'service_request_id',
-        'quantity',
         'urgency',
         'notes',
         'status',
-        'decided_by',
-        'decided_at',
-        'decision_notes',
     ];
 
     protected $casts = [
-        'decided_at' => 'datetime',
     ];
+
+    public function items()
+    {
+        return $this->hasMany(ToolRequestItem::class);
+    }
 
     public function technician()
     {
         return $this->belongsTo(Technician::class);
     }
 
-    public function tool()
-    {
-        return $this->belongsTo(Tool::class);
-    }
+    // DecidedBy and Tool relations are removed from here as they are now per-item
 
     public function serviceRequest()
     {
         return $this->belongsTo(ServiceRequest::class);
-    }
-
-    public function decidedBy()
-    {
-        return $this->belongsTo(User::class, 'decided_by');
     }
 
     public function scopePending($query)

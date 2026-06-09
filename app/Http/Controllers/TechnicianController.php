@@ -253,6 +253,7 @@ class TechnicianController extends Controller
 
             // Inventory of tools currently available to request
             $availableTools = Tool::where('status', Tool::STATUS_AVAILABLE)
+                ->whereNotIn('condition', ['damaged', 'needs_repair'])
                 ->orderBy('name')
                 ->get(['id', 'name', 'serial_number', 'category', 'condition', 'location']);
 
@@ -268,27 +269,57 @@ class TechnicianController extends Controller
                 ->limit(20)
                 ->get(['id', 'request_id', 'job_reference']);
 
-            $pendingRequests = ToolRequest::where('technician_id', $technician->id)
-                ->where('status', ToolRequest::STATUS_PENDING)
-                ->with(['tool:id,name,serial_number', 'serviceRequest:id,request_id,job_reference'])
+            $pendingRequests = \App\Models\ToolRequestItem::where('status', ToolRequest::STATUS_PENDING)
+                ->whereHas('toolRequest', function ($q) use ($technician) {
+                    $q->where('technician_id', $technician->id);
+                })
+                ->with(['tool:id,name,serial_number', 'toolRequest.serviceRequest:id,request_id,job_reference'])
                 ->orderByDesc('created_at')
-                ->get();
+                ->get()
+                ->map(function ($item) {
+                    return [
+                        'id' => $item->id,
+                        'tool_id' => $item->tool_id,
+                        'tool_name_requested' => $item->tool_name_requested,
+                        'quantity' => $item->quantity,
+                        'status' => $item->status,
+                        'created_at' => $item->created_at,
+                        'tool' => $item->tool,
+                        'service_request' => $item->toolRequest->serviceRequest ?? null,
+                    ];
+                });
 
-            $recentDecisions = ToolRequest::where('technician_id', $technician->id)
-                ->whereIn('status', [
+            $recentDecisions = \App\Models\ToolRequestItem::whereIn('status', [
                     ToolRequest::STATUS_APPROVED,
                     ToolRequest::STATUS_REJECTED,
-                    ToolRequest::STATUS_CANCELLED,
                 ])
+                ->whereHas('toolRequest', function ($q) use ($technician) {
+                    $q->where('technician_id', $technician->id);
+                })
                 ->with([
                     'tool:id,name,serial_number',
-                    'serviceRequest:id,request_id,job_reference',
+                    'toolRequest.serviceRequest:id,request_id,job_reference',
                     'decidedBy:id,name',
                 ])
                 ->orderByDesc('decided_at')
                 ->orderByDesc('updated_at')
                 ->limit(10)
-                ->get();
+                ->get()
+                ->map(function ($item) {
+                    return [
+                        'id' => $item->id,
+                        'tool_id' => $item->tool_id,
+                        'tool_name_requested' => $item->tool_name_requested,
+                        'quantity' => $item->quantity,
+                        'status' => $item->status,
+                        'created_at' => $item->created_at,
+                        'decided_at' => $item->decided_at,
+                        'decision_notes' => $item->decision_notes,
+                        'tool' => $item->tool,
+                        'service_request' => $item->toolRequest->serviceRequest ?? null,
+                        'decidedBy' => $item->decidedBy,
+                    ];
+                });
         }
 
         return Inertia::render('Technician/Tools', [
@@ -317,41 +348,50 @@ class TechnicianController extends Controller
         }
 
         $data = $request->validate([
-            'tool_id' => 'nullable|integer|exists:tools,id',
-            'tool_name_requested' => 'nullable|string|max:150',
             'service_request_id' => 'nullable|integer|exists:service_requests,id',
-            'quantity' => 'nullable|integer|min:1|max:50',
             'urgency' => 'nullable|in:low,normal,high',
             'notes' => 'nullable|string|max:1000',
+            'items' => 'required|array|min:1',
+            'items.*.tool_id' => 'nullable|integer|exists:tools,id',
+            'items.*.tool_name_requested' => 'nullable|string|max:150',
+            'items.*.quantity' => 'nullable|integer|min:1|max:50',
         ]);
 
-        if (empty($data['tool_id']) && empty($data['tool_name_requested'])) {
-            return back()->withErrors([
-                'tool_id' => 'Pick a tool from the available list or enter a tool name to describe what you need.',
-            ]);
-        }
-
-        // If a specific tool was picked, make sure it's actually available so
-        // technicians can't fight for the same tool.
-        if (!empty($data['tool_id'])) {
-            $tool = Tool::find($data['tool_id']);
-            if (!$tool || $tool->status !== Tool::STATUS_AVAILABLE) {
+        // Validate items
+        foreach ($data['items'] as $index => $item) {
+            if (empty($item['tool_id']) && empty($item['tool_name_requested'])) {
                 return back()->withErrors([
-                    'tool_id' => 'That tool is no longer available. Please refresh and pick another.',
+                    "items.{$index}.tool_id" => 'Each item must have a tool selected or a name provided.',
                 ]);
+            }
+
+            if (!empty($item['tool_id'])) {
+                $tool = Tool::find($item['tool_id']);
+                if (!$tool || $tool->status !== Tool::STATUS_AVAILABLE) {
+                    return back()->withErrors([
+                        "items.{$index}.tool_id" => 'One of the requested tools is no longer available.',
+                    ]);
+                }
             }
         }
 
-        ToolRequest::create([
+        $toolRequest = ToolRequest::create([
             'technician_id' => $technician->id,
-            'tool_id' => $data['tool_id'] ?? null,
-            'tool_name_requested' => $data['tool_name_requested'] ?? null,
             'service_request_id' => $data['service_request_id'] ?? null,
-            'quantity' => $data['quantity'] ?? 1,
             'urgency' => $data['urgency'] ?? ToolRequest::URGENCY_NORMAL,
             'notes' => $data['notes'] ?? null,
             'status' => ToolRequest::STATUS_PENDING,
         ]);
+
+        foreach ($data['items'] as $item) {
+            \App\Models\ToolRequestItem::create([
+                'tool_request_id' => $toolRequest->id,
+                'tool_id' => $item['tool_id'] ?? null,
+                'tool_name_requested' => $item['tool_name_requested'] ?? null,
+                'quantity' => $item['quantity'] ?? 1,
+                'status' => ToolRequest::STATUS_PENDING,
+            ]);
+        }
 
         return back()->with('success', 'Tool request submitted. An admin will review it shortly.');
     }

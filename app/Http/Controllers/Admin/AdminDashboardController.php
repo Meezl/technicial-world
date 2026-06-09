@@ -491,6 +491,9 @@ class AdminDashboardController extends Controller
             'technician_id' => 'required|exists:technicians,id',
             'agreed_compensation' => 'required|numeric|min:0',
             'compensation_notes' => 'nullable|string|max:1000',
+            // #23 / #26 — reason captured at reassignment time, used in
+            // the audit log and the client notification email.
+            'reassignment_reason' => 'nullable|string|max:500',
         ]);
 
         // Block direct assignment when sub-tasks exist
@@ -503,9 +506,18 @@ class AdminDashboardController extends Controller
             return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', 'Cannot assign technician until RFQ is approved by client.');
         }
 
+        // #24 — block re-picking the same technician on reassignment.
+        if ($serviceRequest->technician_id && (int) $request->technician_id === (int) $serviceRequest->technician_id) {
+            return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', 'That technician is already assigned to this job.');
+        }
+
         $technician = Technician::findOrFail($request->technician_id);
         $currentTechnicianId = $serviceRequest->technician_id;
+        $previousTechnician = $currentTechnicianId
+            ? Technician::with('user')->find($currentTechnicianId)
+            : null;
         $existingAssignment = $this->findActivePrimaryAssignment($serviceRequest, $currentTechnicianId);
+        $isReassignment = $previousTechnician !== null;
 
         $this->ensureLaborBudgetCapacity(
             $serviceRequest,
@@ -525,13 +537,14 @@ class AdminDashboardController extends Controller
             'assigned_at' => now()
         ]);
 
+        $reassignmentReason = $request->input('reassignment_reason');
         $this->syncPrimaryAssignment(
             $serviceRequest,
             currentTechnicianId: $currentTechnicianId,
             technician: $technician,
             agreedCompensation: (float) $request->agreed_compensation,
             compensationNotes: $request->compensation_notes,
-            reassignmentReason: 'Admin reassigned technician from job details.'
+            reassignmentReason: $reassignmentReason ?: 'Admin reassigned technician from job details.'
         );
 
         // Update technician availability if they become busy
@@ -544,12 +557,33 @@ class AdminDashboardController extends Controller
             Mail::to($technician->user->email)->send(new JobAssigned($serviceRequest));
         }
 
-        // Send email notification to client
+        // Send email notification to client. Use the dedicated reassignment
+        // template when the job already had a technician (#23).
         if ($serviceRequest->user && $serviceRequest->user->email) {
-            Mail::to($serviceRequest->user->email)->send(new TechnicianAssigned($serviceRequest, $technician));
+            try {
+                if ($isReassignment) {
+                    Mail::to($serviceRequest->user->email)->send(new \App\Mail\JobReassigned(
+                        $serviceRequest,
+                        $previousTechnician,
+                        $technician,
+                        $reassignmentReason
+                    ));
+                } else {
+                    Mail::to($serviceRequest->user->email)->send(new TechnicianAssigned($serviceRequest, $technician));
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Client reassignment email failed', [
+                    'service_request_id' => $serviceRequest->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
-        return redirect()->route('admin.jobs.show', $serviceRequest)->with('success', 'Technician assigned successfully!');
+        return redirect()->route('admin.jobs.show', $serviceRequest)->with('success',
+            $isReassignment
+                ? 'Technician reassigned. Client has been notified.'
+                : 'Technician assigned successfully!'
+        );
     }
 
     public function assignLeadTechnician(Request $request, ServiceRequest $serviceRequest)
@@ -1113,15 +1147,30 @@ class AdminDashboardController extends Controller
             ->orderBy('created_at', 'desc')
             ->get();
 
-        // Pending tool requests from technicians awaiting admin decision.
-        $toolRequests = \App\Models\ToolRequest::pending()
+        $toolRequests = \App\Models\ToolRequestItem::pending()
             ->with([
-                'technician.user:id,name,email',
+                'toolRequest.technician.user:id,name,email',
+                'toolRequest.serviceRequest:id,request_id,job_reference',
                 'tool:id,name,serial_number,status,condition',
-                'serviceRequest:id,request_id,job_reference',
             ])
-            ->orderByDesc('created_at')
-            ->get();
+            ->latest()
+            ->get()
+            ->map(function ($item) {
+                return [
+                    'id' => $item->id,
+                    'tool_request_id' => $item->tool_request_id,
+                    'tool_id' => $item->tool_id,
+                    'tool_name_requested' => $item->tool_name_requested,
+                    'quantity' => $item->quantity,
+                    'status' => $item->status,
+                    'created_at' => $item->created_at,
+                    'tool' => $item->tool,
+                    'technician' => $item->toolRequest->technician ?? null,
+                    'service_request' => $item->toolRequest->serviceRequest ?? null,
+                    'urgency' => $item->toolRequest->urgency ?? 'normal',
+                    'notes' => $item->toolRequest->notes ?? null,
+                ];
+            });
 
         return Inertia::render('Admin/Tools', [
             'tools' => $tools,
@@ -1138,10 +1187,10 @@ class AdminDashboardController extends Controller
      * approving — the request is just acknowledged so the technician
      * knows it's being acted on.
      */
-    public function approveToolRequest(Request $request, \App\Models\ToolRequest $toolRequest)
+    public function approveToolRequestItem(Request $request, \App\Models\ToolRequestItem $toolRequestItem)
     {
-        if (!$toolRequest->isPending()) {
-            return back()->withErrors(['toolRequest' => 'Only pending requests can be approved.']);
+        if (!$toolRequestItem->isPending()) {
+            return back()->withErrors(['toolRequest' => 'Only pending items can be approved.']);
         }
 
         $request->validate([
@@ -1153,8 +1202,8 @@ class AdminDashboardController extends Controller
         $toolToIssue = null;
         if ($request->filled('tool_id')) {
             $toolToIssue = Tool::find($request->tool_id);
-        } elseif ($toolRequest->tool_id) {
-            $toolToIssue = Tool::find($toolRequest->tool_id);
+        } elseif ($toolRequestItem->tool_id) {
+            $toolToIssue = Tool::find($toolRequestItem->tool_id);
         }
 
         if ($toolToIssue) {
@@ -1163,53 +1212,79 @@ class AdminDashboardController extends Controller
                     'tool_id' => 'That tool is no longer available. Pick another or reject this request.',
                 ]);
             }
-            $serviceRequest = $toolRequest->service_request_id
-                ? ServiceRequest::find($toolRequest->service_request_id)
+            // #17 — also block tools whose condition is damaged or needs repair.
+            if (in_array($toolToIssue->condition, ['damaged', 'needs_repair'], true)) {
+                return back()->withErrors([
+                    'tool_id' => "That tool is currently marked '{$toolToIssue->condition}'. Restore its condition before issuing.",
+                ]);
+            }
+            $serviceRequest = $toolRequestItem->toolRequest->service_request_id
+                ? ServiceRequest::find($toolRequestItem->toolRequest->service_request_id)
                 : null;
             $toolToIssue->assignTo(
-                $toolRequest->technician,
+                $toolRequestItem->toolRequest->technician,
                 $serviceRequest,
                 $request->expected_return_date,
-                $toolRequest->notes
+                $toolRequestItem->toolRequest->notes
             );
         }
 
-        $toolRequest->update([
+        $toolRequestItem->update([
             'status' => \App\Models\ToolRequest::STATUS_APPROVED,
-            'tool_id' => $toolToIssue?->id ?? $toolRequest->tool_id,
+            'tool_id' => $toolToIssue?->id ?? $toolRequestItem->tool_id,
             'decided_by' => auth()->id(),
             'decided_at' => now(),
             'decision_notes' => $request->decision_notes,
         ]);
+        
+        // Optionally update the parent ToolRequest status based on its items
+        $parentRequest = $toolRequestItem->toolRequest;
+        if ($parentRequest && !$parentRequest->items()->where('status', \App\Models\ToolRequest::STATUS_PENDING)->exists()) {
+            // All items processed, set parent to approved/rejected
+            $hasApproved = $parentRequest->items()->where('status', \App\Models\ToolRequest::STATUS_APPROVED)->exists();
+            $parentRequest->update([
+                'status' => $hasApproved ? \App\Models\ToolRequest::STATUS_APPROVED : \App\Models\ToolRequest::STATUS_REJECTED
+            ]);
+        }
 
         return redirect()->route('admin.tools')->with('success',
             $toolToIssue
-                ? "Request approved and {$toolToIssue->name} issued to {$toolRequest->technician->user->name}."
-                : 'Request acknowledged. Remember to issue an actual tool when ready.'
+                ? "Item approved and {$toolToIssue->name} issued to {$toolRequestItem->toolRequest->technician->user->name}."
+                : 'Item acknowledged. Remember to issue an actual tool when ready.'
         );
     }
 
     /**
      * Reject a pending tool request with a short reason.
      */
-    public function rejectToolRequest(Request $request, \App\Models\ToolRequest $toolRequest)
+    public function rejectToolRequestItem(Request $request, \App\Models\ToolRequestItem $toolRequestItem)
     {
-        if (!$toolRequest->isPending()) {
-            return back()->withErrors(['toolRequest' => 'Only pending requests can be rejected.']);
+        if (!$toolRequestItem->isPending()) {
+            return back()->withErrors(['toolRequest' => 'Only pending items can be rejected.']);
         }
 
         $request->validate([
             'decision_notes' => 'required|string|min:3|max:500',
         ]);
 
-        $toolRequest->update([
+        $toolRequestItem->update([
             'status' => \App\Models\ToolRequest::STATUS_REJECTED,
             'decided_by' => auth()->id(),
             'decided_at' => now(),
             'decision_notes' => $request->decision_notes,
         ]);
 
-        return redirect()->route('admin.tools')->with('success', 'Tool request rejected.');
+        // Optionally update the parent ToolRequest status based on its items
+        $parentRequest = $toolRequestItem->toolRequest;
+        if ($parentRequest && !$parentRequest->items()->where('status', \App\Models\ToolRequest::STATUS_PENDING)->exists()) {
+            // All items processed, set parent to approved/rejected
+            $hasApproved = $parentRequest->items()->where('status', \App\Models\ToolRequest::STATUS_APPROVED)->exists();
+            $parentRequest->update([
+                'status' => $hasApproved ? \App\Models\ToolRequest::STATUS_APPROVED : \App\Models\ToolRequest::STATUS_REJECTED
+            ]);
+        }
+
+        return redirect()->route('admin.tools')->with('success', 'Tool item rejected.');
     }
 
     public function storeTool(Request $request)
@@ -1278,6 +1353,21 @@ class AdminDashboardController extends Controller
             'expected_return_date' => 'nullable|date|after:today',
             'notes' => 'nullable|string'
         ]);
+
+        // #17 — block damaged tools (and anything in maintenance) from
+        // being issued. Tool must be marked back to a serviceable
+        // condition before allocation.
+        if ($tool->status === Tool::STATUS_DAMAGED || in_array($tool->condition, ['damaged', 'needs_repair'], true)) {
+            return redirect()->route('admin.tools')->with('error',
+                "Cannot issue '{$tool->name}' — it is currently marked as " . ($tool->status === Tool::STATUS_DAMAGED ? 'damaged' : $tool->condition) .
+                '. Update its condition to good/fair first.'
+            );
+        }
+        if ($tool->status !== Tool::STATUS_AVAILABLE) {
+            return redirect()->route('admin.tools')->with('error',
+                "Cannot issue '{$tool->name}' — current status is '{$tool->status}'. Only available tools can be issued."
+            );
+        }
 
         $technician = Technician::findOrFail($request->technician_id);
         $serviceRequest = $request->service_request_id ? ServiceRequest::findOrFail($request->service_request_id) : null;
@@ -1663,7 +1753,7 @@ class AdminDashboardController extends Controller
 
         // A revision is any submission where the admin explicitly clicked
         // "Revise" OR an existing quoted/approved/rejected quotation is
-        // being re-submitted (#5 + #8).
+        // being re-submitted (#5 + #8 + #32 — also valid mid-job).
         $isRevision = (bool) $request->boolean('is_revision')
             || in_array(
                 $serviceRequest->rfq_status,
@@ -1674,6 +1764,24 @@ class AdminDashboardController extends Controller
                 ],
                 true,
             );
+
+        // #32 — When revising a quotation while the job is in progress,
+        // billed milestones are locked: the new total must be at least
+        // what's already been paid out so the math reconciles.
+        if ($isRevision) {
+            $alreadyBilled = (float) PaymentRequest::where('service_request_id', $serviceRequest->id)
+                ->whereIn('status', [PaymentRequest::STATUS_PAID])
+                ->sum('amount');
+            if ($alreadyBilled > 0 && $totalAmount + 0.001 < $alreadyBilled) {
+                return back()->withErrors([
+                    'total_amount' => sprintf(
+                        'Revised total (KES %s) cannot be lower than what has already been paid (KES %s). Reduce the unbilled scope only.',
+                        number_format($totalAmount, 2),
+                        number_format($alreadyBilled, 2)
+                    ),
+                ])->withInput();
+            }
+        }
 
         $updateData = [
             'rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED,
@@ -1836,7 +1944,7 @@ class AdminDashboardController extends Controller
             'email' => 'required|email|unique:users,email',
             'password' => 'required|string|min:8|confirmed',
             'phone' => 'nullable|string|max:20',
-            'role' => 'required|in:client,technician,project_manager,admin',
+            'role' => 'required|in:client,technician,project_manager,admin,storeman',
             'specialization' => 'required_if:role,technician|string|max:255',
             'location' => 'required_if:role,technician|string|max:255',
             'availability' => 'nullable|in:available,busy,on_leave',
@@ -1888,7 +1996,7 @@ class AdminDashboardController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email,' . $user->id,
             'phone' => 'nullable|string|max:20',
-            'role' => 'required|in:client,technician,project_manager,admin',
+            'role' => 'required|in:client,technician,project_manager,admin,storeman',
             'specialization' => 'required_if:role,technician|string|max:255',
             'location' => 'required_if:role,technician|string|max:255',
             'availability' => 'nullable|in:available,busy,on_leave',

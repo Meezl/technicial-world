@@ -16,6 +16,7 @@ class User extends Authenticatable implements MustVerifyEmail
     const ROLE_CLIENT = 'client';
     const ROLE_TECHNICIAN = 'technician';
     const ROLE_PROJECT_MANAGER = 'project_manager';
+    const ROLE_STOREMAN = 'storeman';
 
     /**
      * The attributes that are mass assignable.
@@ -73,6 +74,11 @@ class User extends Authenticatable implements MustVerifyEmail
     public function isProjectManager(): bool
     {
         return $this->role === self::ROLE_PROJECT_MANAGER;
+    }
+
+    public function isStoreman(): bool
+    {
+        return $this->role === self::ROLE_STOREMAN;
     }
 
     public function hasRole(string ...$roles): bool

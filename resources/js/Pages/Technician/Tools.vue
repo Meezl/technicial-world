@@ -147,8 +147,8 @@
                                 v-for="tool in filteredAvailableTools"
                                 :key="tool.id"
                                 type="button"
-                                :class="['available-tool', form.tool_id === tool.id ? 'selected' : '']"
-                                @click="form.tool_id = tool.id"
+                                :class="['available-tool', currentItem.tool_id === tool.id ? 'selected' : '']"
+                                @click="currentItem.tool_id = tool.id"
                             >
                                 <div class="available-tool-main">
                                     <strong>{{ tool.name }}</strong>
@@ -164,29 +164,48 @@
                     <div v-else class="form-block">
                         <label>What do you need?</label>
                         <input
-                            v-model="form.tool_name_requested"
+                            v-model="currentItem.tool_name_requested"
                             type="text"
                             placeholder="e.g. 14mm spanner set, 6m extension ladder"
                             class="form-input"
-                            required
                         />
                     </div>
 
-                    <!-- Job / Quantity / Urgency -->
+                    <!-- Job / Quantity / Add Item Button -->
                     <div class="form-grid">
                         <div class="form-block">
-                            <label>For Job (optional)</label>
-                            <select v-model="form.service_request_id" class="form-input">
-                                <option :value="null">— Not job-specific —</option>
-                                <option v-for="job in activeJobs" :key="job.id" :value="job.id">
-                                    {{ job.job_reference || job.request_id }}
-                                </option>
-                            </select>
-                        </div>
-                        <div class="form-block">
                             <label>Quantity</label>
-                            <input v-model.number="form.quantity" type="number" min="1" max="50" class="form-input" />
+                            <input v-model.number="currentItem.quantity" type="number" min="1" max="50" class="form-input" />
                         </div>
+                        <div class="form-block" style="justify-content: flex-end;">
+                            <button type="button" class="btn btn-outline" @click="addItem" :disabled="!canAddItem">
+                                <i class="fas fa-plus"></i> Add Item
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Items List -->
+                    <div class="form-block" v-if="form.items.length > 0">
+                        <label>Items to Request</label>
+                        <ul style="padding-left: 1.5rem; margin: 0; font-size: 0.85rem;">
+                            <li v-for="(item, index) in form.items" :key="index" style="margin-bottom: 0.5rem;">
+                                {{ item.tool_id ? (availableTools.find(t => t.id === item.tool_id)?.name || 'Tool') : item.tool_name_requested }}
+                                (Qty: {{ item.quantity }})
+                                <a href="#" @click.prevent="removeItem(index)" style="color: var(--danger-color); margin-left: 10px; text-decoration: none;">
+                                    <i class="fas fa-times"></i> Remove
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+                    
+                    <div class="form-block">
+                        <label>For Job (optional)</label>
+                        <select v-model="form.service_request_id" class="form-input">
+                            <option :value="null">— Not job-specific —</option>
+                            <option v-for="job in activeJobs" :key="job.id" :value="job.id">
+                                {{ job.job_reference || job.request_id }}
+                            </option>
+                        </select>
                     </div>
 
                     <div class="form-block">
@@ -271,12 +290,16 @@ const requestMode = ref('inventory') // 'inventory' | 'custom'
 const availableSearch = ref('')
 
 const form = ref({
-    tool_id: null,
-    tool_name_requested: '',
     service_request_id: null,
-    quantity: 1,
     urgency: 'normal',
     notes: '',
+    items: [],
+})
+
+const currentItem = ref({
+    tool_id: null,
+    tool_name_requested: '',
+    quantity: 1,
 })
 
 const urgencyOptions = [
@@ -295,30 +318,54 @@ const filteredAvailableTools = computed(() => {
     })
 })
 
+const canAddItem = computed(() => {
+    if (requestMode.value === 'inventory') return !!currentItem.value.tool_id
+    return currentItem.value.tool_name_requested.trim().length >= 2
+})
+
 const canSubmit = computed(() => {
-    if (requestMode.value === 'inventory') return !!form.value.tool_id
-    return form.value.tool_name_requested.trim().length >= 2
+    return form.value.items.length > 0
 })
 
 function setMode(mode) {
     requestMode.value = mode
     if (mode === 'inventory') {
-        form.value.tool_name_requested = ''
+        currentItem.value.tool_name_requested = ''
     } else {
-        form.value.tool_id = null
+        currentItem.value.tool_id = null
         availableSearch.value = ''
     }
+}
+
+function addItem() {
+    if (!canAddItem.value) return
+    form.value.items.push({ ...currentItem.value })
+    
+    // reset current item
+    currentItem.value = {
+        tool_id: null,
+        tool_name_requested: '',
+        quantity: 1,
+    }
+    availableSearch.value = ''
+}
+
+function removeItem(index) {
+    form.value.items.splice(index, 1)
 }
 
 function openRequestModal() {
     showRequestModal.value = true
     form.value = {
-        tool_id: null,
-        tool_name_requested: '',
         service_request_id: null,
-        quantity: 1,
         urgency: 'normal',
         notes: '',
+        items: [],
+    }
+    currentItem.value = {
+        tool_id: null,
+        tool_name_requested: '',
+        quantity: 1,
     }
     availableSearch.value = ''
     requestMode.value = 'inventory'

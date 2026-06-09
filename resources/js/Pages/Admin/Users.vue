@@ -48,6 +48,7 @@
                                 <option value="technician">Technicians</option>
                                 <option value="project_manager">Project Managers</option>
                                 <option value="admin">Admins</option>
+                                <option value="storeman">Storemen</option>
                             </select>
                             <div class="search-box">
                                 <i class="fas fa-search"></i>
@@ -180,6 +181,7 @@
                                         <option value="technician">Technician</option>
                                         <option value="project_manager">Project Manager</option>
                                         <option value="admin">Admin</option>
+                                        <option value="storeman">Storeman</option>
                                     </select>
                                 </div>
                             </div>
@@ -448,7 +450,8 @@ const formatRole = (role) => {
         'client': 'Client',
         'technician': 'Technician',
         'project_manager': 'Project Manager',
-        'admin': 'Administrator'
+        'admin': 'Administrator',
+        'storeman': 'Storeman'
     }
     return roles[role] || role
 }
@@ -726,6 +729,11 @@ defineOptions({
 .role-badge.project_manager {
     background: #CFFAFE;
     color: #0E7490;
+}
+
+.role-badge.storeman {
+    background: #FEF08A;
+    color: #854D0E;
 }
 
 .status-badge.verified {

@@ -586,7 +586,7 @@
                         <i class="fas fa-edit"></i> Create Quotation
                     </button>
                     <button
-                        v-if="['quoted', 'approved', 'rejected'].includes(selectedRFQ?.rfq_status)"
+                        v-if="canReviseSelectedRfq"
                         @click="reviseExistingQuotation(selectedRFQ)"
                         class="btn btn-primary"
                         :title="selectedRFQ?.rfq_status === 'rejected'

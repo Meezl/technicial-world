@@ -26,6 +26,7 @@ const navItems = [
     { key: 'jobs', href: '/admin/jobs', icon: 'fas fa-tasks', label: 'Jobs', caption: 'Live execution status' },
     { key: 'tools', href: '/admin/tools', icon: 'fas fa-tools', label: 'Tools', caption: 'Inventory and assets' },
     { key: 'payments', href: '/admin/payments', icon: 'fas fa-credit-card', label: 'Payments', caption: 'Collections and payouts' },
+    { key: 'mpesa-transactions', href: '/admin/mpesa-transactions', icon: 'fas fa-mobile-alt', label: 'M-Pesa Transactions', caption: 'Raw callback logs' },
     { key: 'payment-processing', href: '/admin/payment-processing', icon: 'fas fa-file-invoice-dollar', label: 'Pay Technicians', caption: 'Process technician payments' },
     { key: 'requisitions', href: '/admin/requisitions', icon: 'fas fa-boxes', label: 'Requisitions', caption: 'Procurement workflows' },
     {

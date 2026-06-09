@@ -182,16 +182,6 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::put('/milestones/{milestone}', [AdminDashboardController::class, 'updateMilestone'])->name('admin.milestones.update');
     Route::delete('/milestones/{milestone}', [AdminDashboardController::class, 'destroyMilestone'])->name('admin.milestones.destroy');
 
-    // Tools management
-    Route::get('/tools', [AdminDashboardController::class, 'tools'])->name('admin.tools');
-    Route::post('/tools', [AdminDashboardController::class, 'storeTool'])->name('admin.tools.store');
-    Route::put('/tools/{tool}', [AdminDashboardController::class, 'updateTool'])->name('admin.tools.update');
-    Route::delete('/tools/{tool}', [AdminDashboardController::class, 'destroyTool'])->name('admin.tools.destroy');
-    Route::post('/tools/{tool}/assign', [AdminDashboardController::class, 'assignTool'])->name('admin.tools.assign');
-    Route::post('/tools/{tool}/return', [AdminDashboardController::class, 'returnTool'])->name('admin.tools.return');
-    Route::post('/tool-requests/{toolRequest}/approve', [AdminDashboardController::class, 'approveToolRequest'])->name('admin.tool-requests.approve');
-    Route::post('/tool-requests/{toolRequest}/reject', [AdminDashboardController::class, 'rejectToolRequest'])->name('admin.tool-requests.reject');
-
     Route::get('/payments', [AdminDashboardController::class, 'payments'])->name('admin.payments');
 
     // Payment Approvals (offline payments)
@@ -218,6 +208,26 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::get('/api/pm-performance', [\App\Http\Controllers\Admin\PMPerformanceController::class, 'getAllPerformance'])->name('api.pm-performance.index');
     Route::get('/api/pm-top-performers', [\App\Http\Controllers\Admin\PMPerformanceController::class, 'getTopPerformers'])->name('api.pm-top-performers');
 
+    // Service Categories
+    Route::get('/categories', [AdminDashboardController::class, 'categories'])->name('admin.categories');
+    Route::post('/categories', [AdminDashboardController::class, 'storeCategory'])->name('admin.categories.store');
+    Route::put('/categories/{serviceCategory}', [AdminDashboardController::class, 'updateCategory'])->name('admin.categories.update');
+    Route::delete('/categories/{serviceCategory}', [AdminDashboardController::class, 'destroyCategory'])->name('admin.categories.destroy');
+});
+
+// Tools management (accessible by Admin and Storeman)
+Route::middleware(['auth', 'role:admin,storeman'])->prefix('admin')->group(function () {
+    Route::get('/tools', [AdminDashboardController::class, 'tools'])->name('admin.tools');
+    Route::post('/tools', [AdminDashboardController::class, 'storeTool'])->name('admin.tools.store');
+    Route::put('/tools/{tool}', [AdminDashboardController::class, 'updateTool'])->name('admin.tools.update');
+    Route::delete('/tools/{tool}', [AdminDashboardController::class, 'destroyTool'])->name('admin.tools.destroy');
+    Route::post('/tools/{tool}/assign', [AdminDashboardController::class, 'assignTool'])->name('admin.tools.assign');
+    Route::post('/tools/{tool}/return', [AdminDashboardController::class, 'returnTool'])->name('admin.tools.return');
+    Route::post('/tool-requests/{toolRequestItem}/approve', [AdminDashboardController::class, 'approveToolRequestItem'])->name('admin.tool-requests.approve');
+    Route::post('/tool-requests/{toolRequestItem}/reject', [AdminDashboardController::class, 'rejectToolRequestItem'])->name('admin.tool-requests.reject');
+});
+
+Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     // User Management
     Route::get('/users', [AdminDashboardController::class, 'users'])->name('admin.users');
     Route::post('/users', [AdminDashboardController::class, 'storeUser'])->name('admin.users.store');
@@ -245,6 +255,9 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
 
     // Audit Logs
     Route::get('/audit-logs', [AdminDashboardController::class, 'auditLogs'])->name('admin.audit-logs');
+
+    // M-Pesa Transactions
+    Route::resource('mpesa-transactions', \App\Http\Controllers\Admin\MpesaTransactionController::class)->except(['create', 'store']);
 
     // Technician Leads
     Route::get('/technician-leads', [AdminDashboardController::class, 'technicianLeads'])->name('admin.technician-leads');

@@ -613,6 +613,18 @@
                                     ></div>
                                 </div>
                                 <span class="budget-pct">{{ getPercentUsed(budgetSummary[cat]).toFixed(0) }}% used</span>
+                                <!-- #11 — Record Expense button per category so the admin
+                                     can log a material / other expenditure right where they
+                                     see the remaining budget. -->
+                                <button
+                                    v-if="cat !== 'labor'"
+                                    type="button"
+                                    class="btn btn-sm btn-secondary record-expense-btn"
+                                    @click="openExpenseModal(cat)"
+                                    style="margin-top: 0.5rem; width: 100%;"
+                                >
+                                    <i class="fas fa-receipt"></i> Record {{ cat }} expense
+                                </button>
                             </div>
                         </div>
 
@@ -1010,6 +1022,54 @@
                 <div class="modal-footer">
                     <button @click="showBudgetModal = false" class="btn btn-secondary">Cancel</button>
                     <button @click="saveBudget" class="btn btn-primary">Save Budget</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Record Expense Modal (#11) -->
+        <div v-if="showExpenseModal" class="modal-overlay">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h3>Record {{ expenseForm.category }} expense</h3>
+                    <button @click="showExpenseModal = false" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form @submit.prevent="saveExpenseFromBudget">
+                        <div class="form-group">
+                            <label>Description *</label>
+                            <input v-model="expenseForm.description" type="text" class="form-control" required placeholder="e.g. 5 bags of cement" />
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group" style="flex:1">
+                                <label>Amount (KSH) *</label>
+                                <input v-model.number="expenseForm.amount" type="number" step="0.01" min="0.01" class="form-control" required />
+                            </div>
+                            <div class="form-group" style="flex:1">
+                                <label>Expense date</label>
+                                <input v-model="expenseForm.expense_date" type="date" class="form-control" />
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group" style="flex:1">
+                                <label>Vendor</label>
+                                <input v-model="expenseForm.vendor" type="text" class="form-control" placeholder="Supplier name" />
+                            </div>
+                            <div class="form-group" style="flex:1">
+                                <label>Receipt reference</label>
+                                <input v-model="expenseForm.receipt_reference" type="text" class="form-control" placeholder="e.g. RCT-123" />
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Notes</label>
+                            <textarea v-model="expenseForm.notes" rows="2" class="form-control" placeholder="Optional — e.g. allocation, delivery instructions"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button @click="showExpenseModal = false" class="btn btn-secondary">Cancel</button>
+                    <button @click="saveExpenseFromBudget" class="btn btn-primary" :disabled="!canSaveExpense">
+                        Save expense
+                    </button>
                 </div>
             </div>
         </div>
@@ -1421,6 +1481,41 @@ const editSubTaskForm = reactive({
 
 // Budget state
 const showBudgetModal = ref(false)
+const showExpenseModal = ref(false)
+const expenseForm = ref({
+    category: 'materials',
+    description: '',
+    amount: null,
+    expense_date: new Date().toISOString().slice(0, 10),
+    vendor: '',
+    receipt_reference: '',
+    notes: '',
+})
+const canSaveExpense = computed(() => !!expenseForm.value.description && Number(expenseForm.value.amount) > 0)
+
+function openExpenseModal(category) {
+    expenseForm.value = {
+        category,
+        description: '',
+        amount: null,
+        expense_date: new Date().toISOString().slice(0, 10),
+        vendor: '',
+        receipt_reference: '',
+        notes: '',
+    }
+    showExpenseModal.value = true
+}
+
+function saveExpenseFromBudget() {
+    if (!canSaveExpense.value) return
+    router.post('/admin/expenditures', {
+        service_request_id: props.serviceRequest.id,
+        ...expenseForm.value,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => { showExpenseModal.value = false },
+    })
+}
 const budgetForm = reactive({
     labor_budget: 0,
     materials_budget: 0,
