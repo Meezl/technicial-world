@@ -165,7 +165,6 @@ defineOptions({ layout: null })
 </script>
 
 <style>
-@import url('../../../css/technician-pwa.css');
 
 .pwa-input {
     padding: 0.5rem 0.75rem;

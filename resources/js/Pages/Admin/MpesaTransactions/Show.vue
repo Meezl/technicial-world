@@ -95,7 +95,6 @@ defineOptions({
 </script>
 
 <style scoped>
-@import url('../../../../css/dashboard-app.css');
 
 .details-grid {
     display: grid;

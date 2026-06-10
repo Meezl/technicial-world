@@ -232,7 +232,6 @@ defineOptions({ layout: null })
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 .assisted-rfq-page {
     background:

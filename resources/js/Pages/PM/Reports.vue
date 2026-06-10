@@ -24,5 +24,4 @@ defineOptions({ layout: null })
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 </style>

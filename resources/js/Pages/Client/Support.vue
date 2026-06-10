@@ -139,7 +139,6 @@ defineOptions({
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 .support-grid {
     display: grid;

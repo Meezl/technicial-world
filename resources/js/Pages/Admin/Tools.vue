@@ -568,7 +568,6 @@ defineOptions({
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 /* Pending tool requests panel */
 .tool-requests-panel { border-left: 4px solid #F59E0B; background: #FFFBEB; }

@@ -114,7 +114,6 @@ defineOptions({
 </script>
 
 <style scoped>
-@import url('../../../../css/dashboard-app.css');
 
 .form-grid {
     display: grid;

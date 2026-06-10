@@ -221,7 +221,6 @@ defineOptions({
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 .profile-grid {
     display: grid;

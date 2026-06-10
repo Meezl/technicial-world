@@ -1650,7 +1650,6 @@ defineOptions({ layout: null })
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 .rfq-page {
     background:

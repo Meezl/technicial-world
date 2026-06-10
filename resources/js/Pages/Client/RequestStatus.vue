@@ -1205,7 +1205,6 @@ defineOptions({
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 /* RFQ Status Styles */
 .rfq-status-card {

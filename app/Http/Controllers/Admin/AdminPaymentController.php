@@ -131,10 +131,15 @@ class AdminPaymentController extends Controller
             $progressReport->serviceRequest,
             $progressReport->technician_id
         );
+
+        if ($approvedAmount <= 0) {
+            return back()->with('error', 'No agreed compensation found for this technician. Set the agreed fee on the assignment before recording a payout.');
+        }
+
         $targetAmount = $this->technicianPaymentService->calculateCumulativeAmountDue(
             $progressReport->serviceRequest,
             $progressReport->technician_id,
-            $approvedAmount > 0 ? $approvedAmount : (float) $budget->labor_budget,
+            $approvedAmount,
             $validatedPercent
         );
 

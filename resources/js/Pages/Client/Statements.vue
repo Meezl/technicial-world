@@ -140,7 +140,6 @@ defineOptions({ layout: null })
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 .date-input {
     padding: 0.5rem 0.75rem;

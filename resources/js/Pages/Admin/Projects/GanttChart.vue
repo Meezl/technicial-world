@@ -154,7 +154,6 @@ defineOptions({
 </script>
 
 <style scoped>
-@import url('../../../../css/dashboard-app.css');
 
 .gantt-section {
     background: white;

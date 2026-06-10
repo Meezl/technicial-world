@@ -435,7 +435,6 @@ defineOptions({ layout: null })
 </script>
 
 <style scoped>
-@import url('../../../css/technician-pwa.css');
 
 .job-page {
     display: grid;

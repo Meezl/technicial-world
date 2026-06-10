@@ -404,7 +404,6 @@ defineOptions({
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 .modal-overlay {
     position: fixed;

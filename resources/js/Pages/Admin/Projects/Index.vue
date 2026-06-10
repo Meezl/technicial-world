@@ -170,7 +170,6 @@ defineOptions({
 </script>
 
 <style>
-@import url('../../../../css/dashboard-app.css');
 
 .form-row {
     display: grid;

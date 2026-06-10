@@ -183,7 +183,6 @@ defineOptions({ layout: null });
 </script>
 
 <style>
-@import url('../../../css/technician-pwa.css');
 
 .category-icon {
     width: 40px;

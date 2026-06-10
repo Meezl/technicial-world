@@ -588,7 +588,6 @@ defineOptions({
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 /* User Management Specific Styles */
 .stats-section {

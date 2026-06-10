@@ -84,5 +84,4 @@ defineOptions({
 </script>
 
 <style>
-@import url('../../css/frontend-app.css');
 </style>

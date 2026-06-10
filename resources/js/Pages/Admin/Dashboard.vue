@@ -364,7 +364,6 @@ defineOptions({
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 /* Chart specific styles */
 .charts-section {

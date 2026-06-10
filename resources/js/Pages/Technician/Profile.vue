@@ -535,7 +535,6 @@ defineOptions({ layout: null })
 </script>
 
 <style>
-@import url('../../../css/technician-pwa.css');
 
 .profile-page {
     display: grid;

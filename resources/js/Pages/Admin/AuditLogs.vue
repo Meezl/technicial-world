@@ -492,7 +492,6 @@ defineOptions({ layout: null })
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 .audit-page {
     background:

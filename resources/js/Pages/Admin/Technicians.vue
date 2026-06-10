@@ -1222,7 +1222,6 @@ defineOptions({ layout: null })
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 .technicians-page {
     background: radial-gradient(circle at top right, rgba(14, 165, 233, 0.1), transparent 24rem), linear-gradient(180deg, #f8fbfd 0%, #f3f6f8 100%);

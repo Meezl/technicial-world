@@ -181,5 +181,4 @@ onBeforeUnmount(() => {
 </script>
 
 <style>
-@import url('../../css/dashboard-app.css');
 </style>

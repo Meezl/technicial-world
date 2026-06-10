@@ -420,7 +420,6 @@ defineOptions({ layout: null })
 </script>
 
 <style>
-@import url('../../../css/technician-pwa.css');
 
 /* Section headings */
 .section-title {

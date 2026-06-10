@@ -406,7 +406,6 @@ defineOptions({
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 .rfq-form {
     display: grid;

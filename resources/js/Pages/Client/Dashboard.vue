@@ -453,7 +453,6 @@ defineOptions({
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 .client-dashboard {
     display: grid;

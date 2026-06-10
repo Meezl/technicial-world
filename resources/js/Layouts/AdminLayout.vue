@@ -58,5 +58,4 @@ const currentPage = computed(() => {
 </script>
 
 <style>
-@import url('../../css/dashboard-app.css');
 </style>

@@ -562,17 +562,20 @@
                                     <div class="admin-payout-copy">
                                         <strong>{{ report.technician?.user?.name || 'Technician payout' }}</strong>
                                         <p>
-                                            Pay the unpaid portion of the labor budget up to the validated
-                                            {{ report.validated_percent ?? report.percent_complete }}% progress mark.
+                                            Agreed fee at {{ report.validated_percent ?? report.percent_complete }}% validated progress:
+                                            KSH {{ formatCurrency(getProgressPayableAmount(report)) }} outstanding.
+                                            Process payment through the Payments section.
                                         </p>
                                     </div>
                                     <button
                                         v-if="canPayProgressReport(report)"
                                         class="btn btn-success btn-sm"
-                                        @click="payProgressReport(report.id)"
+                                        disabled
+                                        title="Use the Payments section to process technician payouts"
+                                        style="opacity:0.5;cursor:not-allowed;"
                                     >
                                         <i class="fas fa-money-bill-wave"></i>
-                                        Pay KSH {{ formatCurrency(getProgressPayableAmount(report)) }}
+                                        KSH {{ formatCurrency(getProgressPayableAmount(report)) }} due
                                     </button>
                                     <span v-else class="paid-progress-note">
                                         Already paid up to this approved progress level.
@@ -2260,8 +2263,9 @@ const getTechnicianAgreedCompensation = (report) => {
         .find(st => Number(st.technician_id) === Number(report.technician_id))
     if (subTask) return Number(subTask.agreed_compensation || 0)
 
-    // Fall back to full labour budget if no assignment found
-    return Number(props.job.budget?.labor_budget || 0)
+    // No assignment found — return 0 so the payout row shows nothing rather
+    // than the project-wide labour budget which is not what the technician is owed.
+    return 0
 }
 
 const getProgressTargetAmount = (report) => {
@@ -2425,7 +2429,6 @@ defineOptions({
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 .job-details-page {
     background:

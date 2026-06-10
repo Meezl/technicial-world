@@ -250,7 +250,6 @@ defineOptions({
 </script>
 
 <style scoped>
-@import url('../../../../css/dashboard-app.css');
 
 .summary-section {
     display: grid;

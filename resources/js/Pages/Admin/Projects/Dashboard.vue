@@ -213,7 +213,6 @@ defineOptions({
 </script>
 
 <style>
-@import url('../../../../css/dashboard-app.css');
 
 .kpi-section {
     display: grid;

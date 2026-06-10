@@ -605,7 +605,6 @@ const truncate = (text, len) => {
 </script>
 
 <style scoped>
-@import url('../../../css/dashboard-app.css');
 
 .pp-content {
     background: linear-gradient(180deg, #f8fbfd 0%, #f3f6f8 100%);

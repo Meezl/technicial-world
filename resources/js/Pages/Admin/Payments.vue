@@ -1056,7 +1056,6 @@ const getTabCount = (tabKey) => {
 </script>
 
 <style>
-@import url('../../../css/dashboard-app.css');
 
 .payments-content {
     background:
