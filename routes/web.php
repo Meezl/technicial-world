@@ -140,6 +140,7 @@ Route::middleware(['auth', 'role:project_manager'])->prefix('pm')->group(functio
     Route::get('/technicians', [PMDashboardController::class, 'technicians'])->name('pm.technicians');
     Route::post('/technicians/{technician}/documents', [AdminDashboardController::class, 'uploadTechnicianDocument'])->name('pm.technicians.documents.upload');
     Route::post('/technician-documents/{document}/verify', [AdminDashboardController::class, 'verifyTechnicianDocument'])->name('pm.technicians.documents.verify');
+    Route::get('/technician-documents/{document}/download', [AdminDashboardController::class, 'showTechnicianDocument'])->name('pm.technicians.documents.show');
 
     // Messaging
     Route::get('/messages', [PMDashboardController::class, 'messages'])->name('pm.messages');

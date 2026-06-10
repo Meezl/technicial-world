@@ -753,12 +753,70 @@
                 </div>
             </div>
         </div>
+
+        <!-- ==================== DELETE CONFIRMATION MODAL ==================== -->
+        <div v-if="showDeleteModal" class="modal-overlay" @click.self="showDeleteModal = false">
+            <div class="modal-content" @click.stop style="max-width: 480px;">
+                <div class="modal-header">
+                    <h3 style="color: #dc2626;">
+                        <i class="fas fa-exclamation-triangle" style="margin-right: 0.5rem;"></i>
+                        Delete Technician
+                    </h3>
+                    <button @click="showDeleteModal = false" class="modal-close"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="modal-body">
+                    <p>You are about to permanently delete <strong>{{ deletingTech?.user?.name }}</strong>. This action cannot be undone.</p>
+
+                    <div v-if="deletingTech?.active_job_refs?.length" class="delete-blocked-warning" style="margin-top: 1rem; padding: 1rem; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px;">
+                        <p style="font-weight: 600; color: #dc2626; margin-bottom: 0.5rem;">
+                            <i class="fas fa-ban" style="margin-right: 0.5rem;"></i>
+                            Cannot delete — active jobs exist
+                        </p>
+                        <p style="font-size: 0.9rem; color: #7f1d1d; margin-bottom: 0.5rem;">
+                            Reassign the following jobs before deleting this technician:
+                        </p>
+                        <ul style="margin: 0; padding-left: 1.25rem; font-size: 0.9rem; color: #991b1b;">
+                            <li v-for="ref in deletingTech.active_job_refs" :key="ref">{{ ref }}</li>
+                        </ul>
+                    </div>
+
+                    <p v-else style="margin-top: 1rem; padding: 0.75rem; background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; font-size: 0.9rem; color: #9a3412;">
+                        <i class="fas fa-info-circle" style="margin-right: 0.5rem;"></i>
+                        No active jobs found. You may proceed with deletion.
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <button @click="showDeleteModal = false" class="btn btn-secondary">Cancel</button>
+                    <button
+                        v-if="!deletingTech?.active_job_refs?.length"
+                        @click="confirmDelete"
+                        class="btn btn-danger"
+                        :disabled="deleting"
+                    >
+                        <i class="fas fa-trash"></i>
+                        {{ deleting ? 'Deleting...' : 'Confirm Delete' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Flash message banner -->
+        <div v-if="flashError" class="flash-error-banner" style="position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); z-index: 200; background: #dc2626; color: #fff; padding: 0.85rem 1.5rem; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.18); display: flex; align-items: center; gap: 0.75rem; max-width: 90vw;">
+            <i class="fas fa-exclamation-circle"></i>
+            <span>{{ flashError }}</span>
+            <button @click="flashError = null" style="background: none; border: none; color: #fff; cursor: pointer; margin-left: 0.5rem;"><i class="fas fa-times"></i></button>
+        </div>
+        <div v-if="flashSuccess" class="flash-success-banner" style="position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); z-index: 200; background: #16a34a; color: #fff; padding: 0.85rem 1.5rem; border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,0.18); display: flex; align-items: center; gap: 0.75rem; max-width: 90vw;">
+            <i class="fas fa-check-circle"></i>
+            <span>{{ flashSuccess }}</span>
+            <button @click="flashSuccess = null" style="background: none; border: none; color: #fff; cursor: pointer; margin-left: 0.5rem;"><i class="fas fa-times"></i></button>
+        </div>
     </div>
 </template>
 
 <script setup>
 import AdminSidebar from '../../Components/AdminSidebar.vue'
-import { Link, router } from '@inertiajs/vue3'
+import { Link, router, usePage } from '@inertiajs/vue3'
 import { ref, computed, watch } from 'vue'
 
 const props = defineProps({
@@ -766,11 +824,16 @@ const props = defineProps({
     documentTypes: { type: Object, default: () => ({}) },
 })
 
+const page = usePage()
+
 const searchQuery = ref('')
 const specializationFilter = ref('')
 const availabilityFilter = ref('')
 const showModal = ref(false)
 const showViewModal = ref(false)
+const showDeleteModal = ref(false)
+const deletingTech = ref(null)
+const deleting = ref(false)
 const isEditing = ref(false)
 const viewingTechnician = ref(null)
 const skillsInput = ref('')
@@ -781,6 +844,19 @@ const uploadingDoc = ref(false)
 const verifyingDoc = ref(null)
 const editDocType = ref('')
 const viewDocType = ref('')
+const flashError = ref(null)
+const flashSuccess = ref(null)
+
+watch(() => page.props.flash, (flash) => {
+    if (flash?.error) {
+        flashError.value = flash.error
+        setTimeout(() => { flashError.value = null }, 6000)
+    }
+    if (flash?.success) {
+        flashSuccess.value = flash.success
+        setTimeout(() => { flashSuccess.value = null }, 4000)
+    }
+}, { immediate: true, deep: true })
 
 const mandatoryDocTypes = ['nca_license', 'tertiary_cert', 'id_card', 'passport_photo', 'pin_cert']
 
@@ -993,9 +1069,20 @@ const viewTechnician = (tech) => {
 }
 
 const deleteTechnician = (tech) => {
-    if (confirm(`Are you sure you want to delete ${tech.user.name}? This action cannot be undone.`)) {
-        router.delete(`/admin/technicians/${tech.id}`)
-    }
+    deletingTech.value = tech
+    showDeleteModal.value = true
+}
+
+const confirmDelete = () => {
+    if (!deletingTech.value || deleting.value) return
+    deleting.value = true
+    router.delete(`/admin/technicians/${deletingTech.value.id}`, {}, {
+        onFinish: () => {
+            deleting.value = false
+            showDeleteModal.value = false
+            deletingTech.value = null
+        },
+    })
 }
 
 const goToStep2 = () => {

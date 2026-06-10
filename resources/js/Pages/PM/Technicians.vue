@@ -420,11 +420,11 @@
                                         {{ doc.verified ? 'Verified' : 'Pending review' }}
                                     </span>
                                     <div class="action-row">
-                                        <a :href="`/storage/${doc.file_path}`" target="_blank" class="btn btn-secondary btn-sm">
+                                        <a :href="`/pm/technician-documents/${doc.id}/download`" target="_blank" class="btn btn-secondary btn-sm">
                                             <i class="fas fa-eye"></i>
                                             View
                                         </a>
-                                        <a :href="`/storage/${doc.file_path}`" download class="btn btn-secondary btn-sm">
+                                        <a :href="`/pm/technician-documents/${doc.id}/download`" download class="btn btn-secondary btn-sm">
                                             <i class="fas fa-download"></i>
                                             Download
                                         </a>

@@ -202,6 +202,57 @@
                                 </div>
                             </div>
 
+                            <!-- Agreed fee display + inline edit (#22) -->
+                            <div class="assignment-fee-panel">
+                                <div class="assignment-fee-row">
+                                    <div class="assignment-fee-info">
+                                        <span class="assignment-fee-label">Agreed compensation</span>
+                                        <strong class="assignment-fee-value">
+                                            KSH {{ formatCurrency(job.has_sub_tasks ? (currentLeadAssignment?.agreed_compensation || 0) : (currentSingleAssignment?.agreed_compensation || 0)) }}
+                                        </strong>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        class="btn btn-secondary btn-xs"
+                                        @click="showFeeEditPanel ? showFeeEditPanel = false : openFeeEdit()"
+                                    >
+                                        <i class="fas fa-pen"></i> Edit fee
+                                    </button>
+                                </div>
+
+                                <div v-if="showFeeEditPanel" class="assignment-fee-edit-form">
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>New agreed amount (KSH)</label>
+                                            <input
+                                                type="number"
+                                                v-model.number="feeEditForm.agreed_compensation"
+                                                min="0"
+                                                step="0.01"
+                                                class="form-control"
+                                            />
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Reason / notes</label>
+                                            <input
+                                                type="text"
+                                                v-model="feeEditForm.compensation_notes"
+                                                class="form-control"
+                                                placeholder="Optional reason for the change…"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+                                        <button type="button" class="btn btn-primary btn-sm" @click="saveAgreedFee">
+                                            <i class="fas fa-save"></i> Save
+                                        </button>
+                                        <button type="button" class="btn btn-secondary btn-sm" @click="showFeeEditPanel = false">
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
                             <div class="assignment-action-row" v-if="canReassignTechnician">
                                 <button
                                     v-if="job.has_sub_tasks"
@@ -1459,6 +1510,40 @@ const showSingleAssignModal = ref(false)
 const showSubTaskAssignModal = ref(false)
 const showLeadAssignModal = ref(false)
 const showAddSubTaskForm = ref(false)
+
+// Agreed-fee inline edit (#22)
+const showFeeEditPanel = ref(false)
+const feeEditForm = reactive({ agreed_compensation: 0, compensation_notes: '' })
+const savingFee = ref(false)
+
+const openFeeEdit = () => {
+    const assignment = props.job.has_sub_tasks ? currentLeadAssignment.value : currentSingleAssignment.value
+    feeEditForm.agreed_compensation = Number(assignment?.agreed_compensation || 0)
+    feeEditForm.compensation_notes = assignment?.compensation_notes || ''
+    showFeeEditPanel.value = true
+}
+
+const saveAgreedFee = () => {
+    if (savingFee.value) return
+    const technicianId = props.job.has_sub_tasks
+        ? props.job.lead_technician_id
+        : props.job.technician_id
+    savingFee.value = true
+    router.post(
+        `/admin/jobs/${props.job.id}/assignment-fee`,
+        {
+            technician_id: technicianId,
+            agreed_compensation: feeEditForm.agreed_compensation,
+            compensation_notes: feeEditForm.compensation_notes,
+        },
+        {
+            preserveScroll: true,
+            onSuccess: () => { showFeeEditPanel.value = false },
+            onFinish: () => { savingFee.value = false },
+        }
+    )
+}
+
 const selectedTechnician = ref(null)
 const assigningSubTask = ref(null)
 const editingSubTask = ref(null)
@@ -2162,13 +2247,30 @@ const validateProgressReport = (reportId) => {
     })
 }
 
+const getTechnicianAgreedCompensation = (report) => {
+    // Look for the technician's agreed compensation from their direct assignment
+    const directAssignment = (props.job.job_assignments || [])
+        .filter(a => !a.service_sub_task_id && ['pending', 'accepted', 'completed'].includes(a.status))
+        .reverse()
+        .find(a => Number(a.technician_id) === Number(report.technician_id))
+    if (directAssignment) return Number(directAssignment.agreed_compensation || 0)
+
+    // Check sub-task assignments
+    const subTask = (props.job.sub_tasks || [])
+        .find(st => Number(st.technician_id) === Number(report.technician_id))
+    if (subTask) return Number(subTask.agreed_compensation || 0)
+
+    // Fall back to full labour budget if no assignment found
+    return Number(props.job.budget?.labor_budget || 0)
+}
+
 const getProgressTargetAmount = (report) => {
-    const laborBudget = Number(props.job.budget?.labor_budget || 0)
+    const agreedCompensation = getTechnicianAgreedCompensation(report)
     const validatedPercent = Number(report.validated_percent ?? report.percent_complete ?? 0)
 
-    if (!laborBudget || !validatedPercent) return 0
+    if (!agreedCompensation || !validatedPercent) return 0
 
-    return (laborBudget * validatedPercent) / 100
+    return (agreedCompensation * validatedPercent) / 100
 }
 
 const getTechnicianLaborPaid = (report) => {
@@ -2799,6 +2901,58 @@ defineOptions({
 
 .assignment-action-row {
     margin-top: 1rem;
+}
+
+.assignment-fee-panel {
+    margin-top: 0.75rem;
+    border-top: 1px solid var(--border-color, #e5e7eb);
+    padding-top: 0.75rem;
+}
+
+.assignment-fee-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.assignment-fee-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+}
+
+.assignment-fee-label {
+    font-size: 0.75rem;
+    color: var(--text-muted, #6b7280);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.assignment-fee-value {
+    font-size: 1rem;
+    color: var(--text-primary, #111827);
+}
+
+.assignment-fee-edit-form {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    background: var(--bg-secondary, #f9fafb);
+    border-radius: 0.375rem;
+    border: 1px solid var(--border-color, #e5e7eb);
+}
+
+.assignment-fee-edit-form .form-row {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 0.75rem;
+}
+
+.btn-xs {
+    padding: 0.25rem 0.625rem;
+    font-size: 0.75rem;
+    line-height: 1.25;
+    border-radius: 0.25rem;
 }
 
 .assignment-empty-card {

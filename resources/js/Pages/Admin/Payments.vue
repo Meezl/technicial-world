@@ -723,10 +723,12 @@ const props = defineProps({
 })
 
 const selectedSR = ref(props.filters?.service_request_id || '')
-const selectedTechnician = ref(props.filters?.technician_id || '')
+// Coerce to Number so Vue v-model matches numeric option values after page reload (#43)
+const selectedTechnician = ref(props.filters?.technician_id ? Number(props.filters.technician_id) : '')
 const fromDate = ref(props.filters?.from || '')
 const toDate = ref(props.filters?.to || '')
-const activeTab = ref('client')
+// Auto-show technician tab when a technician filter is active with no SR filter (#43)
+const activeTab = ref(props.filters?.technician_id && !props.filters?.service_request_id ? 'technician' : 'client')
 const showPaymentDetailModal = ref(false)
 const selectedPaymentDetail = ref(null)
 

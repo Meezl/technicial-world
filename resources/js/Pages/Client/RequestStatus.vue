@@ -85,6 +85,36 @@
                                 <p>{{ serviceRequest.quote_notes }}</p>
                             </div>
 
+                            <!-- Billing Schedule (#21) -->
+                            <div v-if="serviceRequest.billing_milestones && serviceRequest.billing_milestones.length" class="billing-schedule-section">
+                                <h5><i class="fas fa-calendar-check"></i> Billing Schedule</h5>
+                                <p style="font-size:0.85rem;color:var(--text-muted,#6b7280);margin-bottom:0.75rem;">
+                                    Payment requests will be raised automatically when each progress milestone is validated.
+                                </p>
+                                <table class="billing-schedule-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Milestone</th>
+                                            <th>Progress</th>
+                                            <th>Amount (KSH)</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="(ms, idx) in serviceRequest.billing_milestones" :key="idx">
+                                            <td>{{ ms.label }}</td>
+                                            <td>{{ ms.progress_pct }}%</td>
+                                            <td>{{ formatCurrency(ms.amount) }}</td>
+                                            <td>
+                                                <span :class="ms.triggered ? 'billing-ms-badge triggered' : 'billing-ms-badge pending'">
+                                                    {{ ms.triggered ? 'Invoiced' : 'Pending' }}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
                             <!-- Approval Actions -->
                             <div class="quote-actions">
                                 <button @click="approveQuote" class="btn btn-success" :disabled="processingQuote">
@@ -105,6 +135,33 @@
                             <div class="approved-amount">
                                 <span>Approved Amount: <strong>KSH {{ formatCurrency(serviceRequest.quote_amount) }}</strong></span>
                             </div>
+                        </div>
+
+                        <!-- Billing Schedule (approved view) -->
+                        <div v-if="serviceRequest.billing_milestones && serviceRequest.billing_milestones.length" class="billing-schedule-section">
+                            <h5><i class="fas fa-calendar-check"></i> Billing Schedule</h5>
+                            <table class="billing-schedule-table">
+                                <thead>
+                                    <tr>
+                                        <th>Milestone</th>
+                                        <th>Progress</th>
+                                        <th>Amount (KSH)</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="(ms, idx) in serviceRequest.billing_milestones" :key="idx">
+                                        <td>{{ ms.label }}</td>
+                                        <td>{{ ms.progress_pct }}%</td>
+                                        <td>{{ formatCurrency(ms.amount) }}</td>
+                                        <td>
+                                            <span :class="ms.triggered ? 'billing-ms-badge triggered' : 'billing-ms-badge pending'">
+                                                {{ ms.triggered ? 'Invoiced' : 'Pending' }}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
 
                         <!-- Payment Request Section -->
@@ -591,9 +648,9 @@
                             </div>
                         </div>
 
-                        <div v-if="serviceRequest.feedback_comments" class="comments-display">
+                        <div v-if="serviceRequest.review" class="comments-display">
                             <h4>Your Comments:</h4>
-                            <p>{{ serviceRequest.feedback_comments }}</p>
+                            <p>{{ serviceRequest.review }}</p>
                         </div>
                     </div>
                 </div>
@@ -971,7 +1028,7 @@ const formatDate = (date) => {
     })
 }
 
-const submitFeedback = async () => {
+const submitFeedback = () => {
     if (feedback.rating === 0) {
         alert('Please provide a rating before submitting.')
         return
@@ -979,19 +1036,17 @@ const submitFeedback = async () => {
 
     submittingFeedback.value = true
 
-    try {
-        // Here you would typically submit to a backend endpoint
-        console.log('Feedback submitted:', feedback)
-        alert('Thank you for your feedback!')
-
-        // You would typically reload the page or update the component state
-        window.location.reload()
-    } catch (error) {
-        console.error('Feedback submission error:', error)
-        alert('There was an error submitting your feedback. Please try again.')
-    } finally {
-        submittingFeedback.value = false
-    }
+    router.post(
+        `/client/service-request/${props.serviceRequest.id}/rate`,
+        { rating: feedback.rating, comments: feedback.comments },
+        {
+            onSuccess: () => { submittingFeedback.value = false },
+            onError:  () => {
+                alert('There was an error submitting your feedback. Please try again.')
+                submittingFeedback.value = false
+            },
+        }
+    )
 }
 
 // Payment Methods
@@ -1883,5 +1938,15 @@ defineOptions({
 /* Read-only stars elsewhere on the page */
 .rating-display .stars .fa-star { color: #CBD5E1; font-size: 1.05rem; }
 .rating-display .stars .fa-star.filled { color: #F59E0B; }
+
+/* Billing schedule (#21) */
+.billing-schedule-section { margin: 1.25rem 0; }
+.billing-schedule-section h5 { font-size: 0.95rem; font-weight: 600; margin-bottom: 0.5rem; }
+.billing-schedule-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.billing-schedule-table th, .billing-schedule-table td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #e5e7eb; }
+.billing-schedule-table th { background: #f9fafb; font-weight: 600; color: #6b7280; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.billing-ms-badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+.billing-ms-badge.pending { background: #fef9c3; color: #854d0e; }
+.billing-ms-badge.triggered { background: #dcfce7; color: #166534; }
 </style>
 

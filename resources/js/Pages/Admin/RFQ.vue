@@ -692,6 +692,61 @@
                                         <textarea v-model="quotationForm.notes" class="form-control" rows="3" placeholder="Any additional information for the client..."></textarea>
                                     </div>
                                 </div>
+
+                                <!-- Billing schedule (#21) -->
+                                <div class="form-group" style="margin-top: 1rem;">
+                                    <label style="display:flex;align-items:center;justify-content:space-between;">
+                                        <span><i class="fas fa-calendar-check"></i> Billing Schedule <small style="font-weight:400;color:var(--text-muted);margin-left:0.4rem;">(optional — triggers payment requests automatically)</small></span>
+                                        <button type="button" class="btn btn-secondary btn-xs" @click="addBillingMilestone">
+                                            <i class="fas fa-plus"></i> Add milestone
+                                        </button>
+                                    </label>
+                                    <div v-if="quotationForm.billing_milestones.length" class="billing-milestones-table">
+                                        <div class="billing-ms-header">
+                                            <span>Milestone label</span>
+                                            <span>Progress %</span>
+                                            <span>Amount (KSH)</span>
+                                            <span></span>
+                                        </div>
+                                        <div
+                                            v-for="(ms, idx) in quotationForm.billing_milestones"
+                                            :key="idx"
+                                            class="billing-ms-row"
+                                        >
+                                            <input
+                                                type="text"
+                                                v-model="ms.label"
+                                                class="form-control"
+                                                placeholder="e.g. Mobilisation"
+                                            />
+                                            <input
+                                                type="number"
+                                                v-model.number="ms.progress_pct"
+                                                class="form-control"
+                                                min="1" max="100" step="1"
+                                                placeholder="30"
+                                            />
+                                            <input
+                                                type="number"
+                                                v-model.number="ms.amount"
+                                                class="form-control"
+                                                min="0" step="0.01"
+                                                placeholder="0.00"
+                                            />
+                                            <button
+                                                type="button"
+                                                class="btn btn-danger btn-xs"
+                                                @click="quotationForm.billing_milestones.splice(idx, 1)"
+                                                title="Remove milestone"
+                                            >
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <p v-else style="color:var(--text-muted);font-size:0.85rem;margin-top:0.25rem;">
+                                        No billing milestones set. Add one above to auto-raise payment requests when progress is validated.
+                                    </p>
+                                </div>
                             </div>
 
                             <div class="cost-summary-section">
@@ -1183,7 +1238,12 @@ const quotationForm = ref({
     down_payment: null,
     notes: '',
     materials_file: null,
+    billing_milestones: [],
 })
+
+const addBillingMilestone = () => {
+    quotationForm.value.billing_milestones.push({ label: '', progress_pct: null, amount: null })
+}
 
 // Set to true when admin clicks "Revise Quotation" so the controller
 // emails the client a revision notice asking them to disregard the
@@ -1430,6 +1490,7 @@ const resetQuotationForm = () => {
         down_payment: null,
         notes: '',
         materials_file: null,
+        billing_milestones: [],
     }
     isRevision.value = false
 }
@@ -1461,6 +1522,9 @@ const reviseExistingQuotation = (rfq) => {
             : null,
         notes: rfq.quote_notes || '',
         materials_file: null,
+        billing_milestones: Array.isArray(rfq.billing_milestones)
+            ? rfq.billing_milestones.map(m => ({ label: m.label, progress_pct: m.progress_pct, amount: m.amount }))
+            : [],
     }
 
     isRevision.value = true
@@ -1480,6 +1544,9 @@ const submitQuote = () => {
     if (isSubmittingQuote.value || !canSubmitQuote.value) return
     isSubmittingQuote.value = true
 
+    const validMilestones = quotationForm.value.billing_milestones.filter(
+        m => m.label && m.progress_pct > 0 && m.amount >= 0
+    )
     router.post('/admin/rfq/quote', {
         service_request_id: selectedRFQ.value.id,
         materials: quotationForm.value.materials.filter(m => m.name && m.quantity > 0),
@@ -1490,6 +1557,7 @@ const submitQuote = () => {
         notes: quotationForm.value.notes,
         materials_file: quotationForm.value.materials_file,
         is_revision: isRevision.value,
+        billing_milestones: validMilestones.length ? validMilestones : null,
     }, {
         preserveState: false,
         onSuccess: () => closeReviewModal(),
@@ -2284,4 +2352,11 @@ defineOptions({ layout: null })
 .flash-enter-active, .flash-leave-active { transition: opacity 0.25s ease, transform 0.25s ease; }
 .flash-enter-from { opacity: 0; transform: translateY(-6px); }
 .flash-leave-to { opacity: 0; transform: translateY(-6px); }
+
+.billing-milestones-table { margin-top: 0.5rem; border: 1px solid var(--border-color, #e5e7eb); border-radius: 0.375rem; overflow: hidden; }
+.billing-ms-header, .billing-ms-row { display: grid; grid-template-columns: 3fr 1fr 2fr auto; gap: 0.5rem; padding: 0.5rem 0.75rem; align-items: center; }
+.billing-ms-header { background: var(--bg-secondary, #f9fafb); font-size: 0.75rem; font-weight: 600; color: var(--text-muted, #6b7280); text-transform: uppercase; letter-spacing: 0.04em; }
+.billing-ms-row { border-top: 1px solid var(--border-color, #e5e7eb); }
+.billing-ms-row input { padding: 0.25rem 0.5rem; font-size: 0.85rem; }
+.btn-xs { padding: 0.25rem 0.625rem; font-size: 0.75rem; line-height: 1.25; border-radius: 0.25rem; }
 </style>

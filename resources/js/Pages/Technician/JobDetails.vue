@@ -199,9 +199,11 @@
                              browsers also gain access to the camera + gallery. -->
                         <input ref="photoInput" type="file" accept="image/*" class="input" multiple>
                         <small class="form-hint">Upload up to 6 photos to show actual site progress.</small>
-                        <!-- Camera shortcut: opens the rear camera directly on phones. -->
+                        <!-- Camera shortcut: opens the rear camera directly on phones.
+                             `multiple` is intentionally omitted — iOS Safari ignores it
+                             when `capture` is set. Tap again to queue more photos. -->
                         <label class="camera-shortcut">
-                            <input type="file" accept="image/*" capture="environment" multiple style="display:none" @change="onCameraCapture" />
+                            <input type="file" accept="image/*" capture="environment" style="display:none" @change="onCameraCapture" />
                             <span class="btn btn-secondary btn-sm">
                                 <i class="fas fa-camera"></i> Take photo with camera
                             </span>
@@ -418,6 +420,7 @@ function submitProgressReport() {
             submittingReport.value = false
             progressForm.value.notes = ''
             progressForm.value.service_sub_task_id = ''
+            cameraQueue.value = []
             if (photoInput.value) {
                 photoInput.value.value = ''
             }

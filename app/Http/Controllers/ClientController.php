@@ -373,4 +373,37 @@ class ClientController extends Controller
 
         return response()->json(['success' => true, 'message' => 'Work completion confirmed']);
     }
+
+    public function rateJob(Request $request, ServiceRequest $serviceRequest)
+    {
+        if ($serviceRequest->user_id !== Auth::id()) {
+            abort(403);
+        }
+
+        if ($serviceRequest->rating) {
+            return redirect()->back()->with('error', 'Feedback has already been submitted for this job.');
+        }
+
+        $validated = $request->validate([
+            'rating'   => 'required|integer|min:1|max:5',
+            'comments' => 'nullable|string|max:2000',
+        ]);
+
+        $serviceRequest->update([
+            'rating' => $validated['rating'],
+            'review' => $validated['comments'] ?? null,
+        ]);
+
+        if ($serviceRequest->technician_id) {
+            $tech = \App\Models\Technician::find($serviceRequest->technician_id);
+            if ($tech) {
+                $reviews = ServiceRequest::where('technician_id', $tech->id)
+                    ->whereNotNull('rating')
+                    ->avg('rating');
+                $tech->update(['rating' => round($reviews, 1)]);
+            }
+        }
+
+        return redirect()->back()->with('success', 'Thank you for your feedback!');
+    }
 }

@@ -1,4 +1,8 @@
 import '../css/app.css';
+// Import globally so it is bundled once and available on every Inertia
+// page visit, not only when a layout component that @imports it happens
+// to render — this prevents text-overlap FOUC on SPA navigation (#5).
+import '../css/dashboard-app.css';
 import './bootstrap';
 
 import { createInertiaApp } from '@inertiajs/vue3';

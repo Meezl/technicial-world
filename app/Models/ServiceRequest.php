@@ -34,6 +34,7 @@ class ServiceRequest extends Model
         'quote_labor_cost',
         'quote_transport_cost',
         'quote_down_payment',
+        'billing_milestones',
         'down_payment_requested',
         'quote_notes',
         'quote_materials_file_path',
@@ -62,6 +63,7 @@ class ServiceRequest extends Model
     protected $casts = [
         'files' => 'array',
         'quote_materials' => 'array',
+        'billing_milestones' => 'array',
         'quoted_amount' => 'decimal:2',
         'final_amount' => 'decimal:2',
         'revenue_generated' => 'decimal:2',

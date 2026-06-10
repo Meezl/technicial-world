@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\PaymentRequest;
 use App\Models\ProgressReport;
 use App\Models\ProgressPhoto;
 use App\Models\ServiceRequest;
@@ -150,6 +151,49 @@ class ProgressService
         if ($latestValidated) {
             $effectivePercent = $latestValidated->validated_percent ?? $latestValidated->percent_complete;
             $serviceRequest->update(['progress_percentage' => $effectivePercent]);
+            $this->triggerBillingMilestones($serviceRequest->fresh(), (float) $effectivePercent);
+        }
+    }
+
+    /**
+     * For each billing milestone whose progress_pct threshold has been crossed
+     * and has not yet been triggered, create a PaymentRequest and mark it triggered.
+     */
+    private function triggerBillingMilestones(ServiceRequest $serviceRequest, float $progressPct): void
+    {
+        $milestones = $serviceRequest->billing_milestones;
+        if (empty($milestones)) {
+            return;
+        }
+
+        $changed = false;
+        foreach ($milestones as &$milestone) {
+            if (!empty($milestone['triggered'])) {
+                continue;
+            }
+            if ((float) $milestone['progress_pct'] > $progressPct) {
+                continue;
+            }
+
+            // Threshold crossed — raise a payment request
+            PaymentRequest::create([
+                'payment_request_id' => PaymentRequest::generatePaymentRequestId(),
+                'service_request_id' => $serviceRequest->id,
+                'user_id'            => $serviceRequest->user_id,
+                'requested_by'       => $serviceRequest->assigned_pm_id,
+                'percentage'         => $milestone['progress_pct'],
+                'amount'             => (float) $milestone['amount'],
+                'status'             => PaymentRequest::STATUS_PENDING,
+                'notes'              => 'Auto-generated: billing milestone "' . $milestone['label'] . '" reached at ' . $progressPct . '% progress.',
+            ]);
+
+            $milestone['triggered'] = true;
+            $changed = true;
+        }
+        unset($milestone);
+
+        if ($changed) {
+            $serviceRequest->update(['billing_milestones' => $milestones]);
         }
     }
 }

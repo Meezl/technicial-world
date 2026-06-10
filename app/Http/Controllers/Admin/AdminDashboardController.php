@@ -57,7 +57,21 @@ class AdminDashboardController extends Controller
 
     public function technicians()
     {
+        $activeStatuses = [
+            ServiceRequest::STATUS_ASSIGNED,
+            ServiceRequest::STATUS_IN_PROGRESS,
+            ServiceRequest::STATUS_QUEUED,
+            ServiceRequest::STATUS_AWAITING_TECH_AVAILABILITY,
+        ];
+
         $technicians = Technician::with(['user', 'documents'])->orderBy('created_at', 'desc')->get();
+
+        $technicians->each(function ($tech) use ($activeStatuses) {
+            $tech->active_job_refs = $tech->serviceRequests()
+                ->whereIn('status', $activeStatuses)
+                ->pluck('request_id')
+                ->values();
+        });
 
         return Inertia::render('Admin/Technicians', [
             'technicians' => $technicians,
@@ -1408,10 +1422,22 @@ class AdminDashboardController extends Controller
         $from = $fromInput ? \Carbon\Carbon::parse($fromInput)->startOfDay() : null;
         $to   = $toInput   ? \Carbon\Carbon::parse($toInput)->endOfDay()   : null;
 
+        // Helper: filter a query to only service requests involving the given technician
+        $techSrFilter = function ($q) use ($technicianId) {
+            $q->where('technician_id', $technicianId)
+              ->orWhere('lead_technician_id', $technicianId)
+              ->orWhereHas('subTasks', function ($sq) use ($technicianId) {
+                  $sq->where('technician_id', $technicianId);
+              });
+        };
+
         // Client payments
         $paymentsQuery = Payment::with(['serviceRequest', 'user']);
         if ($serviceRequestId) {
             $paymentsQuery->where('service_request_id', $serviceRequestId);
+        }
+        if ($technicianId && !$serviceRequestId) {
+            $paymentsQuery->whereHas('serviceRequest', $techSrFilter);
         }
         if ($from) { $paymentsQuery->where(function ($q) use ($from) { $q->where('paid_at', '>=', $from)->orWhere('created_at', '>=', $from); }); }
         if ($to)   { $paymentsQuery->where(function ($q) use ($to)   { $q->where('paid_at', '<=', $to)->orWhere('created_at', '<=', $to); }); }
@@ -1421,6 +1447,9 @@ class AdminDashboardController extends Controller
         $paymentRequestsQuery = PaymentRequest::with(['serviceRequest', 'user']);
         if ($serviceRequestId) {
             $paymentRequestsQuery->where('service_request_id', $serviceRequestId);
+        }
+        if ($technicianId && !$serviceRequestId) {
+            $paymentRequestsQuery->whereHas('serviceRequest', $techSrFilter);
         }
         if ($from) { $paymentRequestsQuery->where('created_at', '>=', $from); }
         if ($to)   { $paymentRequestsQuery->where('created_at', '<=', $to); }
@@ -1732,6 +1761,10 @@ class AdminDashboardController extends Controller
             'notes' => 'nullable|string',
             'is_revision' => 'nullable|boolean',
             'materials_file' => 'nullable|file|mimes:pdf,docx,xlsx,xls|max:10240',
+            'billing_milestones' => 'nullable|array',
+            'billing_milestones.*.label' => 'required_with:billing_milestones|string|max:200',
+            'billing_milestones.*.progress_pct' => 'required_with:billing_milestones|numeric|min:1|max:100',
+            'billing_milestones.*.amount' => 'required_with:billing_milestones|numeric|min:0',
         ]);
 
         $serviceRequest = ServiceRequest::findOrFail($request->service_request_id);
@@ -1783,6 +1816,22 @@ class AdminDashboardController extends Controller
             }
         }
 
+        // Normalise billing milestones — strip any stale triggered flags so
+        // each revision starts clean; the ProgressService re-triggers them.
+        $billingMilestones = null;
+        if ($request->filled('billing_milestones')) {
+            $billingMilestones = collect($request->billing_milestones)
+                ->map(fn ($m) => [
+                    'label'        => $m['label'],
+                    'progress_pct' => (float) $m['progress_pct'],
+                    'amount'       => (float) $m['amount'],
+                    'triggered'    => false,
+                ])
+                ->sortBy('progress_pct')
+                ->values()
+                ->all();
+        }
+
         $updateData = [
             'rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED,
             'quote_amount' => $totalAmount,
@@ -1792,6 +1841,7 @@ class AdminDashboardController extends Controller
             'quote_down_payment' => $downPayment,
             'quote_notes' => $request->notes,
             'quote_materials_file_path' => $filePath ?? $serviceRequest->quote_materials_file_path,
+            'billing_milestones' => $billingMilestones,
         ];
 
         if ($isRevision) {
