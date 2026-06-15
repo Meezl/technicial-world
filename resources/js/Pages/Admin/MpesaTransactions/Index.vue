@@ -17,6 +17,33 @@
                         {{ successMessage }}
                     </div>
 
+                    <!-- Filter chips -->
+                    <div class="mpesa-filter-bar">
+                        <div class="filter-chips">
+                            <button
+                                v-for="opt in filterOptions"
+                                :key="opt.value"
+                                @click="applyStatus(opt.value)"
+                                :class="['filter-chip', { active: activeStatus === opt.value }]"
+                            >
+                                {{ opt.label }}
+                                <span class="chip-count">{{ counts[opt.value === '' ? 'all' : opt.value] ?? 0 }}</span>
+                            </button>
+                        </div>
+                        <div class="filter-search">
+                            <input
+                                v-model="searchTerm"
+                                @keyup.enter="applySearch"
+                                type="text"
+                                placeholder="Search receipt, phone, or checkout ID…"
+                                class="form-control"
+                            />
+                            <button v-if="searchTerm || activeStatus" @click="clearFilters" class="btn btn-secondary btn-sm">
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+
                     <div class="table-responsive">
                         <table class="data-table">
                             <thead>
@@ -25,7 +52,8 @@
                                     <th>Receipt #</th>
                                     <th>Phone Number</th>
                                     <th>Amount</th>
-                                    <th>Result Code</th>
+                                    <th>Status</th>
+                                    <th>Result</th>
                                     <th>Date</th>
                                     <th>Actions</th>
                                 </tr>
@@ -37,8 +65,13 @@
                                     <td>{{ tx.phone_number || 'N/A' }}</td>
                                     <td>{{ tx.amount !== null ? 'KES ' + tx.amount : 'N/A' }}</td>
                                     <td>
-                                        <span :class="['status-badge', tx.result_code === 0 ? 'status-completed' : 'status-failed']">
-                                            {{ tx.result_code === 0 ? 'Success (0)' : (tx.result_code !== null ? 'Failed ('+tx.result_code+')' : 'Pending') }}
+                                        <span :class="['status-badge', statusBadgeClass(tx.status)]">
+                                            {{ statusLabel(tx.status) }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span :title="tx.result_desc || ''" style="font-size:.85rem;">
+                                            {{ tx.result_code === 0 ? 'Success (0)' : (tx.result_code !== null ? 'Code '+tx.result_code : (tx.result_desc ? tx.result_desc.substring(0,40) : '—')) }}
                                         </span>
                                     </td>
                                     <td>{{ formatDate(tx.created_at) }}</td>
@@ -55,7 +88,7 @@
                                     </td>
                                 </tr>
                                 <tr v-if="transactions.data.length === 0">
-                                    <td colspan="7" class="text-center">No transactions found.</td>
+                                    <td colspan="8" class="text-center">No transactions found.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -83,21 +116,62 @@
 <script setup>
 import { Link, router, usePage } from '@inertiajs/vue3'
 import AdminSidebar from '../../../Components/AdminSidebar.vue'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps({
-    transactions: {
-        type: Object,
-        required: true
-    }
+    transactions: { type: Object, required: true },
+    filters: { type: Object, default: () => ({ status: null, search: null }) },
+    counts: { type: Object, default: () => ({ all: 0, initiated: 0, completed: 0, failed: 0 }) },
 })
 
 const page = usePage()
 const successMessage = computed(() => page.props.flash?.success)
 
+const filterOptions = [
+    { value: '', label: 'All' },
+    { value: 'initiated', label: 'STK Sent' },
+    { value: 'completed', label: 'Completed' },
+    { value: 'failed', label: 'Failed' },
+]
+
+const activeStatus = ref(props.filters?.status || '')
+const searchTerm = ref(props.filters?.search || '')
+
+const applyStatus = (status) => {
+    activeStatus.value = status
+    router.get('/admin/mpesa-transactions', {
+        status: status || undefined,
+        search: searchTerm.value || undefined,
+    }, { preserveState: true, replace: true })
+}
+
+const applySearch = () => {
+    router.get('/admin/mpesa-transactions', {
+        status: activeStatus.value || undefined,
+        search: searchTerm.value || undefined,
+    }, { preserveState: true, replace: true })
+}
+
+const clearFilters = () => {
+    activeStatus.value = ''
+    searchTerm.value = ''
+    router.get('/admin/mpesa-transactions', {}, { preserveState: true, replace: true })
+}
+
 const formatDate = (dateString) => {
     if (!dateString) return 'N/A'
     return new Date(dateString).toLocaleString()
+}
+
+const statusLabel = (s) => {
+    const map = { initiated: 'STK Sent', completed: 'Completed', failed: 'Failed' }
+    return map[s] || 'Unknown'
+}
+const statusBadgeClass = (s) => {
+    if (s === 'completed') return 'status-completed'
+    if (s === 'failed') return 'status-failed'
+    if (s === 'initiated') return 'status-pending'
+    return 'status-pending'
 }
 
 const deleteTransaction = (id) => {
@@ -166,5 +240,61 @@ defineOptions({
     color: var(--text-muted);
     pointer-events: none;
     background: #f9fafb;
+}
+
+.mpesa-filter-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: #f9fafb;
+    border-bottom: 1px solid #e5e7eb;
+}
+.filter-chips {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.9rem;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: #374151;
+    transition: all 0.15s;
+}
+.filter-chip:hover {
+    border-color: #3b82f6;
+    background: #eff6ff;
+}
+.filter-chip.active {
+    background: #3b82f6;
+    color: #fff;
+    border-color: #3b82f6;
+}
+.chip-count {
+    background: rgba(0, 0, 0, 0.08);
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.filter-chip.active .chip-count {
+    background: rgba(255, 255, 255, 0.22);
+}
+.filter-search {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.filter-search input {
+    min-width: 260px;
 }
 </style>

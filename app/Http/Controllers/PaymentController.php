@@ -58,12 +58,32 @@ class PaymentController extends Controller
                 'mpesa_checkout_request_id' => $result['checkout_request_id'],
             ]);
 
+            // Log the initiation so we can see "STK pushed but no response" cases
+            MpesaTransaction::create([
+                'payment_request_id'  => $paymentRequest->id,
+                'checkout_request_id' => $result['checkout_request_id'] ?? null,
+                'merchant_request_id' => $result['merchant_request_id'] ?? null,
+                'amount'              => $amount,
+                'phone_number'        => $phoneNumber,
+                'result_desc'         => $result['message'] ?? 'STK push sent — awaiting customer PIN',
+                'status'              => MpesaTransaction::STATUS_INITIATED,
+            ]);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Payment initiated. Please check your phone to complete the payment.',
                 'checkout_request_id' => $result['checkout_request_id'],
             ]);
         }
+
+        // STK push failed at the Safaricom API level — record it for audit
+        MpesaTransaction::create([
+            'payment_request_id' => $paymentRequest->id,
+            'amount'             => $amount,
+            'phone_number'       => $phoneNumber,
+            'result_desc'        => $result['message'] ?? 'Safaricom rejected STK push',
+            'status'             => MpesaTransaction::STATUS_FAILED,
+        ]);
 
         return response()->json([
             'success' => false,
@@ -81,17 +101,39 @@ class PaymentController extends Controller
         $callbackData = $request->all();
         $result = $this->mpesaService->processCallback($callbackData);
 
-        // Always log the M-Pesa transaction
-        MpesaTransaction::create([
-            'checkout_request_id' => $result['checkout_request_id'] ?? null,
+        // Always log the M-Pesa transaction. If we already have an `initiated`
+        // row from the STK push, update it in place so we don't double-record.
+        $checkoutId = $result['checkout_request_id'] ?? null;
+        $paymentRequestForLink = $checkoutId
+            ? PaymentRequest::where('mpesa_checkout_request_id', $checkoutId)->first()
+            : null;
+
+        $txnAttrs = [
+            'checkout_request_id' => $checkoutId,
             'merchant_request_id' => $result['merchant_request_id'] ?? null,
-            'receipt_number' => $result['mpesa_receipt_number'] ?? null,
-            'amount' => $result['amount'] ?? null,
-            'phone_number' => $result['phone_number'] ?? null,
-            'result_code' => $result['result_code'] ?? null,
-            'result_desc' => $result['result_desc'] ?? null,
-            'transaction_date' => $result['transaction_date'] ?? null,
-        ]);
+            'receipt_number'      => $result['mpesa_receipt_number'] ?? null,
+            'amount'              => $result['amount'] ?? null,
+            'phone_number'        => $result['phone_number'] ?? null,
+            'result_code'         => $result['result_code'] ?? null,
+            'result_desc'         => $result['result_desc'] ?? null,
+            'transaction_date'    => $result['transaction_date'] ?? null,
+            'status'              => $result['success']
+                ? MpesaTransaction::STATUS_COMPLETED
+                : MpesaTransaction::STATUS_FAILED,
+            'payment_request_id'  => $paymentRequestForLink?->id,
+        ];
+
+        $existing = $checkoutId
+            ? MpesaTransaction::where('checkout_request_id', $checkoutId)
+                ->where('status', MpesaTransaction::STATUS_INITIATED)
+                ->first()
+            : null;
+
+        if ($existing) {
+            $existing->update($txnAttrs);
+        } else {
+            MpesaTransaction::create($txnAttrs);
+        }
 
         if (!$result['success']) {
             // Payment failed or was cancelled
@@ -208,6 +250,27 @@ class PaymentController extends Controller
                         'paid_at' => now(),
                         'notes' => 'M-Pesa payment recorded via status poll (callback may have been missed)',
                     ]);
+
+                    // Ensure the M-Pesa transactions log shows this too. If we
+                    // had recorded an `initiated` row from the STK push,
+                    // upgrade it; otherwise insert a fresh completed row.
+                    $txnAttrs = [
+                        'payment_request_id'  => $paymentRequest->id,
+                        'checkout_request_id' => $paymentRequest->mpesa_checkout_request_id,
+                        'receipt_number'      => $result['mpesa_receipt_number'] ?? null,
+                        'amount'              => $paymentRequest->amount,
+                        'phone_number'        => $result['phone_number'] ?? $paymentRequest->phone_number,
+                        'result_desc'         => 'Reconciled via status poll (callback may have been missed)',
+                        'status'              => MpesaTransaction::STATUS_COMPLETED,
+                    ];
+                    $existing = MpesaTransaction::where('checkout_request_id', $paymentRequest->mpesa_checkout_request_id)
+                        ->where('status', MpesaTransaction::STATUS_INITIATED)
+                        ->first();
+                    if ($existing) {
+                        $existing->update($txnAttrs);
+                    } else {
+                        MpesaTransaction::create($txnAttrs);
+                    }
 
                     // Advance the service request status
                     $serviceRequest = $paymentRequest->serviceRequest;
