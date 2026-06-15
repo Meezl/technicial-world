@@ -256,10 +256,13 @@ class MpesaService
         }
 
         try {
+            // C2B v2 — Safaricom's current paybill webhook product.
+            // The legacy /v1/registerurl path returns "Invalid Access Token"
+            // for shortcodes subscribed to v2 even when the token is valid.
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $accessToken,
                 'Content-Type'  => 'application/json',
-            ])->post($this->baseUrl . '/mpesa/c2b/v1/registerurl', [
+            ])->post($this->baseUrl . '/mpesa/c2b/v2/registerurl', [
                 'ShortCode'       => $this->shortcode,
                 'ResponseType'    => $responseType, // Completed or Cancelled when validation fails/times out
                 'ConfirmationURL' => $confirmationUrl,
