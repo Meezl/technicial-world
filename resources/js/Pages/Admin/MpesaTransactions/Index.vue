@@ -5,7 +5,28 @@
         <main class="main-content">
             <header class="main-header">
                 <h1>M-Pesa Transactions</h1>
+                <div class="header-actions">
+                    <button
+                        @click="registerC2BUrls"
+                        :disabled="registering"
+                        class="btn btn-primary btn-sm"
+                        title="Register the C2B confirmation/validation URLs with Safaricom Daraja"
+                    >
+                        <i class="fas fa-link"></i>
+                        {{ registering ? 'Registering…' : 'Register C2B URLs' }}
+                    </button>
+                </div>
             </header>
+
+            <div v-if="registerResult" :class="['alert', registerResult.success ? 'alert-success' : 'alert-danger']" style="margin: 1rem;">
+                <strong>{{ registerResult.success ? '✓ Success' : '✗ Failed' }}:</strong>
+                {{ registerResult.message }}
+                <div v-if="registerResult.confirmation_url" style="margin-top:.5rem;font-size:.85rem;">
+                    Confirmation URL: <code>{{ registerResult.confirmation_url }}</code><br>
+                    Validation URL: <code>{{ registerResult.validation_url }}</code><br>
+                    Shortcode: <code>{{ registerResult.shortcode }}</code> ({{ registerResult.environment }})
+                </div>
+            </div>
 
             <section class="main-panel">
                 <div class="panel-card table-card full-width">
@@ -208,6 +229,7 @@
 import { Link, router, usePage } from '@inertiajs/vue3'
 import AdminSidebar from '../../../Components/AdminSidebar.vue'
 import { computed, ref } from 'vue'
+import axios from 'axios'
 
 const props = defineProps({
     transactions: { type: Object, required: true },
@@ -266,6 +288,27 @@ const clearFilters = () => {
     showUnmatched.value = false
     searchTerm.value = ''
     router.get('/admin/mpesa-transactions', {}, { preserveState: true, replace: true })
+}
+
+// C2B URL registration
+const registering = ref(false)
+const registerResult = ref(null)
+
+const registerC2BUrls = async () => {
+    if (!confirm('Register C2B Confirmation/Validation URLs with Safaricom Daraja? Run this once per shortcode, or after URL changes.')) return
+    registering.value = true
+    registerResult.value = null
+    try {
+        const { data } = await axios.post('/admin/mpesa/register-c2b-urls')
+        registerResult.value = data
+    } catch (e) {
+        registerResult.value = e.response?.data || {
+            success: false,
+            message: e.message || 'Registration request failed.',
+        }
+    } finally {
+        registering.value = false
+    }
 }
 
 // Reconcile modal state

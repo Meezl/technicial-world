@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\MpesaTransaction;
+use App\Services\MpesaService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -187,5 +188,37 @@ class MpesaTransactionController extends Controller
 
         return redirect()->route('admin.mpesa-transactions.index')
             ->with('success', 'M-Pesa transaction deleted successfully.');
+    }
+
+    /**
+     * Register Safaricom Daraja C2B Confirmation/Validation URLs.
+     * Replaces the artisan command for hosts (like Railway) where shell
+     * access is not available.
+     */
+    public function registerC2BUrls(Request $request, MpesaService $mpesa)
+    {
+        $confirmation = $request->input('confirmation_url') ?: route('mpesa.c2b.confirmation');
+        $validation   = $request->input('validation_url')   ?: route('mpesa.c2b.validation');
+        $responseType = $request->input('response_type', 'Completed');
+
+        if (str_contains($confirmation, 'localhost') || str_contains($confirmation, '127.0.0.1') || str_starts_with($confirmation, 'http://')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Confirmation URL must be a publicly reachable HTTPS URL. Got: ' . $confirmation,
+                'hint'    => 'Set APP_URL in your environment to your public https domain.',
+            ], 422);
+        }
+
+        $result = $mpesa->registerC2BUrls($confirmation, $validation, $responseType);
+
+        return response()->json([
+            'success'          => $result['success'],
+            'message'          => $result['message'] ?? null,
+            'confirmation_url' => $confirmation,
+            'validation_url'   => $validation,
+            'shortcode'        => config('services.mpesa.shortcode'),
+            'environment'      => config('services.mpesa.environment'),
+            'raw'              => $result['data'] ?? null,
+        ], $result['success'] ? 200 : 422);
     }
 }
