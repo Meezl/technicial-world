@@ -209,6 +209,19 @@ class MpesaTransactionController extends Controller
             ], 422);
         }
 
+        // Always clear any cached token first so an env-mismatched token
+        // from earlier testing can't be reused.
+        $mpesa->clearTokenCache();
+
+        // Credential presence check — surface what's missing before we even call Safaricom
+        $credentialStatus = [
+            'consumer_key'    => config('services.mpesa.consumer_key') ? 'set' : 'MISSING',
+            'consumer_secret' => config('services.mpesa.consumer_secret') ? 'set' : 'MISSING',
+            'shortcode'       => config('services.mpesa.shortcode') ?: 'MISSING',
+            'passkey'         => config('services.mpesa.passkey') ? 'set' : 'MISSING',
+            'environment'     => config('services.mpesa.environment'),
+        ];
+
         $result = $mpesa->registerC2BUrls($confirmation, $validation, $responseType);
 
         return response()->json([
@@ -218,6 +231,7 @@ class MpesaTransactionController extends Controller
             'validation_url'   => $validation,
             'shortcode'        => config('services.mpesa.shortcode'),
             'environment'      => config('services.mpesa.environment'),
+            'credentials'      => $credentialStatus,
             'raw'              => $result['data'] ?? null,
         ], $result['success'] ? 200 : 422);
     }

@@ -44,9 +44,10 @@ Route::post('/join-as-technician', [TechnicianLeadController::class, 'store'])->
 // M-Pesa callback route (no auth required)
 Route::post('/api/mpesa/callback', [\App\Http\Controllers\PaymentController::class, 'mpesaCallback'])->name('mpesa.callback');
 
-// M-Pesa C2B (paybill direct payments) — Safaricom posts every paybill payment here
-Route::post('/api/mpesa/c2b/validation', [\App\Http\Controllers\PaymentController::class, 'c2bValidation'])->name('mpesa.c2b.validation');
-Route::post('/api/mpesa/c2b/confirmation', [\App\Http\Controllers\PaymentController::class, 'c2bConfirmation'])->name('mpesa.c2b.confirmation');
+// M-Pesa C2B (paybill direct payments) — Safaricom posts every paybill payment here.
+// URL path avoids the "mpesa" keyword because Safaricom rejects it on registration.
+Route::post('/api/transactions/c2b/validation', [\App\Http\Controllers\PaymentController::class, 'c2bValidation'])->name('mpesa.c2b.validation');
+Route::post('/api/transactions/c2b/confirmation', [\App\Http\Controllers\PaymentController::class, 'c2bConfirmation'])->name('mpesa.c2b.confirmation');
 
 // ==================== AUTH DASHBOARD (Role Router) ====================
 

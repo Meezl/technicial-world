@@ -48,10 +48,18 @@ class MpesaService
 
     /**
      * Get OAuth access token from M-Pesa API.
+     *
+     * Cache key is namespaced by environment + shortcode so a sandbox token
+     * never gets reused against production endpoints (causing "Invalid Access
+     * Token" errors). Pass $forceFresh=true to skip the cache entirely.
      */
-    public function getAccessToken(): ?string
+    public function getAccessToken(bool $forceFresh = false): ?string
     {
-        $cacheKey = 'mpesa_access_token';
+        $cacheKey = 'mpesa_access_token:' . $this->environment . ':' . $this->shortcode;
+
+        if ($forceFresh) {
+            Cache::forget($cacheKey);
+        }
 
         return Cache::remember($cacheKey, 3500, function () {
             try {
@@ -65,13 +73,28 @@ class MpesaService
                     return $response->json('access_token');
                 }
 
-                Log::error('M-Pesa access token error', ['response' => $response->json()]);
+                Log::error('M-Pesa access token error', [
+                    'env'      => $this->environment,
+                    'base_url' => $this->baseUrl,
+                    'response' => $response->json(),
+                ]);
                 return null;
             } catch (\Exception $e) {
                 Log::error('M-Pesa access token exception', ['error' => $e->getMessage()]);
                 return null;
             }
         });
+    }
+
+    /**
+     * Force-clear all cached M-Pesa access tokens. Use after rotating
+     * credentials or switching environments.
+     */
+    public function clearTokenCache(): void
+    {
+        Cache::forget('mpesa_access_token:' . $this->environment . ':' . $this->shortcode);
+        // Also clear the legacy single-key cache from before the fix
+        Cache::forget('mpesa_access_token');
     }
 
     /**
@@ -220,12 +243,15 @@ class MpesaService
      */
     public function registerC2BUrls(string $confirmationUrl, string $validationUrl, string $responseType = 'Completed'): array
     {
-        $accessToken = $this->getAccessToken();
+        // Force a fresh access token — this is a one-shot setup operation and
+        // the cached token may belong to a different environment (e.g. sandbox
+        // token from earlier testing being sent to production endpoints).
+        $accessToken = $this->getAccessToken(forceFresh: true);
 
         if (!$accessToken) {
             return [
                 'success' => false,
-                'message' => 'Failed to get M-Pesa access token',
+                'message' => 'Failed to get M-Pesa access token. Check that your consumer key/secret match the ' . $this->environment . ' environment.',
             ];
         }
 
@@ -242,17 +268,28 @@ class MpesaService
 
             $result = $response->json();
 
-            if ($response->successful() && ($result['ResponseDescription'] ?? '') !== '') {
+            Log::info('M-Pesa C2B register response', [
+                'http_status' => $response->status(),
+                'base_url'    => $this->baseUrl,
+                'shortcode'   => $this->shortcode,
+                'result'      => $result,
+            ]);
+
+            $responseDesc = $result['ResponseDescription'] ?? '';
+            $isSuccess = $response->successful()
+                && stripos($responseDesc, 'success') !== false;
+
+            if ($isSuccess) {
                 return [
                     'success' => true,
-                    'message' => $result['ResponseDescription'] ?? 'URLs registered',
+                    'message' => $responseDesc ?: 'URLs registered',
                     'data'    => $result,
                 ];
             }
 
             return [
                 'success' => false,
-                'message' => $result['errorMessage'] ?? $result['ResponseDescription'] ?? 'Registration failed',
+                'message' => $result['errorMessage'] ?? $responseDesc ?: 'Registration failed (HTTP ' . $response->status() . ')',
                 'data'    => $result,
             ];
         } catch (\Exception $e) {

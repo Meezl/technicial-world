@@ -26,10 +26,12 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         // Safaricom Daraja webhooks have no CSRF token — exempt them.
+        // C2B paths avoid the "mpesa" keyword because Safaricom rejects it
+        // on URL registration.
         $middleware->validateCsrfTokens(except: [
             'api/mpesa/callback',
-            'api/mpesa/c2b/confirmation',
-            'api/mpesa/c2b/validation',
+            'api/transactions/c2b/confirmation',
+            'api/transactions/c2b/validation',
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

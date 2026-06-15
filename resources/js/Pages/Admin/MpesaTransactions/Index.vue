@@ -26,6 +26,16 @@
                     Validation URL: <code>{{ registerResult.validation_url }}</code><br>
                     Shortcode: <code>{{ registerResult.shortcode }}</code> ({{ registerResult.environment }})
                 </div>
+                <div v-if="registerResult.credentials" style="margin-top:.5rem;font-size:.8rem;">
+                    <strong>Credential check:</strong>
+                    consumer_key={{ registerResult.credentials.consumer_key }},
+                    consumer_secret={{ registerResult.credentials.consumer_secret }},
+                    passkey={{ registerResult.credentials.passkey }}
+                </div>
+                <details v-if="registerResult.raw" style="margin-top:.5rem;font-size:.8rem;">
+                    <summary>Safaricom raw response</summary>
+                    <pre style="background:#1e293b;color:#e2e8f0;padding:.5rem;border-radius:4px;overflow:auto;">{{ JSON.stringify(registerResult.raw, null, 2) }}</pre>
+                </details>
             </div>
 
             <section class="main-panel">
