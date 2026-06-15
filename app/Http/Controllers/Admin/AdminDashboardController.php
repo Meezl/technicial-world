@@ -146,10 +146,12 @@ class AdminDashboardController extends Controller
         if ($job->budget) {
             $laborSpentDirect = $job->technicianPayments
                 ->where('category', 'labor')->where('status', 'completed')->sum('amount');
-            // Also include payments processed via the payment sheet system
+            // Also include payments processed via the payment sheet system.
+            // technician_payment_entries records actual disbursed pay as
+            // `current_period_payable` (not `amount`).
             $laborSpentSheets = TechnicianPaymentEntry::where('service_request_id', $job->id)
                 ->where('status', TechnicianPaymentEntry::STATUS_APPROVED)
-                ->sum('amount');
+                ->sum('current_period_payable');
             $laborSpent = $laborSpentDirect + $laborSpentSheets;
             $materialsSpentPayments = $job->technicianPayments
                 ->where('category', 'materials')->where('status', 'completed')->sum('amount');
