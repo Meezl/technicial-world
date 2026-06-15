@@ -5,7 +5,16 @@
         <main class="main-content">
             <header class="main-header">
                 <h1>M-Pesa Transactions</h1>
-                <div class="header-actions">
+                <div class="header-actions" style="display:flex;gap:.5rem;">
+                    <button
+                        @click="diagnose"
+                        :disabled="diagnosing"
+                        class="btn btn-secondary btn-sm"
+                        title="Test OAuth and fingerprint env credentials (no leakage)"
+                    >
+                        <i class="fas fa-stethoscope"></i>
+                        {{ diagnosing ? 'Checking…' : 'Diagnose' }}
+                    </button>
                     <button
                         @click="registerC2BUrls"
                         :disabled="registering"
@@ -17,6 +26,36 @@
                     </button>
                 </div>
             </header>
+
+            <div v-if="diagnoseResult" class="alert" style="margin: 1rem; background:#f0f9ff; border:1px solid #93c5fd; color:#1e3a8a;">
+                <h4 style="margin-top:0;">M-Pesa Diagnostic</h4>
+                <div><strong>Environment:</strong> <code>{{ diagnoseResult.environment }}</code>
+                    <span v-if="!diagnoseResult.environment_valid" style="color:#dc2626;">⚠ INVALID — must be "production" or "sandbox"</span>
+                </div>
+                <div><strong>Base URL:</strong> <code>{{ diagnoseResult.base_url_in_use }}</code></div>
+                <div><strong>Shortcode:</strong> <code>{{ diagnoseResult.shortcode }}</code></div>
+                <h5 style="margin:.75rem 0 .25rem;">Credentials</h5>
+                <div v-for="(c, name) in diagnoseResult.credentials" :key="name" style="font-size:.85rem;">
+                    <strong>{{ name }}:</strong>
+                    <span v-if="!c.set" style="color:#dc2626;">MISSING</span>
+                    <span v-else>
+                        length={{ c.length }}, preview=<code>{{ c.preview }}</code>
+                        <span v-if="c.trimmed_differs" style="color:#dc2626;">⚠ HAS WHITESPACE</span>
+                        <span v-if="c.has_quotes" style="color:#dc2626;">⚠ HAS QUOTES</span>
+                    </span>
+                </div>
+                <h5 style="margin:.75rem 0 .25rem;">OAuth Test</h5>
+                <div>
+                    Token obtained:
+                    <strong :style="diagnoseResult.oauth_test.token_obtained ? 'color:#059669' : 'color:#dc2626'">
+                        {{ diagnoseResult.oauth_test.token_obtained ? 'YES' : 'NO' }}
+                    </strong>
+                    <span v-if="diagnoseResult.oauth_test.token_preview"> ({{ diagnoseResult.oauth_test.token_preview }}, len {{ diagnoseResult.oauth_test.token_length }})</span>
+                </div>
+                <div style="margin-top:.75rem; padding:.5rem; background:#fff; border-left:3px solid #2563eb;">
+                    <strong>Next step:</strong> {{ diagnoseResult.next_step }}
+                </div>
+            </div>
 
             <div v-if="registerResult" :class="['alert', registerResult.success ? 'alert-success' : 'alert-danger']" style="margin: 1rem;">
                 <strong>{{ registerResult.success ? '✓ Success' : '✗ Failed' }}:</strong>
@@ -303,6 +342,27 @@ const clearFilters = () => {
 // C2B URL registration
 const registering = ref(false)
 const registerResult = ref(null)
+const diagnosing = ref(false)
+const diagnoseResult = ref(null)
+
+const diagnose = async () => {
+    diagnosing.value = true
+    diagnoseResult.value = null
+    try {
+        const { data } = await axios.get('/admin/mpesa/diagnose')
+        diagnoseResult.value = data
+    } catch (e) {
+        diagnoseResult.value = {
+            environment: 'unknown',
+            environment_valid: false,
+            credentials: {},
+            oauth_test: { token_obtained: false },
+            next_step: e.response?.data?.message || e.message || 'Diagnostic request failed.',
+        }
+    } finally {
+        diagnosing.value = false
+    }
+}
 
 const registerC2BUrls = async () => {
     if (!confirm('Register C2B Confirmation/Validation URLs with Safaricom Daraja? Run this once per shortcode, or after URL changes.')) return

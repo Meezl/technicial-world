@@ -266,6 +266,7 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::resource('mpesa-transactions', \App\Http\Controllers\Admin\MpesaTransactionController::class)->except(['create', 'store']);
     Route::post('mpesa-transactions/{mpesaTransaction}/reconcile', [\App\Http\Controllers\Admin\MpesaTransactionController::class, 'reconcile'])->name('admin.mpesa-transactions.reconcile');
     Route::post('mpesa/register-c2b-urls', [\App\Http\Controllers\Admin\MpesaTransactionController::class, 'registerC2BUrls'])->name('admin.mpesa.register-c2b');
+    Route::get('mpesa/diagnose', [\App\Http\Controllers\Admin\MpesaTransactionController::class, 'diagnoseMpesa'])->name('admin.mpesa.diagnose');
 
     // Technician Leads
     Route::get('/technician-leads', [AdminDashboardController::class, 'technicianLeads'])->name('admin.technician-leads');

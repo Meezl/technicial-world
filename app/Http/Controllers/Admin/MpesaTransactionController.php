@@ -195,6 +195,64 @@ class MpesaTransactionController extends Controller
      * Replaces the artisan command for hosts (like Railway) where shell
      * access is not available.
      */
+    /**
+     * Diagnostic — fingerprint credentials and test OAuth without
+     * triggering the C2B register call. Lets the admin pinpoint whether
+     * the credentials are wrong, mistyped, or simply not C2B-subscribed.
+     */
+    public function diagnoseMpesa(Request $request, MpesaService $mpesa)
+    {
+        $key    = (string) config('services.mpesa.consumer_key');
+        $secret = (string) config('services.mpesa.consumer_secret');
+        $short  = (string) config('services.mpesa.shortcode');
+        $pass   = (string) config('services.mpesa.passkey');
+        $env    = (string) config('services.mpesa.environment');
+
+        $fingerprint = function (string $val) {
+            if ($val === '') return ['set' => false, 'length' => 0, 'preview' => null, 'trimmed_differs' => false];
+            $trimmed = trim($val);
+            return [
+                'set'             => true,
+                'length'          => strlen($val),
+                'preview'         => strlen($val) >= 6
+                    ? substr($val, 0, 3) . '…' . substr($val, -3)
+                    : '<short>',
+                'trimmed_differs' => $trimmed !== $val,  // true if there's leading/trailing whitespace
+                'has_quotes'      => str_starts_with($val, '"') || str_starts_with($val, "'"),
+            ];
+        };
+
+        $mpesa->clearTokenCache();
+        $token = $mpesa->getAccessToken(forceFresh: true);
+
+        return response()->json([
+            'environment'       => $env,
+            'environment_valid' => in_array($env, ['production', 'sandbox'], true),
+            'base_url_in_use'   => $env === 'production'
+                ? 'https://api.safaricom.co.ke'
+                : 'https://sandbox.safaricom.co.ke',
+            'shortcode'         => $short,
+            'credentials' => [
+                'consumer_key'    => $fingerprint($key),
+                'consumer_secret' => $fingerprint($secret),
+                'passkey'         => $fingerprint($pass),
+            ],
+            'oauth_test' => [
+                'token_obtained' => !empty($token),
+                'token_preview'  => $token ? substr($token, 0, 8) . '…' . substr($token, -4) : null,
+                'token_length'   => $token ? strlen($token) : 0,
+            ],
+            'next_step' => match (true) {
+                $env !== 'production' && $env !== 'sandbox'
+                    => 'MPESA_ENVIRONMENT must be exactly "production" or "sandbox" (lowercase, no quotes). Current: ' . var_export($env, true),
+                empty($token)
+                    => 'OAuth failed — consumer_key/consumer_secret are wrong or your Daraja app is not active. Check storage/logs/laravel.log for the Safaricom error response.',
+                default
+                    => 'OAuth works. If C2B register still fails with "Invalid Access Token", your Daraja app does not have the "Customer to Business Register URL" API subscription enabled. Go to developer.safaricom.co.ke → My Apps → your live app → Add subscription → C2B.',
+            },
+        ]);
+    }
+
     public function registerC2BUrls(Request $request, MpesaService $mpesa)
     {
         $confirmation = $request->input('confirmation_url') ?: route('mpesa.c2b.confirmation');
