@@ -214,6 +214,57 @@ class MpesaService
     }
 
     /**
+     * Register Daraja C2B Validation and Confirmation URLs for this shortcode.
+     * Run once per shortcode (or whenever URLs change). Safaricom will POST
+     * every paybill payment to the Confirmation URL after this is set.
+     */
+    public function registerC2BUrls(string $confirmationUrl, string $validationUrl, string $responseType = 'Completed'): array
+    {
+        $accessToken = $this->getAccessToken();
+
+        if (!$accessToken) {
+            return [
+                'success' => false,
+                'message' => 'Failed to get M-Pesa access token',
+            ];
+        }
+
+        try {
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $accessToken,
+                'Content-Type'  => 'application/json',
+            ])->post($this->baseUrl . '/mpesa/c2b/v1/registerurl', [
+                'ShortCode'       => $this->shortcode,
+                'ResponseType'    => $responseType, // Completed or Cancelled when validation fails/times out
+                'ConfirmationURL' => $confirmationUrl,
+                'ValidationURL'   => $validationUrl,
+            ]);
+
+            $result = $response->json();
+
+            if ($response->successful() && ($result['ResponseDescription'] ?? '') !== '') {
+                return [
+                    'success' => true,
+                    'message' => $result['ResponseDescription'] ?? 'URLs registered',
+                    'data'    => $result,
+                ];
+            }
+
+            return [
+                'success' => false,
+                'message' => $result['errorMessage'] ?? $result['ResponseDescription'] ?? 'Registration failed',
+                'data'    => $result,
+            ];
+        } catch (\Exception $e) {
+            Log::error('M-Pesa C2B URL registration exception', ['error' => $e->getMessage()]);
+            return [
+                'success' => false,
+                'message' => 'Exception: ' . $e->getMessage(),
+            ];
+        }
+    }
+
+    /**
      * Format phone number to M-Pesa format (254XXXXXXXXX).
      */
     protected function formatPhoneNumber(string $phone): string

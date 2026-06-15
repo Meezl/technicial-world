@@ -24,6 +24,13 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'role' => \App\Http\Middleware\RoleMiddleware::class,
         ]);
+
+        // Safaricom Daraja webhooks have no CSRF token — exempt them.
+        $middleware->validateCsrfTokens(except: [
+            'api/mpesa/callback',
+            'api/mpesa/c2b/confirmation',
+            'api/mpesa/c2b/validation',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

@@ -14,11 +14,20 @@ class MpesaTransactionController extends Controller
      */
     public function index(Request $request)
     {
-        $query = MpesaTransaction::query();
+        $query = MpesaTransaction::with('paymentRequest.serviceRequest');
 
         $status = $request->input('status');
         if ($status && in_array($status, ['initiated', 'completed', 'failed'], true)) {
             $query->where('status', $status);
+        }
+
+        $source = $request->input('source');
+        if ($source && in_array($source, ['stk_push', 'c2b'], true)) {
+            $query->where('source', $source);
+        }
+
+        if ($request->input('unmatched') === '1') {
+            $query->where('source', 'c2b')->where('reconciled', false);
         }
 
         if ($search = $request->input('search')) {
@@ -26,7 +35,9 @@ class MpesaTransactionController extends Controller
                 $q->where('receipt_number', 'like', "%{$search}%")
                   ->orWhere('phone_number', 'like', "%{$search}%")
                   ->orWhere('checkout_request_id', 'like', "%{$search}%")
-                  ->orWhere('merchant_request_id', 'like', "%{$search}%");
+                  ->orWhere('merchant_request_id', 'like', "%{$search}%")
+                  ->orWhere('bill_ref_number', 'like', "%{$search}%")
+                  ->orWhere('payer_name', 'like', "%{$search}%");
             });
         }
 
@@ -37,16 +48,91 @@ class MpesaTransactionController extends Controller
             'initiated' => MpesaTransaction::where('status', 'initiated')->count(),
             'completed' => MpesaTransaction::where('status', 'completed')->count(),
             'failed'    => MpesaTransaction::where('status', 'failed')->count(),
+            'stk_push'  => MpesaTransaction::where('source', 'stk_push')->count(),
+            'c2b'       => MpesaTransaction::where('source', 'c2b')->count(),
+            'unmatched' => MpesaTransaction::where('source', 'c2b')->where('reconciled', false)->count(),
         ];
+
+        // Pending payment requests for the manual reconciliation picker
+        $pendingPaymentRequests = \App\Models\PaymentRequest::with('serviceRequest:id,request_id,description')
+            ->where('status', \App\Models\PaymentRequest::STATUS_PENDING)
+            ->orderBy('created_at', 'desc')
+            ->limit(200)
+            ->get(['id', 'payment_request_id', 'service_request_id', 'amount']);
 
         return Inertia::render('Admin/MpesaTransactions/Index', [
             'transactions' => $transactions,
             'filters' => [
-                'status' => $status,
-                'search' => $search,
+                'status'    => $status,
+                'source'    => $source,
+                'unmatched' => $request->input('unmatched') === '1',
+                'search'    => $search,
             ],
             'counts' => $counts,
+            'pendingPaymentRequests' => $pendingPaymentRequests,
         ]);
+    }
+
+    /**
+     * Manually reconcile an unmatched C2B payment to a PaymentRequest.
+     */
+    public function reconcile(Request $request, MpesaTransaction $mpesaTransaction)
+    {
+        $request->validate([
+            'payment_request_id' => 'required|exists:payment_requests,id',
+        ]);
+
+        if ($mpesaTransaction->reconciled) {
+            return back()->with('error', 'This transaction has already been reconciled.');
+        }
+
+        $paymentRequest = \App\Models\PaymentRequest::findOrFail($request->payment_request_id);
+
+        if ($paymentRequest->status !== \App\Models\PaymentRequest::STATUS_PENDING) {
+            return back()->with('error', 'Selected payment request is not pending.');
+        }
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($mpesaTransaction, $paymentRequest) {
+            $paymentRequest->markAsPaid(\App\Models\PaymentRequest::METHOD_MPESA, [
+                'mpesa_transaction_id' => $mpesaTransaction->receipt_number,
+                'mpesa_receipt_number' => $mpesaTransaction->receipt_number,
+                'phone_number'         => $mpesaTransaction->phone_number,
+            ]);
+
+            \App\Models\Payment::create([
+                'payment_id'           => \App\Models\Payment::generatePaymentId(),
+                'payment_request_id'   => $paymentRequest->id,
+                'service_request_id'   => $paymentRequest->service_request_id,
+                'user_id'              => $paymentRequest->user_id,
+                'amount'               => $mpesaTransaction->amount,
+                'status'               => \App\Models\Payment::STATUS_COMPLETED,
+                'payment_method'       => \App\Models\Payment::METHOD_MPESA,
+                'mpesa_transaction_id' => $mpesaTransaction->receipt_number,
+                'mpesa_receipt_number' => $mpesaTransaction->receipt_number,
+                'phone_number'         => $mpesaTransaction->phone_number,
+                'paybill_number'       => config('services.mpesa.shortcode'),
+                'account_reference'    => $paymentRequest->serviceRequest->request_id,
+                'paid_at'              => now(),
+                'notes'                => 'Manually reconciled by ' . auth()->user()->name . ' (M-Pesa C2B paybill)',
+            ]);
+
+            $serviceRequest = $paymentRequest->serviceRequest;
+            if ($serviceRequest && in_array($serviceRequest->status, [
+                \App\Models\ServiceRequest::STATUS_AWAITING_PAYMENT,
+                \App\Models\ServiceRequest::STATUS_PAYMENT_PENDING_APPROVAL,
+                'pending',
+            ])) {
+                $serviceRequest->update(['status' => \App\Models\ServiceRequest::STATUS_READY_FOR_ASSIGNMENT]);
+            }
+
+            $mpesaTransaction->update([
+                'payment_request_id' => $paymentRequest->id,
+                'reconciled'         => true,
+                'result_desc'        => 'Manually reconciled to ' . $paymentRequest->payment_request_id . ' by admin',
+            ]);
+        });
+
+        return back()->with('success', 'Payment reconciled successfully. Request can now proceed.');
     }
 
     /**

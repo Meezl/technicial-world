@@ -19,26 +19,50 @@
 
                     <!-- Filter chips -->
                     <div class="mpesa-filter-bar">
-                        <div class="filter-chips">
-                            <button
-                                v-for="opt in filterOptions"
-                                :key="opt.value"
-                                @click="applyStatus(opt.value)"
-                                :class="['filter-chip', { active: activeStatus === opt.value }]"
-                            >
-                                {{ opt.label }}
-                                <span class="chip-count">{{ counts[opt.value === '' ? 'all' : opt.value] ?? 0 }}</span>
-                            </button>
+                        <div class="filter-row">
+                            <span class="filter-label">Status:</span>
+                            <div class="filter-chips">
+                                <button
+                                    v-for="opt in statusOptions"
+                                    :key="opt.value"
+                                    @click="applyStatus(opt.value)"
+                                    :class="['filter-chip', { active: activeStatus === opt.value }]"
+                                >
+                                    {{ opt.label }}
+                                    <span class="chip-count">{{ counts[opt.value === '' ? 'all' : opt.value] ?? 0 }}</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="filter-row">
+                            <span class="filter-label">Source:</span>
+                            <div class="filter-chips">
+                                <button
+                                    v-for="opt in sourceOptions"
+                                    :key="opt.value"
+                                    @click="applySource(opt.value)"
+                                    :class="['filter-chip', { active: activeSource === opt.value && !showUnmatched }]"
+                                >
+                                    {{ opt.label }}
+                                    <span class="chip-count">{{ counts[opt.value === '' ? 'all' : opt.value] ?? 0 }}</span>
+                                </button>
+                                <button
+                                    @click="applyUnmatched"
+                                    :class="['filter-chip', 'chip-warn', { active: showUnmatched }]"
+                                >
+                                    Unmatched Paybill
+                                    <span class="chip-count">{{ counts.unmatched ?? 0 }}</span>
+                                </button>
+                            </div>
                         </div>
                         <div class="filter-search">
                             <input
                                 v-model="searchTerm"
                                 @keyup.enter="applySearch"
                                 type="text"
-                                placeholder="Search receipt, phone, or checkout ID…"
+                                placeholder="Search receipt, phone, BillRef, payer…"
                                 class="form-control"
                             />
-                            <button v-if="searchTerm || activeStatus" @click="clearFilters" class="btn btn-secondary btn-sm">
+                            <button v-if="searchTerm || activeStatus || activeSource || showUnmatched" @click="clearFilters" class="btn btn-secondary btn-sm">
                                 Clear
                             </button>
                         </div>
@@ -48,34 +72,62 @@
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>ID</th>
-                                    <th>Receipt #</th>
-                                    <th>Phone Number</th>
+                                    <th>Source</th>
+                                    <th>Receipt / Ref</th>
+                                    <th>Bill Ref</th>
+                                    <th>Payer</th>
                                     <th>Amount</th>
                                     <th>Status</th>
-                                    <th>Result</th>
+                                    <th>Linked Request</th>
                                     <th>Date</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <tr v-for="tx in transactions.data" :key="tx.id">
-                                    <td>{{ tx.id }}</td>
-                                    <td>{{ tx.receipt_number || 'N/A' }}</td>
-                                    <td>{{ tx.phone_number || 'N/A' }}</td>
+                                    <td>
+                                        <span :class="['source-badge', tx.source === 'c2b' ? 'src-c2b' : 'src-stk']">
+                                            {{ tx.source === 'c2b' ? 'Paybill' : 'STK Push' }}
+                                        </span>
+                                    </td>
+                                    <td>{{ tx.receipt_number || tx.checkout_request_id || 'N/A' }}</td>
+                                    <td>
+                                        <code v-if="tx.bill_ref_number">{{ tx.bill_ref_number }}</code>
+                                        <span v-else class="muted">—</span>
+                                    </td>
+                                    <td>
+                                        <div>{{ tx.payer_name || '—' }}</div>
+                                        <small class="muted">{{ tx.phone_number || '' }}</small>
+                                    </td>
                                     <td>{{ tx.amount !== null ? 'KES ' + tx.amount : 'N/A' }}</td>
                                     <td>
                                         <span :class="['status-badge', statusBadgeClass(tx.status)]">
                                             {{ statusLabel(tx.status) }}
                                         </span>
+                                        <span v-if="tx.source === 'c2b' && tx.reconciled" class="status-badge status-completed" style="margin-left:.25rem;font-size:.7rem;">Matched</span>
+                                        <span v-else-if="tx.source === 'c2b' && !tx.reconciled" class="status-badge status-failed" style="margin-left:.25rem;font-size:.7rem;">Unmatched</span>
                                     </td>
                                     <td>
-                                        <span :title="tx.result_desc || ''" style="font-size:.85rem;">
-                                            {{ tx.result_code === 0 ? 'Success (0)' : (tx.result_code !== null ? 'Code '+tx.result_code : (tx.result_desc ? tx.result_desc.substring(0,40) : '—')) }}
-                                        </span>
+                                        <div v-if="tx.payment_request">
+                                            <Link :href="`/admin/payments`" style="font-size:.85rem;">
+                                                {{ tx.payment_request.payment_request_id }}
+                                            </Link>
+                                            <small v-if="tx.payment_request.service_request" class="muted" style="display:block;">
+                                                {{ tx.payment_request.service_request.request_id }}
+                                            </small>
+                                        </div>
+                                        <span v-else class="muted">—</span>
                                     </td>
                                     <td>{{ formatDate(tx.created_at) }}</td>
                                     <td class="actions-cell">
+                                        <button
+                                            v-if="tx.source === 'c2b' && !tx.reconciled"
+                                            @click="openReconcile(tx)"
+                                            class="btn-icon btn-icon-primary"
+                                            title="Reconcile to payment request"
+                                        >
+                                            <i class="fas fa-link"></i>
+                                        </button>
                                         <Link :href="`/admin/mpesa-transactions/${tx.id}`" class="btn-icon" title="View Details">
                                             <i class="fas fa-eye"></i>
                                         </Link>
@@ -88,7 +140,7 @@
                                     </td>
                                 </tr>
                                 <tr v-if="transactions.data.length === 0">
-                                    <td colspan="8" class="text-center">No transactions found.</td>
+                                    <td colspan="9" class="text-center">No transactions found.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -110,6 +162,45 @@
                 </div>
             </section>
         </main>
+
+        <!-- Reconcile modal -->
+        <div v-if="showReconcileModal" class="modal-overlay" @click.self="showReconcileModal = false">
+            <div class="modal-content" style="max-width:520px;">
+                <div class="modal-header">
+                    <h3>Reconcile Paybill Payment</h3>
+                    <button @click="showReconcileModal = false" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p v-if="reconcileTarget">
+                        Match this <strong>KES {{ reconcileTarget.amount }}</strong> payment
+                        (M-Pesa: <code>{{ reconcileTarget.receipt_number }}</code>,
+                        BillRef: <code>{{ reconcileTarget.bill_ref_number || '—' }}</code>,
+                        from {{ reconcileTarget.payer_name || reconcileTarget.phone_number }})
+                        to a pending payment request:
+                    </p>
+                    <div class="form-group" style="margin-top:1rem;">
+                        <label>Pending Payment Request</label>
+                        <select v-model="reconcileSelectionId" class="form-control">
+                            <option value="">— Select a request —</option>
+                            <option v-for="pr in pendingPaymentRequests" :key="pr.id" :value="pr.id">
+                                {{ pr.payment_request_id }} —
+                                {{ pr.service_request?.request_id || 'No SR' }} —
+                                KES {{ pr.amount }}
+                            </option>
+                        </select>
+                        <small v-if="!pendingPaymentRequests.length" style="color:#666">
+                            No pending payment requests available.
+                        </small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button @click="showReconcileModal = false" class="btn btn-secondary">Cancel</button>
+                    <button @click="submitReconcile" :disabled="!reconcileSelectionId || reconcileSubmitting" class="btn btn-primary">
+                        {{ reconcileSubmitting ? 'Reconciling…' : 'Reconcile & Advance Request' }}
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 </template>
 
@@ -120,42 +211,87 @@ import { computed, ref } from 'vue'
 
 const props = defineProps({
     transactions: { type: Object, required: true },
-    filters: { type: Object, default: () => ({ status: null, search: null }) },
-    counts: { type: Object, default: () => ({ all: 0, initiated: 0, completed: 0, failed: 0 }) },
+    filters: { type: Object, default: () => ({ status: null, source: null, unmatched: false, search: null }) },
+    counts: { type: Object, default: () => ({ all: 0, initiated: 0, completed: 0, failed: 0, stk_push: 0, c2b: 0, unmatched: 0 }) },
+    pendingPaymentRequests: { type: Array, default: () => [] },
 })
 
 const page = usePage()
 const successMessage = computed(() => page.props.flash?.success)
 
-const filterOptions = [
+const statusOptions = [
     { value: '', label: 'All' },
     { value: 'initiated', label: 'STK Sent' },
     { value: 'completed', label: 'Completed' },
     { value: 'failed', label: 'Failed' },
 ]
+const sourceOptions = [
+    { value: '', label: 'All Sources' },
+    { value: 'stk_push', label: 'STK Push' },
+    { value: 'c2b', label: 'Paybill' },
+]
 
 const activeStatus = ref(props.filters?.status || '')
+const activeSource = ref(props.filters?.source || '')
+const showUnmatched = ref(!!props.filters?.unmatched)
 const searchTerm = ref(props.filters?.search || '')
+
+const buildQuery = () => ({
+    status: activeStatus.value || undefined,
+    source: activeSource.value || undefined,
+    unmatched: showUnmatched.value ? '1' : undefined,
+    search: searchTerm.value || undefined,
+})
 
 const applyStatus = (status) => {
     activeStatus.value = status
-    router.get('/admin/mpesa-transactions', {
-        status: status || undefined,
-        search: searchTerm.value || undefined,
-    }, { preserveState: true, replace: true })
+    router.get('/admin/mpesa-transactions', buildQuery(), { preserveState: true, replace: true })
 }
-
+const applySource = (source) => {
+    activeSource.value = source
+    showUnmatched.value = false
+    router.get('/admin/mpesa-transactions', buildQuery(), { preserveState: true, replace: true })
+}
+const applyUnmatched = () => {
+    showUnmatched.value = !showUnmatched.value
+    activeSource.value = ''
+    router.get('/admin/mpesa-transactions', buildQuery(), { preserveState: true, replace: true })
+}
 const applySearch = () => {
-    router.get('/admin/mpesa-transactions', {
-        status: activeStatus.value || undefined,
-        search: searchTerm.value || undefined,
-    }, { preserveState: true, replace: true })
+    router.get('/admin/mpesa-transactions', buildQuery(), { preserveState: true, replace: true })
 }
-
 const clearFilters = () => {
     activeStatus.value = ''
+    activeSource.value = ''
+    showUnmatched.value = false
     searchTerm.value = ''
     router.get('/admin/mpesa-transactions', {}, { preserveState: true, replace: true })
+}
+
+// Reconcile modal state
+const showReconcileModal = ref(false)
+const reconcileTarget = ref(null)
+const reconcileSelectionId = ref('')
+const reconcileSubmitting = ref(false)
+
+const openReconcile = (tx) => {
+    reconcileTarget.value = tx
+    reconcileSelectionId.value = ''
+    showReconcileModal.value = true
+}
+
+const submitReconcile = () => {
+    if (!reconcileTarget.value || !reconcileSelectionId.value) return
+    reconcileSubmitting.value = true
+    router.post(`/admin/mpesa-transactions/${reconcileTarget.value.id}/reconcile`, {
+        payment_request_id: reconcileSelectionId.value,
+    }, {
+        preserveScroll: true,
+        onFinish: () => {
+            reconcileSubmitting.value = false
+            showReconcileModal.value = false
+        },
+    })
 }
 
 const formatDate = (dateString) => {
@@ -244,14 +380,41 @@ defineOptions({
 
 .mpesa-filter-bar {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 1rem;
+    flex-direction: column;
+    gap: 0.5rem;
     padding: 0.75rem 1rem;
     background: #f9fafb;
     border-bottom: 1px solid #e5e7eb;
 }
+.filter-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+.filter-label {
+    font-size: 0.8rem;
+    color: #6b7280;
+    font-weight: 600;
+    min-width: 60px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.source-badge {
+    display: inline-block;
+    padding: 0.2rem 0.55rem;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.src-c2b { background: #ecfdf5; color: #065f46; border: 1px solid #6ee7b7; }
+.src-stk { background: #eff6ff; color: #1e3a8a; border: 1px solid #93c5fd; }
+.chip-warn.active { background: #f59e0b; border-color: #f59e0b; }
+.chip-warn { border-color: #fbbf24; color: #92400e; }
+.muted { color: #9ca3af; }
+.btn-icon-primary { color: #3b82f6; }
 .filter-chips {
     display: flex;
     gap: 0.5rem;

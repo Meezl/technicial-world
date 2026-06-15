@@ -17,11 +17,23 @@ class MpesaTransaction extends Model
         'result_desc',
         'transaction_date',
         'status',
+        'source',
+        'bill_ref_number',
+        'payer_name',
+        'reconciled',
+    ];
+
+    protected $casts = [
+        'reconciled' => 'boolean',
+        'amount'     => 'decimal:2',
     ];
 
     const STATUS_INITIATED = 'initiated';
     const STATUS_COMPLETED = 'completed';
     const STATUS_FAILED    = 'failed';
+
+    const SOURCE_STK_PUSH = 'stk_push';
+    const SOURCE_C2B      = 'c2b';
 
     public function paymentRequest()
     {

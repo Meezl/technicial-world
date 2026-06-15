@@ -44,6 +44,10 @@ Route::post('/join-as-technician', [TechnicianLeadController::class, 'store'])->
 // M-Pesa callback route (no auth required)
 Route::post('/api/mpesa/callback', [\App\Http\Controllers\PaymentController::class, 'mpesaCallback'])->name('mpesa.callback');
 
+// M-Pesa C2B (paybill direct payments) — Safaricom posts every paybill payment here
+Route::post('/api/mpesa/c2b/validation', [\App\Http\Controllers\PaymentController::class, 'c2bValidation'])->name('mpesa.c2b.validation');
+Route::post('/api/mpesa/c2b/confirmation', [\App\Http\Controllers\PaymentController::class, 'c2bConfirmation'])->name('mpesa.c2b.confirmation');
+
 // ==================== AUTH DASHBOARD (Role Router) ====================
 
 Route::get('/dashboard', [DashboardController::class, 'index'])->middleware(['auth', 'verified'])->name('dashboard');
@@ -259,6 +263,7 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
 
     // M-Pesa Transactions
     Route::resource('mpesa-transactions', \App\Http\Controllers\Admin\MpesaTransactionController::class)->except(['create', 'store']);
+    Route::post('mpesa-transactions/{mpesaTransaction}/reconcile', [\App\Http\Controllers\Admin\MpesaTransactionController::class, 'reconcile'])->name('admin.mpesa-transactions.reconcile');
 
     // Technician Leads
     Route::get('/technician-leads', [AdminDashboardController::class, 'technicianLeads'])->name('admin.technician-leads');
