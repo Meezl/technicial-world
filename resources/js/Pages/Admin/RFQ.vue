@@ -270,10 +270,10 @@
                                                 <i class="fas fa-file-invoice-dollar"></i>
                                             </button>
                                             <button
-                                                v-if="rfq.rfq_status === 'approved' && rfq.submission_mode !== 'admin_proxy'"
+                                                v-if="rfq.rfq_status === 'approved'"
                                                 @click="initiatePaymentRequest(rfq)"
                                                 class="btn btn-sm btn-success"
-                                                title="Request Payment"
+                                                :title="rfq.submission_mode === 'admin_proxy' ? 'Send Payment Request to Client Portal' : 'Request Payment'"
                                             >
                                                 <i class="fas fa-hand-holding-usd"></i>
                                             </button>
@@ -281,7 +281,7 @@
                                                 v-if="rfq.rfq_status === 'approved' && rfq.submission_mode === 'admin_proxy'"
                                                 @click="openProxyPaymentModal(rfq)"
                                                 class="btn btn-sm btn-teal"
-                                                title="Confirm Payment Received"
+                                                title="Confirm Direct Payment Received"
                                             >
                                                 <i class="fas fa-cash-register"></i>
                                             </button>
@@ -349,9 +349,10 @@
                                     <i class="fas fa-file-invoice-dollar"></i> Quote
                                 </button>
                                 <button
-                                    v-if="rfq.rfq_status === 'approved' && rfq.submission_mode !== 'admin_proxy'"
+                                    v-if="rfq.rfq_status === 'approved'"
                                     @click="initiatePaymentRequest(rfq)"
                                     class="btn btn-sm btn-success"
+                                    :title="rfq.submission_mode === 'admin_proxy' ? 'Send to client portal' : 'Request payment'"
                                 >
                                     <i class="fas fa-hand-holding-usd"></i> Payment
                                 </button>
@@ -359,6 +360,7 @@
                                     v-if="rfq.rfq_status === 'approved' && rfq.submission_mode === 'admin_proxy'"
                                     @click="openProxyPaymentModal(rfq)"
                                     class="btn btn-sm btn-teal"
+                                    title="Confirm direct cash/cheque payment"
                                 >
                                     <i class="fas fa-cash-register"></i> Confirm Payment
                                 </button>
@@ -535,7 +537,7 @@
                                 </div>
 
                                 <div v-if="selectedRFQ?.quote_materials" class="materials-display">
-                                    <h5>Materials:</h5>
+                                    <h5>Quotation:</h5>
                                     <div class="materials-list-view">
                                         <div v-for="material in selectedRFQ.quote_materials" :key="material.name" class="material-item-view">
                                             <span class="name">{{ material.name }}</span>
@@ -1377,7 +1379,16 @@ const totalQuoteAmount = computed(() => roundCurrency(
     + (Number(quotationForm.value.labor_cost) || 0)
     + (Number(quotationForm.value.transport_cost) || 0)
 ))
-const canSubmitQuote = computed(() => quotationForm.value.materials.some(m => m.name && m.quantity > 0 && m.unit_price > 0) && quotationForm.value.labor_cost >= 0)
+const canSubmitQuote = computed(() => {
+    const hasMaterials = quotationForm.value.materials.some(m => m.name && m.quantity > 0 && m.unit_price > 0)
+    const hasLaborOnly = quotationForm.value.labor_cost > 0
+    return (hasMaterials || hasLaborOnly) && quotationForm.value.labor_cost >= 0
+})
+
+// Issue #7 — show Revise button for quoted, approved, AND rejected RFQs
+const canReviseSelectedRfq = computed(() =>
+    ['quoted', 'approved', 'rejected'].includes(selectedRFQ.value?.rfq_status)
+)
 const calculatedPaymentAmount = computed(() => {
     if (!selectedRFQ.value?.quote_amount || !paymentRequestForm.value.percentage) return 0
     return (paymentRequestForm.value.percentage / 100) * selectedRFQ.value.quote_amount

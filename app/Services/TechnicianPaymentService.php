@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\TechnicianPayment;
 use App\Models\TechnicianPaymentSheet;
 use App\Models\TechnicianPaymentEntry;
 use App\Models\ServiceRequest;
@@ -284,5 +285,28 @@ class TechnicianPaymentService
         return $latestPriorEntry
             ? (float) $latestPriorEntry->cumulative_amount_due
             : 0.0;
+    }
+
+    /**
+     * Total labour already paid to a technician on a job across BOTH stores:
+     *   - direct `technician_payments` rows (category=labor, status=completed)
+     *   - finalized `technician_payment_entries` (sheet system)
+     *
+     * Used to enforce the agreed-compensation cap so we never overpay.
+     */
+    public function getTotalLabourPaid(int $serviceRequestId, int $technicianId): float
+    {
+        $directPaid = (float) TechnicianPayment::where('service_request_id', $serviceRequestId)
+            ->where('technician_id', $technicianId)
+            ->where('category', 'labor')
+            ->where('status', 'completed')
+            ->sum('amount');
+
+        $sheetPaid = (float) TechnicianPaymentEntry::where('service_request_id', $serviceRequestId)
+            ->where('technician_id', $technicianId)
+            ->where('status', TechnicianPaymentEntry::STATUS_APPROVED)
+            ->sum('current_period_payable');
+
+        return round($directPaid + $sheetPaid, 2);
     }
 }

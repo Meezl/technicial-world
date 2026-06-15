@@ -184,10 +184,47 @@ class PaymentController extends Controller
             $result = $this->mpesaService->querySTKStatus($paymentRequest->mpesa_checkout_request_id);
 
             if ($result['success']) {
+                if (!$paymentRequest->isPaid()) {
+                    // Mark the payment request as paid and create a Payment record
+                    // so the transaction is persisted (the callback may have been missed).
+                    $paymentRequest->markAsPaid(PaymentRequest::METHOD_MPESA, [
+                        'mpesa_transaction_id' => $result['mpesa_receipt_number'] ?? null,
+                        'mpesa_receipt_number' => $result['mpesa_receipt_number'] ?? null,
+                        'phone_number' => $result['phone_number'] ?? null,
+                    ]);
+
+                    Payment::create([
+                        'payment_id' => Payment::generatePaymentId(),
+                        'payment_request_id' => $paymentRequest->id,
+                        'service_request_id' => $paymentRequest->service_request_id,
+                        'user_id' => $paymentRequest->user_id,
+                        'amount' => $paymentRequest->amount,
+                        'status' => Payment::STATUS_COMPLETED,
+                        'payment_method' => Payment::METHOD_MPESA,
+                        'mpesa_transaction_id' => $result['mpesa_receipt_number'] ?? null,
+                        'mpesa_receipt_number' => $result['mpesa_receipt_number'] ?? null,
+                        'phone_number' => $result['phone_number'] ?? null,
+                        'account_reference' => $paymentRequest->serviceRequest->request_id,
+                        'paid_at' => now(),
+                        'notes' => 'M-Pesa payment recorded via status poll (callback may have been missed)',
+                    ]);
+
+                    // Advance the service request status
+                    $serviceRequest = $paymentRequest->serviceRequest;
+                    if ($serviceRequest && in_array($serviceRequest->status, [
+                        ServiceRequest::STATUS_AWAITING_PAYMENT,
+                        ServiceRequest::STATUS_PAYMENT_PENDING_APPROVAL,
+                        'pending',
+                    ])) {
+                        $serviceRequest->update(['status' => ServiceRequest::STATUS_READY_FOR_ASSIGNMENT]);
+                    }
+                }
+
                 return response()->json([
                     'success' => true,
                     'status' => 'paid',
                     'message' => 'Payment completed successfully!',
+                    'receipt' => $result['mpesa_receipt_number'] ?? $paymentRequest->mpesa_receipt_number,
                 ]);
             }
 
@@ -293,6 +330,11 @@ class PaymentController extends Controller
             ], 422);
         }
 
+        $request->validate([
+            'evidence' => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:10240',
+            'notes'    => 'nullable|string|max:500',
+        ]);
+
         try {
             // markAsPaid is typed `string $method` — when admin confirms an offline
             // payment that was generated before the client picked a method, the
@@ -301,6 +343,12 @@ class PaymentController extends Controller
             $method = $request->input('payment_method')
                 ?? $paymentRequest->payment_method
                 ?? PaymentRequest::METHOD_CASH ?? 'cash';
+
+            $evidencePath = null;
+            if ($request->hasFile('evidence')) {
+                $evidencePath = $request->file('evidence')->store('payment-evidence', 'public');
+                $paymentRequest->update(['evidence_path' => $evidencePath]);
+            }
 
             $paymentRequest->markAsPaid($method);
 
@@ -316,7 +364,7 @@ class PaymentController extends Controller
                 'phone_number' => $paymentRequest->user->phone ?? '',
                 'account_reference' => $paymentRequest->serviceRequest->request_id,
                 'paid_at' => now(),
-                'notes' => 'Offline payment confirmed by admin',
+                'notes' => $request->input('notes') ?: 'Offline payment confirmed by admin',
             ]);
 
             // Transition the service request status to ready_for_assignment

@@ -121,6 +121,8 @@
                                             v-if="tool.status === 'available'"
                                             @click="showAssignModal(tool)"
                                             class="btn btn-primary btn-sm"
+                                            :disabled="['damaged','needs_repair'].includes(tool.condition)"
+                                            :title="['damaged','needs_repair'].includes(tool.condition) ? 'Tool is ' + tool.condition.replace('_',' ') + ' — repair before issuing' : ''"
                                         >
                                             Issue Tool
                                         </button>

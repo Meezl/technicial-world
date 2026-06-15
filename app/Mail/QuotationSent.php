@@ -2,9 +2,11 @@
 
 namespace App\Mail;
 
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
+use Illuminate\Mail\Mailables\Attachment;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
@@ -69,6 +71,32 @@ class QuotationSent extends Mailable
      */
     public function attachments(): array
     {
-        return [];
+        try {
+            $serviceRequest = $this->serviceRequest;
+            $milestones = $serviceRequest->milestones()
+                ->orderBy('progress_step')
+                ->get(['progress_step', 'amount', 'notes', 'status']);
+
+            $pdf = Pdf::loadView('pdf.quotation', [
+                'serviceRequest' => $serviceRequest,
+                'materials'      => $serviceRequest->quote_materials ?? [],
+                'laborCost'      => $serviceRequest->quote_labor_cost ?? 0,
+                'transportCost'  => $serviceRequest->quote_transport_cost ?? 0,
+                'downPayment'    => $serviceRequest->quote_down_payment ?? 0,
+                'totalAmount'    => $serviceRequest->quote_amount ?? 0,
+                'notes'          => $serviceRequest->quote_notes,
+                'milestones'     => $milestones,
+            ]);
+
+            $filename = 'Quotation-' . ($serviceRequest->request_id ?? $serviceRequest->id) . '.pdf';
+
+            return [
+                Attachment::fromData(fn () => $pdf->output(), $filename)
+                    ->withMime('application/pdf'),
+            ];
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('QuotationSent PDF generation failed', ['error' => $e->getMessage()]);
+            return [];
+        }
     }
 }

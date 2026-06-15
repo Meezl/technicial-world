@@ -557,6 +557,23 @@ const submitSheet = () => {
         if (row.current_period_payable === '' || row.current_period_payable === null) {
             errors.value.push(`Row ${i + 1}: Payable amount is required.`)
         }
+
+        // Overpayment guard (client-side preview)
+        const agreed = parseFloat(row.approved_amount) || 0
+        const previousPaid = parseFloat(row.previous_cumulative_paid) || 0
+        const payable = parseFloat(row.current_period_payable) || 0
+        const earned = parseFloat(row.cumulative_amount_due) || 0
+
+        if (agreed > 0 && (previousPaid + payable) > agreed + 0.001) {
+            errors.value.push(
+                `Row ${i + 1}: Payment of KES ${formatCurrency(payable)} would bring total paid to KES ${formatCurrency(previousPaid + payable)}, exceeding the agreed compensation of KES ${formatCurrency(agreed)}.`
+            )
+        }
+        if (payable > (earned - previousPaid) + 0.001) {
+            errors.value.push(
+                `Row ${i + 1}: Payment exceeds the unpaid earned amount (KES ${formatCurrency(Math.max(0, earned - previousPaid))} available at ${row.cumulative_progress_pct}% validated progress).`
+            )
+        }
     }
     if (errors.value.length) return
 

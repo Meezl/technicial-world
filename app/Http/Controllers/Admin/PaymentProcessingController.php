@@ -150,6 +150,56 @@ class PaymentProcessingController extends Controller
             'finalize' => 'boolean',
         ]);
 
+        // Overpayment guard: per (technician, service_request), the total already paid
+        // plus this row's current_period_payable must not exceed the agreed compensation.
+        // We also cap by what's actually earned per validated progress (cumulative_amount_due).
+        $errors = [];
+        foreach ($request->entries as $index => $row) {
+            $srId = (int) $row['service_request_id'];
+            $techId = (int) $row['technician_id'];
+            $agreed = (float) $row['approved_amount'];
+            $payable = (float) $row['current_period_payable'];
+            $earnedToDate = (float) $row['cumulative_amount_due'];
+
+            $serviceRequest = ServiceRequest::find($srId);
+            $resolvedAgreed = $this->paymentService->resolveApprovedAmount($serviceRequest, $techId);
+            $cap = $resolvedAgreed > 0 ? $resolvedAgreed : $agreed;
+
+            if ($cap <= 0) {
+                $errors["entries.$index.current_period_payable"] = 'No agreed compensation set for this technician on this job. Set the assignment fee first.';
+                continue;
+            }
+
+            $alreadyPaid = $this->paymentService->getTotalLabourPaid($srId, $techId);
+            $newTotal = round($alreadyPaid + $payable, 2);
+
+            if ($newTotal > $cap + 0.001) {
+                $errors["entries.$index.current_period_payable"] = sprintf(
+                    'Overpayment blocked: KES %s + KES %s = KES %s exceeds agreed compensation KES %s.',
+                    number_format($alreadyPaid, 2),
+                    number_format($payable, 2),
+                    number_format($newTotal, 2),
+                    number_format($cap, 2)
+                );
+                continue;
+            }
+
+            // Also cannot pay more than the technician has earned per validated progress
+            if ($payable > round($earnedToDate - $alreadyPaid, 2) + 0.001) {
+                $errors["entries.$index.current_period_payable"] = sprintf(
+                    'Payment of KES %s exceeds the unpaid earned amount (KES %s earned at %s%% validated progress, KES %s already paid).',
+                    number_format($payable, 2),
+                    number_format($earnedToDate, 2),
+                    $row['cumulative_progress_pct'],
+                    number_format($alreadyPaid, 2)
+                );
+            }
+        }
+
+        if (!empty($errors)) {
+            return back()->withErrors($errors)->withInput();
+        }
+
         DB::transaction(function () use ($request) {
             $sheet = TechnicianPaymentSheet::create([
                 'sheet_reference' => TechnicianPaymentSheet::generateReference(),

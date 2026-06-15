@@ -552,6 +552,19 @@
                                             >
                                         </div>
                                     </div>
+                                    <div class="form-group" style="margin-top:.5rem;">
+                                        <label>Attach photos (optional, up to 6)</label>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            multiple
+                                            class="form-control"
+                                            @change="e => progressValidationForms[report.id].admin_photo_files = Array.from(e.target.files)"
+                                        >
+                                        <small v-if="progressValidationForms[report.id].admin_photo_files?.length" style="color:var(--success-color)">
+                                            {{ progressValidationForms[report.id].admin_photo_files.length }} photo(s) selected
+                                        </small>
+                                    </div>
                                     <button class="btn btn-primary btn-sm" @click="validateProgressReport(report.id)">
                                         <i class="fas fa-check-circle"></i>
                                         Approve Progress
@@ -1597,7 +1610,7 @@ function openExpenseModal(category) {
 function saveExpenseFromBudget() {
     if (!canSaveExpense.value) return
     router.post('/admin/expenditures', {
-        service_request_id: props.serviceRequest.id,
+        service_request_id: props.job.id,
         ...expenseForm.value,
     }, {
         preserveScroll: true,
@@ -2245,9 +2258,24 @@ const validateProgressReport = (reportId) => {
     const form = progressValidationForms[reportId]
     if (!form) return
 
-    router.post(`/admin/progress-reports/${reportId}/validate`, form, {
-        preserveScroll: true,
-    })
+    const photos = form.admin_photo_files || []
+    if (photos.length > 0) {
+        const fd = new FormData()
+        fd.append('validated_percent', form.validated_percent)
+        fd.append('validation_notes', form.validation_notes || '')
+        ;(form.remove_photo_ids || []).forEach((id, i) => fd.append(`remove_photo_ids[${i}]`, id))
+        photos.forEach((file, i) => fd.append(`admin_photos[${i}]`, file))
+        router.post(`/admin/progress-reports/${reportId}/validate`, fd, {
+            forceFormData: true,
+            preserveScroll: true,
+        })
+    } else {
+        router.post(`/admin/progress-reports/${reportId}/validate`, {
+            validated_percent: form.validated_percent,
+            validation_notes: form.validation_notes,
+            remove_photo_ids: form.remove_photo_ids,
+        }, { preserveScroll: true })
+    }
 }
 
 const getTechnicianAgreedCompensation = (report) => {

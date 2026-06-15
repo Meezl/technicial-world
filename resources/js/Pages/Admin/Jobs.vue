@@ -194,6 +194,17 @@
                             </div>
                         </div>
                     </div>
+                    <div class="form-group" style="margin-top:1rem;">
+                        <label>Agreed Compensation (KSH)</label>
+                        <input
+                            type="number"
+                            v-model.number="agreedCompensation"
+                            min="0"
+                            step="100"
+                            class="form-control"
+                            placeholder="Enter agreed fee for this technician"
+                        />
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button @click="closeModal" class="btn btn-secondary">Cancel</button>
@@ -230,6 +241,7 @@ const statusFilter = ref(props.filters?.status || '')
 const showModal = ref(false)
 const selectedJob = ref(null)
 const selectedTechnician = ref(null)
+const agreedCompensation = ref(0)
 const isReassigning = ref(false)
 
 // Watch for changes in search and status to trigger server-side filtering
@@ -367,13 +379,15 @@ const assignTechnician = () => {
         }
         router.post(`/admin/jobs/${selectedJob.value.id}/assign`, {
             technician_id: selectedTechnician.value.id,
+            agreed_compensation: agreedCompensation.value || 0,
             reassignment_reason: trimmed,
         }, { onSuccess: () => closeModal() })
         return
     }
 
     router.post(`/admin/jobs/${selectedJob.value.id}/assign`, {
-        technician_id: selectedTechnician.value.id
+        technician_id: selectedTechnician.value.id,
+        agreed_compensation: agreedCompensation.value || 0,
     }, {
         onSuccess: () => {
             closeModal()
@@ -395,6 +409,7 @@ const closeModal = () => {
     showModal.value = false
     selectedJob.value = null
     selectedTechnician.value = null
+    agreedCompensation.value = 0
     isReassigning.value = false
 }
 

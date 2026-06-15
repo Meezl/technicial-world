@@ -2,13 +2,17 @@
 
 namespace App\Services;
 
+use App\Mail\ProgressApproved;
 use App\Models\PaymentRequest;
 use App\Models\ProgressReport;
 use App\Models\ProgressPhoto;
 use App\Models\ServiceRequest;
 use App\Models\AuditLog;
+use App\Notifications\PaymentRequestNotification;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 
 class ProgressService
@@ -90,9 +94,10 @@ class ProgressService
     public function validate(
         ProgressReport $report,
         int $pmId,
-        array $data
+        array $data,
+        array $adminPhotos = []
     ): ProgressReport {
-        return DB::transaction(function () use ($report, $pmId, $data) {
+        return DB::transaction(function () use ($report, $pmId, $data, $adminPhotos) {
             $report->update([
                 'is_validated' => true,
                 'validated_by' => $pmId,
@@ -108,12 +113,39 @@ class ProgressService
                     ->update(['removed_by_pm' => true]);
             }
 
+            // Store admin-uploaded photos attached during validation
+            foreach ($adminPhotos as $photo) {
+                if (!($photo instanceof UploadedFile)) continue;
+                $path = $photo->store('progress-photos', 'public');
+                ProgressPhoto::create([
+                    'progress_report_id' => $report->id,
+                    'file_path' => $path,
+                    'added_by' => $pmId,
+                    'caption' => 'Added by admin during validation',
+                ]);
+            }
+
             // Update service request progress based on validated value
-            $this->updateServiceRequestProgress($report->serviceRequest);
+            $serviceRequest = $report->serviceRequest;
+            $this->updateServiceRequestProgress($serviceRequest);
 
             AuditLog::log(AuditLog::ACTION_APPROVAL, $report, null, [
                 'validated_percent' => $data['validated_percent'] ?? $report->percent_complete,
             ]);
+
+            // Email the client about the validated progress
+            try {
+                $serviceRequest->loadMissing('user');
+                if ($serviceRequest->user?->email) {
+                    Mail::to($serviceRequest->user->email)
+                        ->send(new ProgressApproved($serviceRequest, $report));
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('ProgressApproved email failed', [
+                    'report_id' => $report->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
 
             return $report->fresh(['photos']);
         });
@@ -150,7 +182,11 @@ class ProgressService
 
         if ($latestValidated) {
             $effectivePercent = $latestValidated->validated_percent ?? $latestValidated->percent_complete;
-            $serviceRequest->update(['progress_percentage' => $effectivePercent]);
+            $updateData = ['progress_percentage' => $effectivePercent];
+            if ((int) $effectivePercent >= 100 && $serviceRequest->status !== ServiceRequest::STATUS_COMPLETED) {
+                $updateData['status'] = ServiceRequest::STATUS_COMPLETED;
+            }
+            $serviceRequest->update($updateData);
             $this->triggerBillingMilestones($serviceRequest->fresh(), (float) $effectivePercent);
         }
     }
@@ -176,7 +212,7 @@ class ProgressService
             }
 
             // Threshold crossed — raise a payment request
-            PaymentRequest::create([
+            $paymentRequest = PaymentRequest::create([
                 'payment_request_id' => PaymentRequest::generatePaymentRequestId(),
                 'service_request_id' => $serviceRequest->id,
                 'user_id'            => $serviceRequest->user_id,
@@ -186,6 +222,20 @@ class ProgressService
                 'status'             => PaymentRequest::STATUS_PENDING,
                 'notes'              => 'Auto-generated: billing milestone "' . $milestone['label'] . '" reached at ' . $progressPct . '% progress.',
             ]);
+
+            // Notify the client (email + database notification)
+            try {
+                $serviceRequest->loadMissing('user');
+                if ($serviceRequest->user) {
+                    $serviceRequest->user->notify(new PaymentRequestNotification($paymentRequest));
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Milestone payment notification failed', [
+                    'service_request_id' => $serviceRequest->id,
+                    'milestone_label'    => $milestone['label'] ?? null,
+                    'error'              => $e->getMessage(),
+                ]);
+            }
 
             $milestone['triggered'] = true;
             $changed = true;

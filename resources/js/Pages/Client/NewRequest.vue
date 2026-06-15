@@ -363,6 +363,11 @@ function submitRequest() {
         form.description = `${form.description.trim()}\n\nAdditional Notes:\n${notes}`
     }
 
+    submissionFeedback.value = {
+        type: 'success',
+        message: 'Submitting your request…',
+    }
+
     form.post(route('service-requests.store'), {
         preserveScroll: true,
         onError: (errors) => {

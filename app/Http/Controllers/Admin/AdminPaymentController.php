@@ -81,6 +81,39 @@ class AdminPaymentController extends Controller
             'status' => 'nullable|in:pending,processing,completed,failed',
         ]);
 
+        // Overpayment guard for labour payments
+        if ($request->category === 'labor' && $request->service_request_id) {
+            $serviceRequest = \App\Models\ServiceRequest::find($request->service_request_id);
+            $agreed = $this->technicianPaymentService->resolveApprovedAmount(
+                $serviceRequest,
+                (int) $request->technician_id
+            );
+
+            if ($agreed <= 0) {
+                return back()->withErrors([
+                    'amount' => 'No agreed compensation set for this technician on this job. Set the assignment fee before recording a labour payment.',
+                ])->withInput();
+            }
+
+            $alreadyPaid = $this->technicianPaymentService->getTotalLabourPaid(
+                (int) $request->service_request_id,
+                (int) $request->technician_id
+            );
+            $newTotal = round($alreadyPaid + (float) $request->amount, 2);
+
+            if ($newTotal > $agreed + 0.001) {
+                return back()->withErrors([
+                    'amount' => sprintf(
+                        'Overpayment blocked: KES %s + KES %s = KES %s exceeds the agreed compensation of KES %s.',
+                        number_format($alreadyPaid, 2),
+                        number_format($request->amount, 2),
+                        number_format($newTotal, 2),
+                        number_format($agreed, 2)
+                    ),
+                ])->withInput();
+            }
+        }
+
         $paymentId = 'TPY-' . now()->format('Ymd') . '-' . strtoupper(substr(uniqid(), -4));
 
         $paymentData = [
@@ -143,17 +176,27 @@ class AdminPaymentController extends Controller
             $validatedPercent
         );
 
-        $alreadyPaid = (float) TechnicianPayment::query()
-            ->where('service_request_id', $progressReport->service_request_id)
-            ->where('technician_id', $progressReport->technician_id)
-            ->where('category', 'labor')
-            ->where('status', 'completed')
-            ->sum('amount');
+        $alreadyPaid = $this->technicianPaymentService->getTotalLabourPaid(
+            (int) $progressReport->service_request_id,
+            (int) $progressReport->technician_id
+        );
 
         $payableAmount = round($targetAmount - $alreadyPaid, 2);
 
         if ($payableAmount <= 0) {
             return back()->with('error', 'There is no unpaid labor amount remaining for this approved progress report.');
+        }
+
+        // Final safety net: never let cumulative paid exceed the agreed compensation,
+        // even if cumulative_amount_due math drifts.
+        if (round($alreadyPaid + $payableAmount, 2) > $approvedAmount + 0.001) {
+            $payableAmount = max(0, round($approvedAmount - $alreadyPaid, 2));
+            if ($payableAmount <= 0) {
+                return back()->with('error', sprintf(
+                    'Technician has already been paid the full agreed compensation of KES %s. No further payment can be made.',
+                    number_format($approvedAmount, 2)
+                ));
+            }
         }
 
         $paymentId = 'TPY-' . now()->format('Ymd') . '-' . strtoupper(substr(uniqid(), -4));

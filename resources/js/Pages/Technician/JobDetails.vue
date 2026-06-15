@@ -159,7 +159,16 @@
                     </div>
                 </div>
 
-                <form @submit.prevent="submitProgressReport" class="progress-form">
+                <div v-if="page.props.flash?.success" class="flash-success" style="background:var(--success-color,#22c55e);color:#fff;padding:.75rem 1rem;border-radius:.5rem;margin-bottom:1rem;font-weight:500;">
+                    {{ page.props.flash.success }}
+                </div>
+
+                <div v-if="job.status === 'assigned'" class="info-banner" style="background:var(--warning-bg,#fef9c3);border:1px solid var(--warning-border,#fde047);color:var(--warning-text,#713f12);padding:.75rem 1rem;border-radius:.5rem;margin-bottom:1rem;">
+                    <i class="fas fa-info-circle"></i>
+                    You must <strong>Start the Job</strong> before submitting progress reports.
+                </div>
+
+                <form v-else @submit.prevent="submitProgressReport" class="progress-form">
                     <div class="form-grid">
                         <label class="form-field">
                             <span>Progress %</span>
@@ -202,12 +211,15 @@
                         <!-- Camera shortcut: opens the rear camera directly on phones.
                              `multiple` is intentionally omitted — iOS Safari ignores it
                              when `capture` is set. Tap again to queue more photos. -->
-                        <label class="camera-shortcut">
-                            <input type="file" accept="image/*" capture="environment" style="display:none" @change="onCameraCapture" />
-                            <span class="btn btn-secondary btn-sm">
+                        <div class="camera-shortcut" style="margin-top:.5rem;">
+                            <input ref="cameraInput" type="file" accept="image/*" capture="environment" style="display:none" @change="onCameraCapture" />
+                            <button type="button" class="btn btn-secondary btn-sm" @click="cameraInput.click()">
                                 <i class="fas fa-camera"></i> Take photo with camera
+                            </button>
+                            <span v-if="cameraQueue.length > 0" style="margin-left:.5rem;color:var(--success-color);font-size:.85rem;font-weight:600;">
+                                {{ cameraQueue.length }} photo{{ cameraQueue.length > 1 ? 's' : '' }} queued
                             </span>
-                        </label>
+                        </div>
                     </label>
 
                     <button type="submit" class="btn btn-primary" :disabled="submittingReport">
@@ -299,8 +311,10 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { Link, router } from '@inertiajs/vue3'
+import { Link, router, usePage } from '@inertiajs/vue3'
 import TechnicianBottomNav from '@/Components/TechnicianBottomNav.vue'
+
+const page = usePage()
 
 const props = defineProps({
     technician: { type: Object, required: true },
@@ -309,6 +323,7 @@ const props = defineProps({
 })
 
 const photoInput = ref(null)
+const cameraInput = ref(null)
 const cameraQueue = ref([])  // photos captured via the camera shortcut
 
 /**

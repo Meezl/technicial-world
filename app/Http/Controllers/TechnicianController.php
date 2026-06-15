@@ -649,6 +649,14 @@ class TechnicianController extends Controller
             return back()->with('error', 'Unauthorized');
         }
 
+        if ($serviceRequest->status === ServiceRequest::STATUS_COMPLETED) {
+            return back()->with('error', 'This job is already completed. No further progress reports can be submitted.');
+        }
+
+        if ($serviceRequest->status === 'assigned') {
+            return back()->with('error', 'You must start the job before submitting progress reports.');
+        }
+
         $request->validate([
             'percent_complete' => 'required|integer|min:0|max:100',
             'notes' => 'nullable|string|max:2000',

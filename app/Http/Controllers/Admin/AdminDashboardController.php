@@ -144,8 +144,13 @@ class AdminDashboardController extends Controller
         // Compute budget vs actual for this SR
         $budgetSummary = null;
         if ($job->budget) {
-            $laborSpent = $job->technicianPayments
+            $laborSpentDirect = $job->technicianPayments
                 ->where('category', 'labor')->where('status', 'completed')->sum('amount');
+            // Also include payments processed via the payment sheet system
+            $laborSpentSheets = TechnicianPaymentEntry::where('service_request_id', $job->id)
+                ->where('status', TechnicianPaymentEntry::STATUS_APPROVED)
+                ->sum('amount');
+            $laborSpent = $laborSpentDirect + $laborSpentSheets;
             $materialsSpentPayments = $job->technicianPayments
                 ->where('category', 'materials')->where('status', 'completed')->sum('amount');
             $materialsSpentExpenditures = $job->expenditures
@@ -192,13 +197,17 @@ class AdminDashboardController extends Controller
             'validated_percent' => 'required|integer|min:0|max:100',
             'validation_notes' => 'nullable|string|max:2000',
             'remove_photo_ids' => 'nullable|array',
+            'admin_photos' => 'nullable|array|max:6',
+            'admin_photos.*' => 'nullable|file|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
         ]);
+
+        $adminPhotos = $request->hasFile('admin_photos') ? $request->file('admin_photos') : [];
 
         app(ProgressService::class)->validate($progressReport, auth()->id(), $request->only([
             'validated_percent',
             'validation_notes',
             'remove_photo_ids',
-        ]));
+        ]), $adminPhotos);
 
         return back()->with('success', 'Progress validated.');
     }
@@ -420,8 +429,17 @@ class AdminDashboardController extends Controller
             abort(403);
         }
 
-        if (!$document->file_path || !\Illuminate\Support\Facades\Storage::disk('public')->exists($document->file_path)) {
-            abort(404, 'Document not found on disk.');
+        if (!$document->file_path) {
+            abort(404, 'Document record has no file path.');
+        }
+
+        if (!\Illuminate\Support\Facades\Storage::disk('public')->exists($document->file_path)) {
+            // Try the public URL as a redirect fallback for documents stored before the disk was configured
+            $publicPath = public_path('storage/' . $document->file_path);
+            if (file_exists($publicPath)) {
+                return redirect('/storage/' . $document->file_path);
+            }
+            abort(404, 'Document file not found. It may have been deleted or not yet uploaded.');
         }
 
         return \Illuminate\Support\Facades\Storage::disk('public')->response(
@@ -1750,10 +1768,10 @@ class AdminDashboardController extends Controller
     {
         $request->validate([
             'service_request_id' => 'required|exists:service_requests,id',
-            'materials' => 'required|array|min:1',
-            'materials.*.name' => 'required|string',
-            'materials.*.quantity' => 'required|numeric|min:1',
-            'materials.*.unit_price' => 'required|numeric|min:0',
+            'materials' => 'nullable|array',
+            'materials.*.name' => 'required_with:materials|string',
+            'materials.*.quantity' => 'required_with:materials|numeric|min:1',
+            'materials.*.unit_price' => 'required_with:materials|numeric|min:0',
             'labor_cost' => 'required|numeric|min:0',
             'transport_cost' => 'nullable|numeric|min:0',
             'down_payment' => 'nullable|numeric|min:0',
@@ -2160,17 +2178,6 @@ class AdminDashboardController extends Controller
             ], 422);
         }
 
-        // Check if there's already a pending payment request
-        $existingPendingRequest = PaymentRequest::where('service_request_id', $serviceRequest->id)
-            ->where('status', PaymentRequest::STATUS_PENDING)
-            ->first();
-
-        if ($existingPendingRequest) {
-            return response()->json([
-                'error' => 'There is already a pending payment request for this service.'
-            ], 422);
-        }
-
         $quoteAmount = (float) $serviceRequest->quote_amount;
         if ($quoteAmount <= 0) {
             return response()->json([
@@ -2278,7 +2285,25 @@ class AdminDashboardController extends Controller
             'evidence'             => 'required_if:payment_method,cheque|required_if:payment_method,bank_deposit|required_if:payment_method,mpesa|nullable|file|mimes:jpg,jpeg,png,pdf|max:10240',
         ]);
 
-        $amount = ($request->percentage / 100) * $serviceRequest->quote_amount;
+        $quoteTotal = (float) $serviceRequest->quote_amount;
+        $amount = round(($request->percentage / 100) * $quoteTotal, 2);
+
+        $alreadyPaid = (float) PaymentRequest::where('service_request_id', $serviceRequest->id)
+            ->whereIn('status', [PaymentRequest::STATUS_PAID])
+            ->sum('amount');
+
+        $remaining = round($quoteTotal - $alreadyPaid, 2);
+        if ($amount > $remaining + 0.001) {
+            return response()->json([
+                'error' => sprintf(
+                    'This payment (KES %s) would exceed the remaining balance (KES %s). Total quote is KES %s with KES %s already received.',
+                    number_format($amount, 2),
+                    number_format(max($remaining, 0), 2),
+                    number_format($quoteTotal, 2),
+                    number_format($alreadyPaid, 2)
+                ),
+            ], 422);
+        }
 
         $paymentPayload = [
             'requested_by'         => auth()->id(),

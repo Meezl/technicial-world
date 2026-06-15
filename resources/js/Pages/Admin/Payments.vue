@@ -690,11 +690,52 @@
                     <button @click="showPaymentDetailModal = false" class="btn btn-secondary">Close</button>
                     <button
                         v-if="selectedPaymentDetail && selectedPaymentDetail.status === 'pending'"
-                        @click="approveOfflinePayment(selectedPaymentDetail); showPaymentDetailModal = false"
+                        @click="showPaymentDetailModal = false; approveOfflinePayment(selectedPaymentDetail)"
                         class="btn btn-primary"
                         style="background-color: #10b981;"
                     >
                         <i class="fas fa-check"></i> Approve Payment
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Offline payment confirmation modal (evidence upload) -->
+        <div v-if="showConfirmModal" class="modal-overlay" @click.self="showConfirmModal = false">
+            <div class="modal-content" style="max-width:480px;">
+                <div class="modal-header">
+                    <h3>Confirm Offline Payment</h3>
+                    <button @click="showConfirmModal = false" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p>
+                        Approving <strong>{{ formatPaymentMethod(confirmingPayment?.payment_method) }}</strong>
+                        payment of <strong>KSH {{ formatCurrency(confirmingPayment?.amount) }}</strong>.
+                    </p>
+                    <div class="form-group" style="margin-top:1rem;">
+                        <label>Proof of Payment (optional for cash, required for Cheque / Bank Transfer)</label>
+                        <input
+                            ref="confirmEvidenceInput"
+                            type="file"
+                            accept="image/jpeg,image/png,application/pdf"
+                            @change="onConfirmEvidenceChange"
+                            class="form-control"
+                            style="margin-top:.4rem;"
+                        />
+                        <small v-if="confirmEvidenceFile" style="color:var(--success-color)">
+                            {{ confirmEvidenceFile.name }}
+                        </small>
+                    </div>
+                    <div class="form-group" style="margin-top:.75rem;">
+                        <label>Notes (optional)</label>
+                        <input v-model="confirmNotes" type="text" class="form-control" placeholder="e.g. Cheque #12345 received" style="margin-top:.4rem;" />
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button @click="showConfirmModal = false" class="btn btn-secondary">Cancel</button>
+                    <button @click="submitOfflineApproval" :disabled="confirmSubmitting" class="btn btn-primary" style="background:#10b981;">
+                        <i class="fas fa-check"></i>
+                        {{ confirmSubmitting ? 'Saving...' : 'Confirm Payment' }}
                     </button>
                 </div>
             </div>
@@ -945,15 +986,41 @@ const deleteExpenditure = (exp) => {
 }
 
 // ---- Offline Payment Approval ----
-const approveOfflinePayment = async (payment) => {
-    if (confirm('Are you sure you want to approve this offline payment?')) {
-        try {
-            await axios.post(`/admin/payments/${payment.id}/confirm`)
-            alert('Payment approved successfully!')
-            router.reload({ only: ['payments', 'paymentRequests', 'stats'] })
-        } catch (error) {
-            alert(error.response?.data?.error || 'Failed to approve payment')
-        }
+const showConfirmModal = ref(false)
+const confirmingPayment = ref(null)
+const confirmEvidenceFile = ref(null)
+const confirmEvidenceInput = ref(null)
+const confirmNotes = ref('')
+const confirmSubmitting = ref(false)
+
+const approveOfflinePayment = (payment) => {
+    confirmingPayment.value = payment
+    confirmEvidenceFile.value = null
+    confirmNotes.value = ''
+    showConfirmModal.value = true
+}
+
+const onConfirmEvidenceChange = (e) => {
+    confirmEvidenceFile.value = e.target.files?.[0] || null
+}
+
+const submitOfflineApproval = async () => {
+    if (!confirmingPayment.value) return
+    confirmSubmitting.value = true
+    try {
+        const formData = new FormData()
+        if (confirmEvidenceFile.value) formData.append('evidence', confirmEvidenceFile.value)
+        if (confirmNotes.value) formData.append('notes', confirmNotes.value)
+        await axios.post(`/admin/payments/${confirmingPayment.value.id}/confirm`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        })
+        showConfirmModal.value = false
+        alert('Payment approved successfully!')
+        router.reload({ only: ['payments', 'paymentRequests', 'stats'] })
+    } catch (error) {
+        alert(error.response?.data?.error || 'Failed to approve payment')
+    } finally {
+        confirmSubmitting.value = false
     }
 }
 
