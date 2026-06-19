@@ -1,8 +1,147 @@
 <template>
-    <div class="dashboard-container">
+    <div class="dashboard-container client-pwa-shell">
         <ClientSidebar current-page="dashboard" />
+        <ClientBottomNav current-page="dashboard" />
 
         <main class="main-content client-dashboard">
+            <!-- ─────────── Mobile shell (≤1023px) ─────────── -->
+            <section class="mobile-dashboard">
+                <header class="mobile-greeting">
+                    <div class="greeting-identity">
+                        <div class="greeting-avatar">
+                            <i class="fas fa-user"></i>
+                        </div>
+                        <div class="greeting-copy">
+                            <span>Hello</span>
+                            <strong>{{ firstName }}</strong>
+                        </div>
+                    </div>
+                    <div class="greeting-actions">
+                        <button type="button" class="icon-pill" aria-label="Toggle balance visibility" @click="balanceHidden = !balanceHidden">
+                            <i :class="balanceHidden ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
+                        </button>
+                        <button type="button" class="icon-pill" aria-label="Notifications">
+                            <i class="fas fa-bell"></i>
+                            <span v-if="stats.pendingPayments" class="icon-dot"></span>
+                        </button>
+                        <Link href="/client/profile" class="icon-pill" aria-label="Profile">
+                            <i class="fas fa-cog"></i>
+                        </Link>
+                        <Link href="/logout" method="post" as="button" class="icon-pill icon-pill-accent" aria-label="Log out">
+                            <i class="fas fa-sign-out-alt"></i>
+                        </Link>
+                    </div>
+                </header>
+
+                <div class="mobile-search">
+                    <i class="fas fa-search"></i>
+                    <input type="search" placeholder="Search requests, payments, services…" aria-label="Search" />
+                </div>
+
+                <article class="mobile-featured-card">
+                    <header class="featured-head">
+                        <div class="featured-brand">
+                            <strong>TECHNICIAN</strong>
+                            <span>World</span>
+                        </div>
+                        <span class="featured-ref">{{ accountRef }}</span>
+                    </header>
+
+                    <div class="featured-amount">
+                        <i :class="balanceHidden ? 'fas fa-eye-slash' : 'fas fa-eye'"></i>
+                        <span v-if="balanceHidden">XXX,XXX.xx</span>
+                        <span v-else>{{ formatCurrency(stats.totalSpent) }}</span>
+                    </div>
+                    <p class="featured-caption">Total invested in services to date</p>
+
+                    <div class="featured-actions">
+                        <Link href="/client/new-request" class="featured-action">
+                            <span class="action-icon"><i class="fas fa-plus"></i></span>
+                            <span>New</span>
+                        </Link>
+                        <Link href="/client/payments" class="featured-action">
+                            <span class="action-icon"><i class="fas fa-file-invoice-dollar"></i></span>
+                            <span>Pay</span>
+                        </Link>
+                        <Link href="/client/payments" class="featured-action">
+                            <span class="action-icon"><i class="fas fa-receipt"></i></span>
+                            <span>Statement</span>
+                        </Link>
+                        <Link href="/client/profile" class="featured-action">
+                            <span class="action-icon"><i class="fas fa-id-card"></i></span>
+                            <span>Profile</span>
+                        </Link>
+                    </div>
+                </article>
+
+                <div class="mobile-handle"></div>
+
+                <section class="tile-grid">
+                    <Link href="/client/new-request" class="service-tile">
+                        <i class="fas fa-bolt"></i>
+                        <span>Electrical</span>
+                    </Link>
+                    <Link href="/client/new-request" class="service-tile">
+                        <i class="fas fa-faucet"></i>
+                        <span>Plumbing</span>
+                    </Link>
+                    <Link href="/client/new-request" class="service-tile">
+                        <i class="fas fa-snowflake"></i>
+                        <span>HVAC</span>
+                    </Link>
+                    <Link href="/client/new-request" class="service-tile">
+                        <i class="fas fa-paint-roller"></i>
+                        <span>Painting</span>
+                    </Link>
+                    <Link href="/client/new-request" class="service-tile">
+                        <i class="fas fa-hammer"></i>
+                        <span>Carpentry</span>
+                    </Link>
+                    <Link href="/client/new-request" class="service-tile">
+                        <i class="fas fa-broom"></i>
+                        <span>Cleaning</span>
+                    </Link>
+                    <Link href="/client/support" class="service-tile">
+                        <i class="fas fa-headset"></i>
+                        <span>Support</span>
+                    </Link>
+                    <Link href="/client/new-request" class="service-tile">
+                        <i class="fas fa-ellipsis-h"></i>
+                        <span>More</span>
+                    </Link>
+                </section>
+
+                <section v-if="activeRequests.length" class="mobile-active">
+                    <div class="mobile-section-head">
+                        <h3>Active Requests</h3>
+                        <span class="section-pill">{{ activeRequests.length }}</span>
+                    </div>
+                    <Link
+                        v-for="request in activeRequests.slice(0, 3)"
+                        :key="`m-${request.id}`"
+                        :href="`/client/request-status/${request.id}`"
+                        class="mobile-active-card"
+                    >
+                        <div class="active-card-left">
+                            <strong>{{ request.service_category?.name || 'Service Request' }}</strong>
+                            <span>{{ request.job_reference || request.request_id }}</span>
+                        </div>
+                        <span :class="['status-badge', statusTone(request.status)]">
+                            {{ formatStatus(request.status, request) }}
+                        </span>
+                    </Link>
+                </section>
+
+                <Link href="/client/new-request" class="mobile-promo">
+                    <div class="promo-copy">
+                        <strong>Need a new service?</strong>
+                        <span>Submit a request and get a quotation fast.</span>
+                    </div>
+                    <i class="fas fa-arrow-right"></i>
+                </Link>
+            </section>
+
+            <!-- ─────────── Desktop shell (≥1024px) ─────────── -->
             <section v-if="flash.success" class="submission-banner">
                 <div class="submission-banner-copy">
                     <span class="submission-banner-tag">Request Received</span>
@@ -275,8 +414,9 @@
 
 <script setup>
 import { Link, usePage } from '@inertiajs/vue3'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
+import ClientBottomNav from '../../Components/ClientBottomNav.vue'
 
 const page = usePage()
 
@@ -296,6 +436,15 @@ const firstName = computed(() => {
     return name.split(' ')[0] || 'Client'
 })
 
+const balanceHidden = ref(true)
+
+const accountRef = computed(() => {
+    const id = page.props.auth?.user?.id
+    if (!id) return '**** 0000'
+    const last4 = String(id).padStart(4, '0').slice(-4)
+    return `**** ${last4}`
+})
+
 const flash = computed(() => page.props.flash || {})
 
 const submittedRequest = computed(() => flash.value.submittedRequest || null)
@@ -308,10 +457,10 @@ const activeRequests = computed(() => {
 
 const heroMessage = computed(() => {
     if (activeRequests.value.length > 0) {
-        return 'Here’s a simple view of your active requests, quotation progress, and the next steps across delivery and payments.'
+        return 'Track your live requests, quotations, and payments — all in one place.'
     }
 
-    return 'You can use this dashboard to track quotations, payments, and project updates once your service requests are in motion.'
+    return 'Submit a request to get a quotation, approve, pay, and track delivery — all from here.'
 })
 
 /**
@@ -548,9 +697,35 @@ defineOptions({
 }
 
 .hero-card-primary {
-    background:
-        radial-gradient(circle at top right, rgba(59, 130, 246, 0.18), transparent 35%),
-        linear-gradient(135deg, #ffffff, #eff6ff);
+    background: #053272;
+    color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.12);
+}
+
+.hero-card-primary .hero-kicker {
+    color: #bfdbfe;
+}
+
+.hero-card-primary h1,
+.hero-card-primary h2 {
+    color: #ffffff;
+}
+
+.hero-card-primary p {
+    color: #ffffff;
+    font-weight: 400;
+    font-size: 1.02rem;
+    line-height: 1.55;
+}
+
+.hero-card-primary .hero-pill {
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+}
+
+.hero-card-primary .hero-pill.muted {
+    background: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.85);
 }
 
 .hero-card-action {
@@ -890,6 +1065,350 @@ defineOptions({
     margin: 0;
     color: #0f172a;
 }
+
+/* ─────────── Mobile shell (banking-app style) ─────────── */
+
+.mobile-dashboard {
+    display: none;
+}
+
+@media (min-width: 1024px) {
+    .mobile-dashboard {
+        display: none !important;
+    }
+}
+
+@media (max-width: 1023.98px) {
+    .client-dashboard > section:not(.mobile-dashboard),
+    .client-dashboard > .submission-banner {
+        display: none;
+    }
+
+    .mobile-dashboard {
+        display: grid;
+        gap: 1rem;
+    }
+}
+
+.mobile-greeting {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.greeting-identity {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.greeting-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #c7d2fe, #fde68a);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #1f2937;
+    font-size: 1.1rem;
+    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+}
+
+.greeting-copy {
+    display: grid;
+    gap: 0.05rem;
+    line-height: 1.1;
+}
+
+.greeting-copy span {
+    color: #475569;
+    font-size: 0.95rem;
+}
+
+.greeting-copy strong {
+    color: #0f172a;
+    font-size: 1.15rem;
+    font-weight: 700;
+}
+
+.greeting-actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.icon-pill {
+    width: 40px;
+    height: 40px;
+    border: 0;
+    border-radius: 12px;
+    background: #ffffff;
+    color: #475569;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    cursor: pointer;
+    text-decoration: none;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+}
+
+.icon-pill-accent {
+    background: linear-gradient(135deg, #f97316, #ea580c);
+    color: #ffffff;
+}
+
+.icon-dot {
+    position: absolute;
+    top: 9px;
+    right: 9px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ef4444;
+    box-shadow: 0 0 0 2px #ffffff;
+}
+
+.mobile-search {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.85rem 1rem;
+    border-radius: 16px;
+    background: #ffffff;
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+}
+
+.mobile-search i {
+    color: #15803d;
+}
+
+.mobile-search input {
+    flex: 1;
+    border: 0;
+    outline: none;
+    font-size: 0.95rem;
+    background: transparent;
+    color: #0f172a;
+}
+
+.mobile-featured-card {
+    position: relative;
+    padding: 1.4rem 1.25rem 1.2rem;
+    border-radius: 24px;
+    color: #ffffff;
+    background:
+        radial-gradient(circle at top left, rgba(250, 204, 21, 0.45), transparent 45%),
+        radial-gradient(circle at bottom right, rgba(250, 204, 21, 0.25), transparent 55%),
+        linear-gradient(135deg, #0b1e44, #053272);
+    box-shadow: 0 24px 44px rgba(5, 50, 114, 0.28);
+    overflow: hidden;
+}
+
+.featured-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+}
+
+.featured-brand strong {
+    display: block;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+}
+
+.featured-brand span {
+    display: block;
+    font-style: italic;
+    color: #fde68a;
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.featured-ref {
+    color: rgba(255, 255, 255, 0.7);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    font-size: 0.85rem;
+}
+
+.featured-amount {
+    margin: 1.1rem 0 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    font-size: 1.75rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.featured-amount i {
+    font-size: 1.2rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.featured-caption {
+    margin: 0;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.8rem;
+}
+
+.featured-actions {
+    margin-top: 1.1rem;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.5rem;
+}
+
+.featured-action {
+    display: grid;
+    justify-items: center;
+    gap: 0.35rem;
+    text-decoration: none;
+    color: #fde68a;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.action-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(253, 230, 138, 0.35);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #fde68a;
+}
+
+.mobile-handle {
+    width: 36px;
+    height: 4px;
+    border-radius: 999px;
+    background: #053272;
+    margin: 0.25rem auto 0;
+    opacity: 0.85;
+}
+
+.tile-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.65rem;
+    margin-top: 0.25rem;
+}
+
+.service-tile {
+    display: grid;
+    justify-items: center;
+    align-content: center;
+    gap: 0.45rem;
+    padding: 1rem 0.4rem;
+    background: #ffffff;
+    border-radius: 16px;
+    text-decoration: none;
+    color: #0f172a;
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-align: center;
+    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05);
+}
+
+.service-tile i {
+    font-size: 1.35rem;
+    color: #053272;
+}
+
+.mobile-active {
+    display: grid;
+    gap: 0.6rem;
+}
+
+.mobile-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 0.5rem;
+}
+
+.mobile-section-head h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: #0f172a;
+}
+
+.section-pill {
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(5, 50, 114, 0.1);
+    color: #053272;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.mobile-active-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem;
+    border-radius: 16px;
+    background: #ffffff;
+    text-decoration: none;
+    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05);
+}
+
+.active-card-left {
+    display: grid;
+    gap: 0.15rem;
+}
+
+.active-card-left strong {
+    color: #0f172a;
+    font-size: 0.95rem;
+}
+
+.active-card-left span {
+    color: #64748b;
+    font-size: 0.78rem;
+}
+
+.mobile-promo {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 1rem 1.1rem;
+    border-radius: 18px;
+    color: #ffffff;
+    background: linear-gradient(135deg, #1d4ed8, #053272);
+    text-decoration: none;
+    box-shadow: 0 12px 26px rgba(5, 50, 114, 0.22);
+}
+
+.promo-copy {
+    display: grid;
+    gap: 0.15rem;
+}
+
+.promo-copy strong {
+    font-size: 1.02rem;
+}
+
+.promo-copy span {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.mobile-promo i {
+    font-size: 1.1rem;
+}
+
+/* ─────────── Original desktop breakpoints below ─────────── */
 
 @media (max-width: 1100px) {
     .submission-banner {

@@ -1,6 +1,7 @@
 <template>
-    <div class="dashboard-container">
+    <div class="dashboard-container client-pwa-shell">
         <ClientSidebar current-page="dashboard" />
+        <ClientBottomNav current-page="dashboard" />
 
         <main class="main-content">
             <header class="main-header">
@@ -692,6 +693,7 @@ import { reactive, ref, computed } from 'vue'
 import { router } from '@inertiajs/vue3'
 import axios from 'axios'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
+import ClientBottomNav from '../../Components/ClientBottomNav.vue'
 
 const props = defineProps({
     serviceRequest: {

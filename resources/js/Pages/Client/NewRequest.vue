@@ -1,6 +1,7 @@
 <template>
-    <div class="dashboard-container">
+    <div class="dashboard-container client-pwa-shell">
         <ClientSidebar current-page="new-request" />
+        <ClientBottomNav current-page="new-request" />
 
         <main class="main-content">
             <header class="main-header">
@@ -241,6 +242,7 @@
 import { Link, useForm } from '@inertiajs/vue3'
 import { computed, ref } from 'vue'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
+import ClientBottomNav from '../../Components/ClientBottomNav.vue'
 
 const props = defineProps({
     serviceCategories: {
@@ -602,7 +604,6 @@ defineOptions({
 }
 
 @media (max-width: 900px) {
-    .request-steps,
     .review-grid {
         grid-template-columns: 1fr;
     }
@@ -622,6 +623,303 @@ defineOptions({
     .form-step-actions .btn,
     .form-step-actions-split .btn {
         width: 100%;
+    }
+}
+
+/* ─────────── Mobile (≤1023px) — senior-design polish ─────────── */
+@media (max-width: 1023.98px) {
+    .client-pwa-shell .main-content > .main-header {
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0;
+        margin-bottom: 0.85rem;
+    }
+
+    .client-pwa-shell .main-content > .main-header h1 {
+        font-size: 1.2rem;
+        margin: 0;
+        flex: 1;
+    }
+
+    .client-pwa-shell .main-content > .main-header .btn {
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        border-radius: 12px;
+        font-size: 0;
+    }
+
+    .client-pwa-shell .main-content > .main-header .btn::before {
+        content: "\f053"; /* fa-chevron-left */
+        font-family: "Font Awesome 5 Free", "Font Awesome 6 Free";
+        font-weight: 900;
+        font-size: 0.9rem;
+    }
+
+    .client-pwa-shell .main-content > .main-header .btn i {
+        display: none;
+    }
+
+    .client-pwa-shell .rfq-form {
+        gap: 1rem;
+    }
+
+    .client-pwa-shell .panel-section > .panel-card.rfq-form {
+        padding: 1.1rem;
+        border-radius: 20px;
+    }
+
+    /* ── Compact step indicator ─────────────── */
+    .client-pwa-shell .request-steps {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.4rem;
+        padding: 0.45rem;
+        border-radius: 14px;
+        background: #f1f5f9;
+    }
+
+    .client-pwa-shell .step-card {
+        flex-direction: column;
+        align-items: center;
+        gap: 0.3rem;
+        padding: 0.6rem 0.35rem;
+        border: 0;
+        background: transparent;
+        text-align: center;
+    }
+
+    .client-pwa-shell .step-card-active {
+        background: #ffffff;
+        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.05);
+    }
+
+    .client-pwa-shell .step-number {
+        width: 1.6rem;
+        height: 1.6rem;
+        font-size: 0.85rem;
+    }
+
+    .client-pwa-shell .step-card strong {
+        font-size: 0.78rem;
+        color: #64748b;
+        font-weight: 600;
+    }
+
+    .client-pwa-shell .step-card-active strong {
+        color: #053272;
+    }
+
+    .client-pwa-shell .step-card p {
+        display: none;
+    }
+
+    /* ── Form sections ──────────────────────── */
+    .client-pwa-shell .form-section {
+        padding: 0;
+    }
+
+    .client-pwa-shell .form-section .card-header h3 {
+        font-size: 1.02rem;
+        margin: 0;
+    }
+
+    .client-pwa-shell .form-description {
+        font-size: 0.85rem;
+        line-height: 1.5;
+        margin: 0.25rem 0 0.85rem;
+        color: #64748b;
+    }
+
+    /* ── Category tiles ─────────────────────── */
+    .client-pwa-shell .category-select {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.55rem;
+    }
+
+    .client-pwa-shell .category-item {
+        padding: 1rem 0.5rem;
+        border-radius: 14px;
+        gap: 0.45rem;
+    }
+
+    .client-pwa-shell .category-item i {
+        font-size: 1.5rem;
+        color: #053272;
+    }
+
+    .client-pwa-shell .category-item span {
+        font-size: 0.82rem;
+        font-weight: 600;
+    }
+
+    .client-pwa-shell .selected-category-card {
+        padding: 0.85rem;
+        border-radius: 16px;
+        gap: 0.75rem;
+    }
+
+    .client-pwa-shell .selected-category-icon {
+        width: 2.4rem;
+        height: 2.4rem;
+        font-size: 1rem;
+    }
+
+    .client-pwa-shell .selected-category-copy strong {
+        font-size: 0.95rem;
+    }
+
+    .client-pwa-shell .selected-category-copy p {
+        font-size: 0.82rem;
+        line-height: 1.4;
+    }
+
+    /* ── Inputs ────────────────────────────── */
+    .client-pwa-shell .form-row {
+        display: grid;
+        gap: 0.85rem;
+        margin-bottom: 0.85rem;
+    }
+
+    .client-pwa-shell .form-group {
+        display: grid;
+        gap: 0.35rem;
+    }
+
+    .client-pwa-shell .form-group label {
+        font-size: 0.78rem;
+        font-weight: 700;
+        color: #475569;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    .client-pwa-shell .form-group input,
+    .client-pwa-shell .form-group select {
+        height: 48px;
+        padding: 0 0.95rem;
+        border-radius: 12px;
+        border: 1px solid #e2e8f0;
+        background: #f8fafc;
+        font-size: 0.95rem;
+        color: #0f172a;
+        -webkit-appearance: none;
+        appearance: none;
+    }
+
+    .client-pwa-shell .form-group textarea {
+        padding: 0.85rem 0.95rem;
+        border-radius: 12px;
+        border: 1px solid #e2e8f0;
+        background: #f8fafc;
+        font-size: 0.95rem;
+        color: #0f172a;
+        font-family: inherit;
+        line-height: 1.5;
+        min-height: 110px;
+        resize: vertical;
+    }
+
+    .client-pwa-shell .form-group input:focus,
+    .client-pwa-shell .form-group select:focus,
+    .client-pwa-shell .form-group textarea:focus {
+        outline: none;
+        border-color: #053272;
+        background: #ffffff;
+        box-shadow: 0 0 0 3px rgba(5, 50, 114, 0.1);
+    }
+
+    /* ── File upload ─────────────────────────── */
+    .client-pwa-shell .file-upload-box {
+        padding: 1.25rem 1rem;
+        border-radius: 14px;
+        border: 1.5px dashed #cbd5e1;
+        background: #f8fafc;
+        text-align: center;
+    }
+
+    .client-pwa-shell .file-upload-box i {
+        font-size: 1.5rem;
+        color: #053272;
+    }
+
+    .client-pwa-shell .file-upload-box p {
+        margin: 0.4rem 0 0;
+        font-size: 0.85rem;
+        color: #64748b;
+    }
+
+    .client-pwa-shell .selected-files {
+        margin-top: 0.65rem;
+        display: grid;
+        gap: 0.45rem;
+    }
+
+    .client-pwa-shell .file-item {
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.55rem 0.75rem;
+        border-radius: 10px;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        font-size: 0.85rem;
+    }
+
+    /* ── Review step ─────────────────────────── */
+    .client-pwa-shell .review-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.55rem;
+    }
+
+    .client-pwa-shell .review-card,
+    .client-pwa-shell .review-note {
+        padding: 0.85rem;
+        border-radius: 14px;
+    }
+
+    .client-pwa-shell .review-label {
+        font-size: 0.7rem;
+    }
+
+    .client-pwa-shell .review-card strong {
+        font-size: 0.95rem;
+    }
+
+    .client-pwa-shell .review-note p {
+        font-size: 0.9rem;
+        line-height: 1.55;
+    }
+
+    /* ── Step actions ─────────────────────────── */
+    .client-pwa-shell .form-step-actions {
+        display: grid;
+        gap: 0.5rem;
+        margin-top: 1rem;
+    }
+
+    .client-pwa-shell .form-step-actions-split {
+        grid-template-columns: 1fr 1.4fr;
+    }
+
+    .client-pwa-shell .form-step-actions .btn {
+        width: 100%;
+        height: 48px;
+        border-radius: 12px;
+        font-weight: 700;
+        justify-content: center;
+    }
+
+    .client-pwa-shell .form-actions p {
+        font-size: 0.85rem;
+        color: #64748b;
+        line-height: 1.5;
+    }
+
+    /* ── Feedback banner ─────────────────────── */
+    .client-pwa-shell .request-feedback {
+        padding: 0.85rem 1rem;
+        border-radius: 14px;
+        font-size: 0.88rem;
     }
 }
 

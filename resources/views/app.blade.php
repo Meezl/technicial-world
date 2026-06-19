@@ -15,8 +15,13 @@
         <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg" />
         <link rel="shortcut icon" href="/icons/favicon.ico" />
         <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
-        <meta name="apple-mobile-web-app-title" content="Technician World" />
-        <link rel="manifest" href="/icons/site.webmanifest" />
+        @php
+            $clientArea = request()->is('client*');
+            $appTitle = $clientArea ? 'Client – Technician World' : 'Technician World';
+            $manifestHref = $clientArea ? '/client-manifest.json' : '/icons/site.webmanifest';
+        @endphp
+        <meta name="apple-mobile-web-app-title" content="{{ $appTitle }}" />
+        <link rel="manifest" href="{{ $manifestHref }}" />
 
         <!-- Fonts -->
         <link rel="preconnect" href="https://fonts.bunny.net">

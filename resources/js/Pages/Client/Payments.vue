@@ -1,6 +1,7 @@
 <template>
-    <div class="dashboard-container">
+    <div class="dashboard-container client-pwa-shell">
         <ClientSidebar current-page="payments" />
+        <ClientBottomNav current-page="payments" />
 
         <main class="main-content payments-content">
             <section class="payments-hero">
@@ -222,8 +223,8 @@
                                 </thead>
                                 <tbody>
                                     <tr v-for="pr in job.payment_requests" :key="pr.id">
-                                        <td>{{ formatDate(pr.paid_at || pr.created_at) }}</td>
-                                        <td>
+                                        <td data-label="Date">{{ formatDate(pr.paid_at || pr.created_at) }}</td>
+                                        <td data-label="Reference">
                                             {{ pr.payment_request_id }}
                                             <span v-if="pr.mpesa_receipt_number" class="receipt-ref">
                                                 M-Pesa: {{ pr.mpesa_receipt_number }}
@@ -235,14 +236,14 @@
                                                 Ref: {{ pr.bank_reference }}
                                             </span>
                                         </td>
-                                        <td><strong>{{ formatCurrency(pr.amount) }}</strong></td>
-                                        <td>
+                                        <td data-label="Amount"><strong>{{ formatCurrency(pr.amount) }}</strong></td>
+                                        <td data-label="Method">
                                             <span class="method-badge" v-if="inferredMethod(pr)">
                                                 {{ formatMethod(inferredMethod(pr)) }}
                                             </span>
                                             <span v-else class="method-badge pending-method">Not recorded</span>
                                         </td>
-                                        <td>
+                                        <td data-label="Status">
                                             <span :class="['status-badge', getPaymentStatusClass(pr.status)]">
                                                 {{ formatPaymentStatus(pr.status) }}
                                             </span>
@@ -272,6 +273,7 @@
 import { computed, ref } from 'vue'
 import { router } from '@inertiajs/vue3'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
+import ClientBottomNav from '../../Components/ClientBottomNav.vue'
 
 const props = defineProps({
     paymentsByJob: { type: Array, default: () => [] },
@@ -1050,6 +1052,244 @@ defineOptions({ layout: null })
     }
 }
 
+/* ─────────── Mobile shell (≤1023px) ─────────── */
+@media (max-width: 1023.98px) {
+    .client-pwa-shell .payments-content {
+        background: transparent;
+    }
+
+    .client-pwa-shell .payments-hero {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .client-pwa-shell .hero-copy {
+        padding: 1.25rem;
+        border-radius: 20px;
+    }
+
+    .client-pwa-shell .hero-copy h1 {
+        margin-top: 0.5rem;
+        font-size: 1.45rem;
+    }
+
+    .client-pwa-shell .hero-copy p {
+        margin-top: 0.55rem;
+        font-size: 0.92rem;
+        line-height: 1.5;
+    }
+
+    .client-pwa-shell .hero-pills {
+        margin-top: 1rem;
+        gap: 0.5rem;
+    }
+
+    .client-pwa-shell .hero-pill {
+        padding: 0.45rem 0.75rem;
+        font-size: 0.78rem;
+    }
+
+    .client-pwa-shell .filter-panel {
+        padding: 1rem;
+        border-radius: 18px;
+        gap: 0.85rem;
+    }
+
+    .client-pwa-shell .filter-copy h3 {
+        font-size: 1.02rem;
+    }
+
+    .client-pwa-shell .filter-copy p {
+        font-size: 0.85rem;
+    }
+
+    .client-pwa-shell .filter-grid {
+        grid-template-columns: 1fr;
+        gap: 0.65rem;
+    }
+
+    .client-pwa-shell .filter-actions {
+        gap: 0.5rem;
+    }
+
+    .client-pwa-shell .filter-button {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .client-pwa-shell .payment-kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.65rem;
+        margin-bottom: 1rem;
+    }
+
+    .client-pwa-shell .payment-kpi-card {
+        padding: 1rem;
+        border-radius: 18px;
+    }
+
+    .client-pwa-shell .payment-kpi-icon {
+        width: 2.2rem;
+        height: 2.2rem;
+        border-radius: 12px;
+        font-size: 0.9rem;
+    }
+
+    .client-pwa-shell .payment-kpi-tag {
+        font-size: 0.7rem;
+        padding: 0.25rem 0.5rem;
+    }
+
+    .client-pwa-shell .payment-kpi-card h4 {
+        font-size: 0.82rem;
+    }
+
+    .client-pwa-shell .payment-kpi-value {
+        font-size: 1.25rem;
+        margin-top: 0.35rem;
+    }
+
+    .client-pwa-shell .payment-kpi-footnote {
+        font-size: 0.76rem;
+        margin-top: 0.45rem;
+        line-height: 1.4;
+    }
+
+    .client-pwa-shell .jobs-list {
+        gap: 1rem;
+    }
+
+    .client-pwa-shell .payment-job-card {
+        padding: 1.1rem;
+        border-radius: 20px;
+    }
+
+    .client-pwa-shell .job-card-header {
+        flex-direction: column;
+        gap: 0.85rem;
+        margin-bottom: 1rem;
+    }
+
+    .client-pwa-shell .job-header-side {
+        text-align: left;
+    }
+
+    .client-pwa-shell .job-header-main h3 {
+        font-size: 1.1rem;
+    }
+
+    .client-pwa-shell .job-summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.55rem;
+        margin-bottom: 1rem;
+    }
+
+    .client-pwa-shell .job-summary-tile {
+        padding: 0.75rem;
+        border-radius: 14px;
+    }
+
+    .client-pwa-shell .job-summary-label {
+        font-size: 0.7rem;
+    }
+
+    .client-pwa-shell .job-summary-tile strong {
+        font-size: 0.98rem;
+    }
+
+    .client-pwa-shell .payment-progress {
+        padding: 0.85rem;
+        margin: 1rem 0;
+        border-radius: 14px;
+    }
+
+    .client-pwa-shell .progress-info,
+    .client-pwa-shell .progress-amounts {
+        font-size: 0.82rem;
+        gap: 0.5rem;
+    }
+
+    .client-pwa-shell .section-header {
+        flex-direction: column;
+        gap: 0.4rem;
+    }
+
+    .client-pwa-shell .section-header h4 {
+        font-size: 0.95rem;
+    }
+
+    .client-pwa-shell .milestone-row,
+    .client-pwa-shell .pending-request-card {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.6rem;
+        padding: 0.85rem;
+        border-radius: 14px;
+    }
+
+    .client-pwa-shell .milestone-meta {
+        justify-content: flex-start;
+        width: 100%;
+    }
+
+    /* Replace the desktop transaction table with a card-style stack. */
+    .client-pwa-shell .table-shell {
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        overflow: visible;
+    }
+
+    .client-pwa-shell .data-table,
+    .client-pwa-shell .data-table thead {
+        display: none;
+    }
+
+    .client-pwa-shell .data-table,
+    .client-pwa-shell .data-table tbody,
+    .client-pwa-shell .data-table tr,
+    .client-pwa-shell .data-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .client-pwa-shell .data-table {
+        display: grid;
+        gap: 0.65rem;
+    }
+
+    .client-pwa-shell .data-table tbody {
+        display: grid;
+        gap: 0.65rem;
+    }
+
+    .client-pwa-shell .data-table tr {
+        display: grid;
+        gap: 0.4rem;
+        padding: 0.85rem 1rem;
+        border-radius: 14px;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+    }
+
+    .client-pwa-shell .data-table td {
+        padding: 0;
+        border: 0;
+    }
+
+    .client-pwa-shell .data-table td::before {
+        content: attr(data-label);
+        display: block;
+        color: #64748b;
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-bottom: 0.15rem;
+    }
+}
+
 @media (max-width: 640px) {
     .payments-hero,
     .payment-kpi-grid,
@@ -1070,6 +1310,88 @@ defineOptions({ layout: null })
 
     .job-header-side {
         text-align: left;
+    }
+}
+
+/* ─────────── Mobile polish — consistent touch targets, refined chrome ─────────── */
+@media (max-width: 1023.98px) {
+    .client-pwa-shell .date-input,
+    .client-pwa-shell .status-filter {
+        height: 48px;
+        padding: 0 0.95rem;
+        border-radius: 12px;
+        border: 1px solid #e2e8f0;
+        background: #f8fafc;
+        font-size: 0.95rem;
+        -webkit-appearance: none;
+        appearance: none;
+    }
+
+    .client-pwa-shell .status-filter {
+        background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='%2364748b'><path d='M3 5l5 5 5-5'/></svg>");
+        background-repeat: no-repeat;
+        background-position: right 0.95rem center;
+        background-size: 12px;
+        padding-right: 2.25rem;
+    }
+
+    .client-pwa-shell .filter-button {
+        height: 48px;
+        border-radius: 12px;
+        font-weight: 700;
+    }
+
+    .client-pwa-shell .filter-field span {
+        font-size: 0.72rem;
+        font-weight: 700;
+        color: #475569;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+    }
+
+    .client-pwa-shell .status-badge,
+    .client-pwa-shell .method-badge {
+        font-size: 0.72rem;
+        padding: 0.3rem 0.55rem;
+    }
+
+    /* Brighten the hero on mobile — the dark teal feels heavy at small sizes. */
+    .client-pwa-shell .hero-copy {
+        background:
+            radial-gradient(circle at top right, rgba(253, 230, 138, 0.22), transparent 50%),
+            linear-gradient(135deg, #053272 0%, #1d4ed8 100%);
+    }
+
+    .client-pwa-shell .hero-kicker {
+        color: rgba(255, 255, 255, 0.78);
+    }
+
+    /* Card-stack table: emphasize the amount, soften the rest */
+    .client-pwa-shell .data-table tr {
+        background: #ffffff;
+        border-color: #eef2f7;
+        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+    }
+
+    .client-pwa-shell .data-table td {
+        color: #0f172a;
+        font-size: 0.88rem;
+    }
+
+    .client-pwa-shell .data-table td strong {
+        font-size: 1rem;
+    }
+
+    .client-pwa-shell .no-data {
+        padding: 2rem 1rem;
+    }
+
+    .client-pwa-shell .no-data i {
+        font-size: 2rem;
+    }
+
+    .client-pwa-shell .no-data p {
+        font-size: 0.9rem;
     }
 }
 </style>

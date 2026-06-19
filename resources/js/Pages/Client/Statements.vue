@@ -1,6 +1,7 @@
 <template>
-    <div class="dashboard-container">
+    <div class="dashboard-container client-pwa-shell">
         <ClientSidebar current-page="statements" />
+        <ClientBottomNav current-page="payments" />
 
         <main class="main-content">
             <header class="main-header">
@@ -92,6 +93,7 @@
 import { ref } from 'vue'
 import { Link, router } from '@inertiajs/vue3'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
+import ClientBottomNav from '../../Components/ClientBottomNav.vue'
 
 const props = defineProps({
     statement: { type: Object, default: () => ({ total_paid: 0, payments: [], by_rfq: [] }) },

@@ -1,6 +1,7 @@
 <template>
-    <div class="dashboard-container">
+    <div class="dashboard-container client-pwa-shell">
         <ClientSidebar current-page="support" />
+        <ClientBottomNav current-page="support" />
 
         <main class="main-content">
             <header class="main-header">
@@ -101,6 +102,7 @@
 <script setup>
 import { Link } from '@inertiajs/vue3'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
+import ClientBottomNav from '../../Components/ClientBottomNav.vue'
 import { ref, reactive } from 'vue'
 
 const showTicketForm = ref(false)
@@ -192,5 +194,89 @@ defineOptions({
     margin: 0;
     color: var(--medium-grey);
     line-height: 1.4;
+}
+
+/* ─────────── Mobile (≤1023px) ─────────── */
+@media (max-width: 1023.98px) {
+    .client-pwa-shell .main-content > .main-header {
+        padding: 0.25rem 0 0.75rem;
+    }
+
+    .client-pwa-shell .main-content > .main-header h1 {
+        font-size: 1.35rem;
+        margin: 0;
+    }
+
+    .client-pwa-shell .panel-section {
+        margin-bottom: 1rem;
+    }
+
+    .support-grid {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+
+    .support-grid .panel-card,
+    .panel-card.full-width {
+        padding: 1.1rem;
+        border-radius: 18px;
+    }
+
+    .support-grid .panel-card .card-header h3,
+    .panel-card.full-width .card-header h3 {
+        font-size: 1.02rem;
+    }
+
+    .support-grid .panel-card p {
+        font-size: 0.92rem;
+        line-height: 1.5;
+    }
+
+    .support-grid .btn,
+    .support-grid .btn-whatsapp {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .support-form .form-row {
+        grid-template-columns: 1fr;
+        gap: 0.85rem;
+        margin-bottom: 0.85rem;
+    }
+
+    .support-form .form-actions {
+        display: flex;
+    }
+
+    .support-form .form-actions .btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .contact-grid {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+
+    .contact-item {
+        gap: 0.85rem;
+        padding: 0.85rem 1rem;
+        background: #f8fafc;
+        border-radius: 14px;
+    }
+
+    .contact-item i {
+        font-size: 1.4rem;
+        width: 40px;
+    }
+
+    .contact-item h4 {
+        font-size: 0.95rem;
+        margin: 0 0 0.2rem 0;
+    }
+
+    .contact-item p {
+        font-size: 0.88rem;
+    }
 }
 </style>

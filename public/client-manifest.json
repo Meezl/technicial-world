@@ -1,0 +1,21 @@
+{
+    "name": "Technician World — Client",
+    "short_name": "TW Client",
+    "start_url": "/client/dashboard",
+    "scope": "/client/",
+    "display": "standalone",
+    "background_color": "#F4F6F8",
+    "theme_color": "#053272",
+    "icons": [
+        {
+            "src": "/icons/icon-192.png",
+            "type": "image/png",
+            "sizes": "192x192"
+        },
+        {
+            "src": "/icons/icon-512.png",
+            "type": "image/png",
+            "sizes": "512x512"
+        }
+    ]
+}
