@@ -41,6 +41,10 @@ Route::get('/ecommerce', fn() => Inertia::render('Ecommerce'));
 Route::get('/join-as-technician', [TechnicianLeadController::class, 'create'])->name('technician.interest');
 Route::post('/join-as-technician', [TechnicianLeadController::class, 'store'])->name('technician.interest.store');
 
+// Public ticket creation (open to guests and registered users)
+Route::get('/open-ticket', [\App\Http\Controllers\TicketController::class, 'create'])->name('tickets.create');
+Route::post('/open-ticket', [\App\Http\Controllers\TicketController::class, 'store'])->name('tickets.store');
+
 // M-Pesa callback route (no auth required)
 Route::post('/api/mpesa/callback', [\App\Http\Controllers\PaymentController::class, 'mpesaCallback'])->name('mpesa.callback');
 
@@ -51,7 +55,7 @@ Route::post('/api/transactions/c2b/confirmation', [\App\Http\Controllers\Payment
 
 // ==================== AUTH DASHBOARD (Role Router) ====================
 
-Route::get('/dashboard', [DashboardController::class, 'index'])->middleware(['auth', 'verified'])->name('dashboard');
+Route::get('/dashboard', [DashboardController::class, 'index'])->middleware(['auth', 'verified.grace'])->name('dashboard');
 
 // ==================== PROFILE ====================
 
@@ -85,12 +89,17 @@ Route::middleware(['auth'])->group(function () {
     // Service request progress routes
     Route::post('/client/service-request/{serviceRequest}/confirm-arrival', [\App\Http\Controllers\ClientController::class, 'confirmArrival'])->name('client.confirm-arrival');
     Route::post('/client/service-request/{serviceRequest}/confirm-completion', [\App\Http\Controllers\ClientController::class, 'confirmCompletion'])->name('client.confirm-completion');
+    Route::post('/client/schedule-extensions/{scheduleExtension}/decide', [\App\Http\Controllers\ScheduleExtensionController::class, 'clientDecide'])->name('client.schedule-extensions.decide');
     Route::post('/client/service-request/{serviceRequest}/rate', [\App\Http\Controllers\ClientController::class, 'rateJob'])->name('client.rate-job');
 
     // Client payment routes
     Route::post('/client/payments/{paymentRequest}/mpesa', [\App\Http\Controllers\PaymentController::class, 'initiateMpesa'])->name('client.payments.mpesa');
     Route::get('/client/payments/{paymentRequest}/status', [\App\Http\Controllers\PaymentController::class, 'checkMpesaStatus'])->name('client.payments.status');
     Route::post('/client/payments/{paymentRequest}/offline', [\App\Http\Controllers\PaymentController::class, 'recordOfflinePayment'])->name('client.payments.offline');
+
+    // Client tickets (authenticated)
+    Route::get('/client/tickets', [\App\Http\Controllers\TicketController::class, 'clientIndex'])->name('client.tickets.index');
+    Route::get('/client/tickets/{ticket}', [\App\Http\Controllers\TicketController::class, 'clientShow'])->name('client.tickets.show');
 
     // Client statements (redirects to payments)
     Route::get('/client/statements', function () {
@@ -250,6 +259,8 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::post('/rfq/{serviceRequest}/reject', [AdminDashboardController::class, 'rejectRFQ'])->name('admin.rfq.reject');
     Route::post('/rfq/{serviceRequest}/assign-pm', [AdminDashboardController::class, 'assignPm'])->name('admin.rfq.assign-pm');
     Route::post('/rfq/{serviceRequest}/request-payment', [AdminDashboardController::class, 'requestPayment'])->name('admin.rfq.request-payment');
+    Route::post('/jobs/{serviceRequest}/raise-final-payment', [AdminDashboardController::class, 'raiseFinalPayment'])->name('admin.jobs.raise-final-payment');
+    Route::post('/schedule-extensions/{scheduleExtension}/decide', [\App\Http\Controllers\ScheduleExtensionController::class, 'adminDecide'])->name('admin.schedule-extensions.decide');
     Route::post('/rfq/{serviceRequest}/confirm-payment-on-behalf', [AdminDashboardController::class, 'confirmPaymentOnBehalf'])->name('admin.rfq.confirm-payment-on-behalf');
 
     // Reports
@@ -261,6 +272,21 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
 
     // Audit Logs
     Route::get('/audit-logs', [AdminDashboardController::class, 'auditLogs'])->name('admin.audit-logs');
+
+    // Email Logs (#5)
+    Route::get('/email-logs', [\App\Http\Controllers\Admin\EmailLogController::class, 'index'])->name('admin.email-logs.index');
+    Route::get('/email-logs/{emailLog}', [\App\Http\Controllers\Admin\EmailLogController::class, 'show'])->name('admin.email-logs.show');
+
+    // Tickets management
+    Route::get('/tickets', [\App\Http\Controllers\Admin\TicketController::class, 'index'])->name('admin.tickets.index');
+    Route::get('/tickets/{ticket}', [\App\Http\Controllers\Admin\TicketController::class, 'show'])->name('admin.tickets.show');
+    Route::post('/tickets/{ticket}/transition', [\App\Http\Controllers\Admin\TicketController::class, 'transition'])->name('admin.tickets.transition');
+
+    // Service Categories CRUD
+    Route::get('/service-categories', [\App\Http\Controllers\Admin\ServiceCategoryController::class, 'index'])->name('admin.service-categories.index');
+    Route::post('/service-categories', [\App\Http\Controllers\Admin\ServiceCategoryController::class, 'store'])->name('admin.service-categories.store');
+    Route::put('/service-categories/{serviceCategory}', [\App\Http\Controllers\Admin\ServiceCategoryController::class, 'update'])->name('admin.service-categories.update');
+    Route::delete('/service-categories/{serviceCategory}', [\App\Http\Controllers\Admin\ServiceCategoryController::class, 'destroy'])->name('admin.service-categories.destroy');
 
     // M-Pesa Transactions
     Route::resource('mpesa-transactions', \App\Http\Controllers\Admin\MpesaTransactionController::class)->except(['create', 'store']);
@@ -324,6 +350,7 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     // API helpers (must be before the {sheet} wildcard)
     Route::get('/payment-processing/api/technicians-for-job', [\App\Http\Controllers\Admin\PaymentProcessingController::class, 'techniciansForJob'])->name('admin.payment-processing.technicians-for-job');
     Route::get('/payment-processing/api/compute-amounts', [\App\Http\Controllers\Admin\PaymentProcessingController::class, 'computeAmounts'])->name('admin.payment-processing.compute-amounts');
+    Route::get('/payment-processing/api/auto-compute-entries', [\App\Http\Controllers\Admin\PaymentProcessingController::class, 'autoComputeEntries'])->name('admin.payment-processing.auto-compute-entries');
     Route::get('/payment-processing/{sheet}', [\App\Http\Controllers\Admin\PaymentProcessingController::class, 'show'])->name('admin.payment-processing.show');
     Route::get('/payment-processing/{sheet}/download', [\App\Http\Controllers\Admin\PaymentProcessingController::class, 'download'])->name('admin.payment-processing.download');
 
@@ -357,6 +384,7 @@ Route::middleware(['auth', 'role:technician'])->group(function () {
 
     // Progress reports
     Route::post('/technician/jobs/{serviceRequest}/progress-report', [\App\Http\Controllers\TechnicianController::class, 'submitProgressReport'])->name('technician.progress-report');
+    Route::post('/technician/jobs/{serviceRequest}/request-extension', [\App\Http\Controllers\ScheduleExtensionController::class, 'store'])->name('technician.request-extension');
 
     // Earnings
     Route::get('/technician/earnings', [\App\Http\Controllers\TechnicianController::class, 'earnings'])->name('technician.earnings');

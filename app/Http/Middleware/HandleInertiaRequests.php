@@ -38,7 +38,10 @@ class HandleInertiaRequests extends Middleware
             'flash' => [
                 'success' => fn () => $request->session()->get('success'),
                 'error' => fn () => $request->session()->get('error'),
+                'warning' => fn () => $request->session()->get('warning'),
                 'submittedRequest' => fn () => $request->session()->get('submittedRequest'),
+                'verification_grace_remaining' => fn () => $request->session()->get('verification_grace_remaining'),
+                'verification_denied_reason' => fn () => $request->session()->get('verification_denied_reason'),
             ],
             'ziggy' => fn () => [
                 ...(new Ziggy)->toArray(),

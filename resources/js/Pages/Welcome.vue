@@ -11,6 +11,7 @@
                     <p class="subtitle">Connect with qualified technicians across Kenya. Quality work, reliable service, transparent pricing.</p>
                     <div class="hero-cta">
                         <Link href="/contact" class="btn-primary">Get a Quote</Link>
+                        <Link href="/open-ticket" class="btn-emergency">🚨 Open a Ticket</Link>
                         <a href="#about" class="btn-secondary">Learn More</a>
                     </div>
                 </div>
@@ -19,8 +20,8 @@
             <section id="about" class="about-section">
                 <div class="about-content">
                     <div class="about-images">
-                        <img src="https://bbraun.webpinn.com/assets/img/pl.jpeg" alt="Technician working on electrical wiring">
-                        <img src="https://bbraun.webpinn.com/assets/img/ph.jpeg" alt="">
+                        <img src="/img/ae.jpg" alt="Technician at work" @error="(e) => e.target.src = 'https://images.unsplash.com/photo-1581094794329-c8112a89af12?q=80&w=1200&auto=format&fit=crop'">
+                        <img src="/img/tcc.jpg" alt="Quality construction" @error="(e) => e.target.src = 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?q=80&w=1200&auto=format&fit=crop'">
                     </div>
                     <div class="about-text">
                         <h2>A Unified Service & Operations Management Platform</h2>
@@ -157,4 +158,20 @@ defineOptions({
 </script>
 
 <style>
+.btn-emergency {
+    display: inline-block;
+    padding: 0.75rem 1.5rem;
+    background: #dc2626;
+    color: white;
+    text-decoration: none;
+    border-radius: 6px;
+    font-weight: 600;
+    margin: 0 0.5rem;
+    transition: background 0.15s, transform 0.15s;
+    box-shadow: 0 2px 8px rgba(220, 38, 38, 0.25);
+}
+.btn-emergency:hover {
+    background: #b91c1c;
+    transform: translateY(-1px);
+}
 </style>

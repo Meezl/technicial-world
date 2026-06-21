@@ -98,12 +98,20 @@ class ProgressService
         array $adminPhotos = []
     ): ProgressReport {
         return DB::transaction(function () use ($report, $pmId, $data, $adminPhotos) {
+            // Default client_visible_notes to the technician's original notes
+            // if admin didn't override — preserves the report even when admin
+            // doesn't edit. The technician's `notes` stay untouched.
+            $clientNotes = array_key_exists('client_visible_notes', $data)
+                ? $data['client_visible_notes']
+                : ($report->client_visible_notes ?? $report->notes);
+
             $report->update([
                 'is_validated' => true,
                 'validated_by' => $pmId,
                 'validated_at' => now(),
                 'validated_percent' => $data['validated_percent'] ?? $report->percent_complete,
                 'validation_notes' => $data['validation_notes'] ?? null,
+                'client_visible_notes' => $clientNotes,
             ]);
 
             // Handle photo removals
@@ -189,6 +197,19 @@ class ProgressService
             $serviceRequest->update($updateData);
             $this->triggerBillingMilestones($serviceRequest->fresh(), (float) $effectivePercent);
         }
+    }
+
+    /**
+     * Public wrapper used after a quote revision is approved (#4). Fires
+     * any billing milestones whose threshold is below current progress
+     * against the freshly-approved figures.
+     */
+    public function retriggerMilestonesForApprovedRevision(ServiceRequest $serviceRequest): void
+    {
+        $this->triggerBillingMilestones(
+            $serviceRequest->fresh(),
+            (float) $serviceRequest->progress_percentage
+        );
     }
 
     /**

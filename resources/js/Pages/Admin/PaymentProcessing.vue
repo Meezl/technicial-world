@@ -67,9 +67,20 @@
                                 <h3>Payment Entries</h3>
                                 <p>Add one row per technician–job combination. The system will auto-populate amounts when you select a technician.</p>
                             </div>
-                            <button class="btn btn-primary btn-sm" @click="addRow">
-                                <i class="fas fa-plus"></i> Add Row
-                            </button>
+                            <div style="display:flex;gap:.5rem;">
+                                <button
+                                    class="btn btn-secondary btn-sm"
+                                    @click="autoCompute"
+                                    :disabled="!form.period_start || !form.period_end || autoComputing"
+                                    title="Auto-fill all eligible technicians with validated progress in this period"
+                                >
+                                    <i class="fas fa-magic"></i>
+                                    {{ autoComputing ? 'Computing…' : 'Auto-Compute Entries' }}
+                                </button>
+                                <button class="btn btn-primary btn-sm" @click="addRow">
+                                    <i class="fas fa-plus"></i> Add Row
+                                </button>
+                            </div>
                         </div>
 
                         <div v-if="form.entries.length === 0" class="empty-hint">
@@ -458,6 +469,43 @@ const addRow = () => {
     form.value.entries.push(blankRow())
 }
 
+const autoComputing = ref(false)
+const autoCompute = async () => {
+    if (!form.value.period_start || !form.value.period_end) return
+    if (form.value.entries.length > 0) {
+        if (!confirm(`You already have ${form.value.entries.length} entr${form.value.entries.length === 1 ? 'y' : 'ies'}. Auto-compute will replace them. Continue?`)) return
+    }
+    autoComputing.value = true
+    try {
+        const { data } = await axios.get('/admin/payment-processing/api/auto-compute-entries', {
+            params: {
+                period_start: form.value.period_start,
+                period_end: form.value.period_end,
+            },
+        })
+        if (data.count === 0) {
+            alert('No eligible technicians with validated progress and unpaid balances in this period.')
+            return
+        }
+        form.value.entries = data.entries.map(e => ({
+            ...blankRow(),
+            service_request_id: e.service_request_id,
+            technician_id: e.technician_id,
+            approved_amount: e.approved_amount,
+            cumulative_progress_pct: e.cumulative_progress_pct,
+            cumulative_amount_due: e.cumulative_amount_due,
+            previous_cumulative_paid: e.previous_cumulative_paid,
+            current_period_payable: e.current_period_payable,
+            _label_sr: e.service_request_label,
+            _label_tech: e.technician_label,
+        }))
+    } catch (e) {
+        alert(e.response?.data?.message || 'Auto-compute failed.')
+    } finally {
+        autoComputing.value = false
+    }
+}
+
 const removeRow = (idx) => {
     form.value.entries.splice(idx, 1)
 }
@@ -559,19 +607,16 @@ const submitSheet = () => {
         }
 
         // Overpayment guard (client-side preview)
+        // Only cap against agreed compensation. Validated progress is for
+        // information only — admin can pay any cash-flow amount within the
+        // agreed total.
         const agreed = parseFloat(row.approved_amount) || 0
         const previousPaid = parseFloat(row.previous_cumulative_paid) || 0
         const payable = parseFloat(row.current_period_payable) || 0
-        const earned = parseFloat(row.cumulative_amount_due) || 0
 
         if (agreed > 0 && (previousPaid + payable) > agreed + 0.001) {
             errors.value.push(
                 `Row ${i + 1}: Payment of KES ${formatCurrency(payable)} would bring total paid to KES ${formatCurrency(previousPaid + payable)}, exceeding the agreed compensation of KES ${formatCurrency(agreed)}.`
-            )
-        }
-        if (payable > (earned - previousPaid) + 0.001) {
-            errors.value.push(
-                `Row ${i + 1}: Payment exceeds the unpaid earned amount (KES ${formatCurrency(Math.max(0, earned - previousPaid))} available at ${row.cumulative_progress_pct}% validated progress).`
             )
         }
     }

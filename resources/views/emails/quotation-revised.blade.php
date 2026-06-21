@@ -45,6 +45,23 @@
         <div class="revision-banner">
             <strong>📝 Revised Quotation (Revision #{{ $revisionCount }})</strong>
             <p>Please disregard the previous quotation for this request. The figures below replace it in full.</p>
+
+            @if(!empty($cancelledRequestIds))
+            <div style="margin-top:14px;padding:10px 12px;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:6px;color:#7F1D1D;">
+                <strong>⚠ Previous payment requests cancelled:</strong>
+                <p style="margin:6px 0 4px;font-size:13px;">
+                    The following payment request{{ count($cancelledRequestIds) > 1 ? 's were' : ' was' }} cancelled because of this revision. Please disregard {{ count($cancelledRequestIds) > 1 ? 'them' : 'it' }}:
+                </p>
+                <ul style="margin:6px 0 0;padding-left:18px;font-family:'Courier New',monospace;font-size:13px;">
+                    @foreach($cancelledRequestIds as $prId)
+                    <li>{{ $prId }}</li>
+                    @endforeach
+                </ul>
+                <p style="margin:8px 0 0;font-size:12.5px;">
+                    A new payment request will follow shortly reflecting the revised figures.
+                </p>
+            </div>
+            @endif
         </div>
 
         <!-- Action buttons at the top so they don't get hidden under Gmail's "show trimmed content" -->

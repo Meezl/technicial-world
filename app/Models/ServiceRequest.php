@@ -37,6 +37,9 @@ class ServiceRequest extends Model
         'billing_milestones',
         'down_payment_requested',
         'quote_notes',
+        'expected_duration_days',
+        'commencement_at',
+        'target_completion_at',
         'quote_materials_file_path',
         'rejection_reason',
         'quoted_amount',
@@ -60,6 +63,8 @@ class ServiceRequest extends Model
         'preferred_date',
     ];
 
+    protected $appends = ['priority_window_ends_at'];
+
     protected $casts = [
         'files' => 'array',
         'quote_materials' => 'array',
@@ -82,6 +87,9 @@ class ServiceRequest extends Model
         'suspended_at' => 'datetime',
         'resumed_at' => 'datetime',
         'preferred_date' => 'date',
+        'commencement_at' => 'datetime',
+        'target_completion_at' => 'datetime',
+        'expected_duration_days' => 'integer',
         'rating' => 'decimal:1',
         'technician_arrived' => 'boolean',
         'has_sub_tasks' => 'boolean',
@@ -231,6 +239,27 @@ class ServiceRequest extends Model
     public function technicianPayments()
     {
         return $this->hasMany(TechnicianPayment::class);
+    }
+
+    public function scheduleExtensions()
+    {
+        return $this->hasMany(ScheduleExtension::class)->orderByDesc('created_at');
+    }
+
+    /**
+     * Estimated end of the priority window — based on `urgency` and
+     * created_at. Used for the soft warning when admin assigns a
+     * technician with a commencement date close to/past the window (#12).
+     */
+    public function getPriorityWindowEndsAtAttribute(): ?\Carbon\Carbon
+    {
+        if (!$this->created_at) return null;
+        return match ($this->urgency) {
+            'high'   => \Carbon\Carbon::parse($this->created_at)->addHours(48),
+            'medium' => \Carbon\Carbon::parse($this->created_at)->addDays(7),
+            'low'    => \Carbon\Carbon::parse($this->created_at)->addDays(21),
+            default  => \Carbon\Carbon::parse($this->created_at)->addDays(14),
+        };
     }
 
     public function reviews()

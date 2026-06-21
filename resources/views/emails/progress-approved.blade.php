@@ -50,10 +50,10 @@
                         </div>
                     </td>
                 </tr>
-                @if($report->validation_notes)
+                @if($report->client_visible_notes)
                 <tr>
-                    <th>Notes</th>
-                    <td>{{ $report->validation_notes }}</td>
+                    <th>Update from the team</th>
+                    <td>{{ $report->client_visible_notes }}</td>
                 </tr>
                 @endif
             </table>

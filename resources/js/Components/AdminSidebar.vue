@@ -25,8 +25,11 @@ const navItems = [
     { key: 'users', href: '/admin/users', icon: 'fas fa-users', label: 'Users', caption: 'Accounts and roles' },
     { key: 'jobs', href: '/admin/jobs', icon: 'fas fa-tasks', label: 'Jobs', caption: 'Live execution status' },
     { key: 'tools', href: '/admin/tools', icon: 'fas fa-tools', label: 'Tools', caption: 'Inventory and assets' },
+    { key: 'service-categories', href: '/admin/service-categories', icon: 'fas fa-layer-group', label: 'Service Categories', caption: 'Trades and specialities' },
+    { key: 'tickets', href: '/admin/tickets', icon: 'fas fa-life-ring', label: 'Tickets', caption: 'Support and emergency requests' },
     { key: 'payments', href: '/admin/payments', icon: 'fas fa-credit-card', label: 'Payments', caption: 'Collections and payouts' },
     { key: 'mpesa-transactions', href: '/admin/mpesa-transactions', icon: 'fas fa-mobile-alt', label: 'M-Pesa Transactions', caption: 'Raw callback logs' },
+    { key: 'email-logs', href: '/admin/email-logs', icon: 'fas fa-envelope', label: 'Email Logs', caption: 'Outgoing email archive' },
     { key: 'payment-processing', href: '/admin/payment-processing', icon: 'fas fa-file-invoice-dollar', label: 'Pay Technicians', caption: 'Process technician payments' },
     { key: 'requisitions', href: '/admin/requisitions', icon: 'fas fa-boxes', label: 'Requisitions', caption: 'Procurement workflows' },
     {

@@ -97,7 +97,21 @@ class ServiceRequestController extends Controller
             abort(403);
         }
 
-        $serviceRequest->load(['serviceCategory', 'technician.user', 'paymentRequests', 'payments', 'progressReports']);
+        $serviceRequest->load([
+            'serviceCategory',
+            'technician.user',
+            'paymentRequests',
+            'payments',
+            // Only validated reports get photos eager-loaded; client never
+            // sees unvalidated drafts. We also exclude photos the PM removed.
+            'progressReports' => function ($q) {
+                $q->orderBy('report_date', 'desc');
+            },
+            'progressReports.photos' => function ($q) {
+                $q->where('removed_by_pm', false);
+            },
+            'progressReports.technician.user:id,name',
+        ]);
 
         return Inertia::render('Client/RequestStatus', [
             'serviceRequest' => $serviceRequest

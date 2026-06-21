@@ -517,6 +517,43 @@
                 </div>
             </section>
 
+            <!-- Validated Progress Reports (#21, #22) -->
+            <section class="panel-section" v-if="validatedReports.length">
+                <div class="panel-card full-width">
+                    <div class="card-header">
+                        <h3>Site Progress Updates</h3>
+                        <small style="color:var(--text-muted);">Reports validated by our project team</small>
+                    </div>
+                    <div class="progress-reports-list">
+                        <article v-for="report in validatedReports" :key="report.id" class="progress-report-card">
+                            <header class="prc-header">
+                                <div>
+                                    <div class="prc-pct">
+                                        {{ report.validated_percent ?? report.percent_complete }}%
+                                    </div>
+                                    <div class="prc-meta">
+                                        <strong>{{ formatDate(report.report_date) }}</strong>
+                                        <span v-if="report.technician?.user?.name"> · {{ report.technician.user.name }}</span>
+                                        <span class="prc-validated-at">Validated {{ formatDate(report.validated_at) }}</span>
+                                    </div>
+                                </div>
+                                <div class="prc-progress-bar">
+                                    <div :style="`width:${report.validated_percent ?? report.percent_complete}%`"></div>
+                                </div>
+                            </header>
+
+                            <p v-if="report.client_visible_notes" class="prc-notes">{{ report.client_visible_notes }}</p>
+                            <p v-else class="prc-notes prc-notes-muted">No notes provided.</p>
+
+                            <ImageLightbox
+                                v-if="(report.photos || []).length"
+                                :images="(report.photos || []).map(p => ({ src: p.file_path, caption: p.caption }))"
+                            />
+                        </article>
+                    </div>
+                </div>
+            </section>
+
             <section class="panel-section" v-if="serviceRequest.status !== 'pending'">
                 <div class="panel-card full-width">
                     <div class="card-header">
@@ -694,6 +731,7 @@ import { router } from '@inertiajs/vue3'
 import axios from 'axios'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
 import ClientBottomNav from '../../Components/ClientBottomNav.vue'
+import ImageLightbox from '../../Components/ImageLightbox.vue'
 
 const props = defineProps({
     serviceRequest: {
@@ -735,6 +773,14 @@ const displayProgressPct = computed(() =>
 const hasUnvalidatedProgress = computed(() =>
     latestSubmittedPct.value > latestValidatedPct.value,
 )
+
+// Client-facing list: only validated reports, freshest first (#21, #22).
+const validatedReports = computed(() => {
+    const all = props.serviceRequest.progress_reports || []
+    return all
+        .filter(r => r.is_validated)
+        .sort((a, b) => new Date(b.report_date || b.created_at) - new Date(a.report_date || a.created_at))
+})
 const processingQuote = ref(false)
 const processingAction = ref(false)
 const processingPayment = ref(false)
@@ -1949,5 +1995,18 @@ defineOptions({
 .billing-ms-badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
 .billing-ms-badge.pending { background: #fef9c3; color: #854d0e; }
 .billing-ms-badge.triggered { background: #dcfce7; color: #166534; }
+
+/* Progress reports for client (#21, #22) */
+.progress-reports-list { display: flex; flex-direction: column; gap: 1rem; padding: 0 1rem 1rem; }
+.progress-report-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 1rem 1.25rem; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.prc-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: .75rem; }
+.prc-pct { font-size: 1.4rem; font-weight: 700; color: #059669; }
+.prc-meta { font-size: .85rem; color: #6b7280; display: flex; flex-direction: column; gap: .15rem; }
+.prc-meta strong { color: #111827; }
+.prc-validated-at { font-size: .75rem; opacity: .75; }
+.prc-progress-bar { width: 160px; height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; }
+.prc-progress-bar > div { height: 100%; background: linear-gradient(90deg,#10b981,#059669); transition: width .3s; }
+.prc-notes { white-space: pre-wrap; line-height: 1.5; color: #374151; margin: 0 0 .75rem; }
+.prc-notes-muted { color: #9ca3af; font-style: italic; }
 </style>
 

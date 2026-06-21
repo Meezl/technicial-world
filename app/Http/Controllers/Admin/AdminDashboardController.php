@@ -37,21 +37,102 @@ class AdminDashboardController extends Controller
 {
     public function index()
     {
-        // Calculate stats
+        // Real KPI stats
         $totalJobs = ServiceRequest::count();
         $completedJobs = ServiceRequest::where('status', 'completed')->count();
         $completionRate = $totalJobs > 0 ? round(($completedJobs / $totalJobs) * 100, 1) : 0;
-        $pendingRfqs = ServiceRequest::where('status', 'pending')->count();
+        $pendingRfqs = ServiceRequest::where('rfq_status', 'pending')->count();
+        $avgRating = (float) ServiceRequest::whereNotNull('rating')->avg('rating');
 
         $stats = [
-            'totalJobs' => $totalJobs,
+            'totalJobs'      => $totalJobs,
             'completionRate' => $completionRate . '%',
-            'pendingRfqs' => $pendingRfqs,
-            'averageRating' => '4.8' // TODO: Calculate from actual ratings
+            'pendingRfqs'    => $pendingRfqs,
+            'averageRating'  => $avgRating > 0 ? number_format($avgRating, 1) : 'N/A',
         ];
 
+        // Real status breakdown
+        $statusData = ServiceRequest::query()
+            ->selectRaw('status, COUNT(*) as cnt')
+            ->groupBy('status')
+            ->pluck('cnt', 'status');
+
+        // Real category breakdown (top 7)
+        $categoryData = ServiceRequest::query()
+            ->leftJoin('service_categories', 'service_requests.service_category_id', '=', 'service_categories.id')
+            ->selectRaw('COALESCE(service_categories.name, "Uncategorized") as name, COUNT(*) as cnt')
+            ->groupBy('name')
+            ->orderByDesc('cnt')
+            ->limit(7)
+            ->pluck('cnt', 'name');
+
+        // Real monthly trend: completed jobs by month for current + prior year
+        $currentYear = (int) date('Y');
+        $priorYear   = $currentYear - 1;
+        $trendData = [];
+        foreach ([$priorYear, $currentYear] as $year) {
+            $monthly = array_fill(1, 12, 0);
+            $rows = ServiceRequest::query()
+                ->where('status', 'completed')
+                ->whereYear('updated_at', $year)
+                ->selectRaw('MONTH(updated_at) as m, COUNT(*) as cnt')
+                ->groupBy('m')
+                ->pluck('cnt', 'm');
+            foreach ($rows as $m => $cnt) {
+                $monthly[$m] = $cnt;
+            }
+            $trendData[$year] = array_values($monthly);
+        }
+
+        $chartData = [
+            'statusData'   => $statusData,
+            'categoryData' => $categoryData,
+            'trendData'    => $trendData,
+        ];
+
+        // Real recent activity — latest 8 events from service_requests, payments, technicians
+        $activity = collect();
+
+        ServiceRequest::with('user:id,name')->orderByDesc('updated_at')->limit(4)->get()
+            ->each(function ($sr) use ($activity) {
+                $statusLabel = ucfirst(str_replace('_', ' ', (string) $sr->status));
+                $activity->push([
+                    'id'      => 'sr-' . $sr->id,
+                    'type'    => 'job',
+                    'icon'    => 'fas fa-clipboard-list',
+                    'message' => $sr->request_id . ' — ' . $statusLabel . ' (' . ($sr->user->name ?? 'Unknown') . ')',
+                    'ts'      => $sr->updated_at,
+                ]);
+            });
+
+        Payment::where('status', 'completed')->with('user:id,name')->orderByDesc('paid_at')->limit(3)->get()
+            ->each(function ($p) use ($activity) {
+                $activity->push([
+                    'id'      => 'pay-' . $p->id,
+                    'type'    => 'payment',
+                    'icon'    => 'fas fa-credit-card',
+                    'message' => 'KES ' . number_format($p->amount, 0) . ' received — ' . ($p->user->name ?? 'Client'),
+                    'ts'      => $p->paid_at,
+                ]);
+            });
+
+        Technician::with('user:id,name')->orderByDesc('created_at')->limit(2)->get()
+            ->each(function ($t) use ($activity) {
+                $activity->push([
+                    'id'      => 'tech-' . $t->id,
+                    'type'    => 'user',
+                    'icon'    => 'fas fa-user-plus',
+                    'message' => 'New technician onboarded: ' . ($t->user->name ?? 'Unnamed'),
+                    'ts'      => $t->created_at,
+                ]);
+            });
+
+        $recentActivity = $activity->sortByDesc('ts')->take(8)->values();
+
         return Inertia::render('Admin/Dashboard', [
-            'stats' => $stats
+            'stats'          => $stats,
+            'chartData'      => $chartData,
+            'recentActivity' => $recentActivity,
         ]);
     }
 
@@ -198,6 +279,7 @@ class AdminDashboardController extends Controller
         $request->validate([
             'validated_percent' => 'required|integer|min:0|max:100',
             'validation_notes' => 'nullable|string|max:2000',
+            'client_visible_notes' => 'nullable|string|max:2000',
             'remove_photo_ids' => 'nullable|array',
             'admin_photos' => 'nullable|array|max:6',
             'admin_photos.*' => 'nullable|file|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
@@ -208,6 +290,7 @@ class AdminDashboardController extends Controller
         app(ProgressService::class)->validate($progressReport, auth()->id(), $request->only([
             'validated_percent',
             'validation_notes',
+            'client_visible_notes',
             'remove_photo_ids',
         ]), $adminPhotos);
 
@@ -528,6 +611,10 @@ class AdminDashboardController extends Controller
             // #23 / #26 — reason captured at reassignment time, used in
             // the audit log and the client notification email.
             'reassignment_reason' => 'nullable|string|max:500',
+            // #12 — commencement_at allows admin to set when the technician
+            // is expected to start. Soft warning surfaces if it exceeds
+            // the priority window (NOT a hard block per client preference).
+            'commencement_at' => 'nullable|date',
         ]);
 
         // Block direct assignment when sub-tasks exist
@@ -564,12 +651,36 @@ class AdminDashboardController extends Controller
             (float) $request->agreed_compensation
         );
 
+        // #12 — Build commencement + target_completion. If admin didn't pick
+        // a commencement date, default to now. target_completion uses the
+        // quoted expected_duration_days if available.
+        $commencementAt = $request->filled('commencement_at')
+            ? \Carbon\Carbon::parse($request->commencement_at)
+            : now();
+        $targetCompletionAt = $serviceRequest->expected_duration_days
+            ? (clone $commencementAt)->addDays($serviceRequest->expected_duration_days)
+            : null;
+
         // Update service request
         $serviceRequest->update([
             'technician_id' => $technician->id,
             'status' => 'assigned',
-            'assigned_at' => now()
+            'assigned_at' => now(),
+            'commencement_at' => $commencementAt,
+            'target_completion_at' => $targetCompletionAt,
         ]);
+
+        // #12 — Soft warning if the commencement date exceeds the priority window.
+        $priorityWindow = $serviceRequest->fresh()->priority_window_ends_at;
+        $warning = null;
+        if ($priorityWindow && $commencementAt->gt($priorityWindow)) {
+            $warning = sprintf(
+                'Heads up: technician start (%s) is past the %s-urgency window that ended %s. The client has been notified.',
+                $commencementAt->format('d M Y H:i'),
+                $serviceRequest->urgency ?? 'medium',
+                $priorityWindow->diffForHumans()
+            );
+        }
 
         $reassignmentReason = $request->input('reassignment_reason');
         $this->syncPrimaryAssignment(
@@ -613,11 +724,15 @@ class AdminDashboardController extends Controller
             }
         }
 
-        return redirect()->route('admin.jobs.show', $serviceRequest)->with('success',
+        $redirect = redirect()->route('admin.jobs.show', $serviceRequest)->with('success',
             $isReassignment
                 ? 'Technician reassigned. Client has been notified.'
                 : 'Technician assigned successfully!'
         );
+        if ($warning) {
+            $redirect = $redirect->with('warning', $warning);
+        }
+        return $redirect;
     }
 
     public function assignLeadTechnician(Request $request, ServiceRequest $serviceRequest)
@@ -1718,10 +1833,18 @@ class AdminDashboardController extends Controller
             });
         }
 
-        // Status filter
+        // Status filter — RFQ pipeline statuses (pending/quoted/approved/rejected)
+        // live on `rfq_status`, while delivery statuses (awaiting_payment,
+        // ready_for_assignment, en_route, in_progress) live on the main `status`
+        // column. Route each value to the correct column.
         if ($status = $request->input('status')) {
             if ($status !== 'all') {
-                $query->where('rfq_status', $status);
+                $rfqStatuses = ['pending', 'quoted', 'approved', 'rejected'];
+                if (in_array($status, $rfqStatuses, true)) {
+                    $query->where('rfq_status', $status);
+                } else {
+                    $query->where('status', $status);
+                }
             }
         }
 
@@ -1777,6 +1900,7 @@ class AdminDashboardController extends Controller
             'labor_cost' => 'required|numeric|min:0',
             'transport_cost' => 'nullable|numeric|min:0',
             'down_payment' => 'nullable|numeric|min:0',
+            'expected_duration_days' => 'nullable|integer|min:0|max:365',
             'total_amount' => 'required|numeric|min:0',
             'notes' => 'nullable|string',
             'is_revision' => 'nullable|boolean',
@@ -1859,6 +1983,9 @@ class AdminDashboardController extends Controller
             'quote_labor_cost' => $request->labor_cost,
             'quote_transport_cost' => (float) ($request->transport_cost ?? 0),
             'quote_down_payment' => $downPayment,
+            'expected_duration_days' => $request->filled('expected_duration_days')
+                ? (int) $request->expected_duration_days
+                : $serviceRequest->expected_duration_days,
             'quote_notes' => $request->notes,
             'quote_materials_file_path' => $filePath ?? $serviceRequest->quote_materials_file_path,
             'billing_milestones' => $billingMilestones,
@@ -1882,10 +2009,27 @@ class AdminDashboardController extends Controller
 
         $serviceRequest->update($updateData);
 
+        // #4 — When a quote is revised, any UNPAID pending payment requests
+        // (manual or milestone-triggered) need to be cancelled so the
+        // client isn't asked to pay against the stale figure. We record
+        // the cancelled IDs to mention in the revision email.
+        $cancelledRequestIds = [];
+        if ($isRevision) {
+            $cancelledQuery = PaymentRequest::where('service_request_id', $serviceRequest->id)
+                ->where('status', PaymentRequest::STATUS_PENDING);
+            $cancelledRequestIds = $cancelledQuery->pluck('payment_request_id')->all();
+            $cancelledQuery->update([
+                'status' => PaymentRequest::STATUS_CANCELLED,
+                'notes'  => \Illuminate\Support\Facades\DB::raw("CONCAT(COALESCE(notes,''), '\n[Cancelled by quote revision on " . now()->toDateTimeString() . "]')"),
+            ]);
+        }
+
         // Send the appropriate email
         try {
             if ($isRevision) {
-                Mail::to($serviceRequest->user->email)->send(new \App\Mail\QuotationRevised($serviceRequest->fresh()));
+                Mail::to($serviceRequest->user->email)->send(
+                    new \App\Mail\QuotationRevised($serviceRequest->fresh(), $cancelledRequestIds)
+                );
             } else {
                 Mail::to($serviceRequest->user->email)->send(new QuotationSent($serviceRequest));
             }
@@ -2153,6 +2297,21 @@ class AdminDashboardController extends Controller
         $user->delete();
 
         return redirect()->route('admin.users')->with('success', 'User deleted successfully!');
+    }
+
+    /**
+     * Manually trigger the final-balance payment request for one job.
+     * Same logic as the scheduled `payments:raise-final` command (#13),
+     * but admin can invoke it on-demand if the schedule hasn't fired yet
+     * or they want to bill before the 24h grace.
+     */
+    public function raiseFinalPayment(ServiceRequest $serviceRequest)
+    {
+        \Illuminate\Support\Facades\Artisan::call('payments:raise-final', [
+            '--service-request' => $serviceRequest->id,
+        ]);
+        $output = trim(\Illuminate\Support\Facades\Artisan::output());
+        return back()->with('success', 'Final payment request triggered. ' . $output);
     }
 
     /**

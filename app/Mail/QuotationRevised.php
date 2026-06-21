@@ -21,9 +21,17 @@ class QuotationRevised extends Mailable
 
     public $serviceRequest;
 
-    public function __construct(ServiceRequest $serviceRequest)
+    /**
+     * IDs (payment_request_id strings) of any pending payment requests
+     * that were cancelled by this revision — listed in the email so the
+     * client knows which prior asks to disregard (#4).
+     */
+    public array $cancelledRequestIds;
+
+    public function __construct(ServiceRequest $serviceRequest, array $cancelledRequestIds = [])
     {
         $this->serviceRequest = $serviceRequest;
+        $this->cancelledRequestIds = $cancelledRequestIds;
     }
 
     public function envelope(): Envelope
@@ -51,6 +59,8 @@ class QuotationRevised extends Mailable
                 'revisionCount'   => max(1, (int) $this->serviceRequest->quote_revision_count),
                 'mpesaPaybill'    => config('services.mpesa.shortcode'),
                 'mpesaAccountRef' => $this->serviceRequest->request_id,
+                'cancelledRequestIds' => $this->cancelledRequestIds,
+                'bank'            => config('services.bank'),
             ]
         );
     }

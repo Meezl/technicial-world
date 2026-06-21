@@ -543,14 +543,26 @@
                                             >
                                         </div>
                                         <div class="form-group">
-                                            <label>Validation notes</label>
+                                            <label>Internal validation note (admin/PM only)</label>
                                             <input
                                                 v-model="progressValidationForms[report.id].validation_notes"
                                                 type="text"
                                                 class="form-control"
-                                                placeholder="Optional note for PM, technician, and finance..."
+                                                placeholder="Hidden from client. For internal record only."
                                             >
                                         </div>
+                                    </div>
+                                    <div class="form-group" style="margin-top:.5rem;">
+                                        <label>Notes the client will see <small style="color:var(--text-muted);">(editable — pre-filled with technician's report)</small></label>
+                                        <textarea
+                                            v-model="progressValidationForms[report.id].client_visible_notes"
+                                            rows="3"
+                                            class="form-control"
+                                            placeholder="Polished version of the technician's update that will appear on the client's portal and progress email."
+                                        ></textarea>
+                                        <small v-if="report.notes" style="display:block;color:var(--text-muted);margin-top:.25rem;">
+                                            <strong>Technician's original:</strong> "{{ report.notes }}"
+                                        </small>
                                     </div>
                                     <div class="form-group" style="margin-top:.5rem;">
                                         <label>Attach photos (optional, up to 6)</label>
@@ -1908,6 +1920,8 @@ progressReports.value.forEach((report) => {
     progressValidationForms[report.id] = {
         validated_percent: report.validated_percent ?? report.percent_complete,
         validation_notes: report.validation_notes || '',
+        // Pre-fill with technician's original — admin can edit before approving
+        client_visible_notes: report.client_visible_notes || report.notes || '',
         remove_photo_ids: [],
     }
 })
@@ -2263,6 +2277,7 @@ const validateProgressReport = (reportId) => {
         const fd = new FormData()
         fd.append('validated_percent', form.validated_percent)
         fd.append('validation_notes', form.validation_notes || '')
+        fd.append('client_visible_notes', form.client_visible_notes || '')
         ;(form.remove_photo_ids || []).forEach((id, i) => fd.append(`remove_photo_ids[${i}]`, id))
         photos.forEach((file, i) => fd.append(`admin_photos[${i}]`, file))
         router.post(`/admin/progress-reports/${reportId}/validate`, fd, {
@@ -2273,6 +2288,7 @@ const validateProgressReport = (reportId) => {
         router.post(`/admin/progress-reports/${reportId}/validate`, {
             validated_percent: form.validated_percent,
             validation_notes: form.validation_notes,
+            client_visible_notes: form.client_visible_notes,
             remove_photo_ids: form.remove_photo_ids,
         }, { preserveScroll: true })
     }

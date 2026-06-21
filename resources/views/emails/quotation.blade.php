@@ -287,6 +287,44 @@
         </div>
         @endif
 
+        @if(!empty($bank['name']))
+        <div class="section" style="background:#EFF6FF;border-color:#BFDBFE;">
+            <h3 style="color:#1E3A8A;border-bottom-color:#3B82F6;">Pay via Bank Transfer</h3>
+            <p style="margin: 4px 0 12px;font-size:14px;color:#1E3A8A;">
+                You can also settle the deposit or final balance via direct bank transfer.
+            </p>
+            <div style="background:#ffffff;border:1px solid #BFDBFE;border-radius:6px;padding:14px;">
+                <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #DBEAFE;font-size:14px;">
+                    <strong style="color:#1E3A8A;">Bank</strong>
+                    <span style="font-weight:700;color:#0F172A;">{{ $bank['name'] }}</span>
+                </div>
+                @if(!empty($bank['branch']))
+                <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #DBEAFE;font-size:14px;">
+                    <strong style="color:#1E3A8A;">Branch</strong>
+                    <span style="font-weight:700;color:#0F172A;">{{ $bank['branch'] }}</span>
+                </div>
+                @endif
+                <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed #DBEAFE;font-size:14px;">
+                    <strong style="color:#1E3A8A;">Account Name</strong>
+                    <span style="font-weight:700;color:#0F172A;">{{ $bank['account_name'] }}</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:6px 0;{{ !empty($bank['swift_code']) ? 'border-bottom:1px dashed #DBEAFE;' : '' }}font-size:14px;">
+                    <strong style="color:#1E3A8A;">Account Number</strong>
+                    <span style="font-family:'Courier New',monospace;font-weight:700;color:#0F172A;">{{ $bank['account_number'] }}</span>
+                </div>
+                @if(!empty($bank['swift_code']))
+                <div style="display:flex;justify-content:space-between;padding:6px 0;font-size:14px;">
+                    <strong style="color:#1E3A8A;">SWIFT Code</strong>
+                    <span style="font-family:'Courier New',monospace;font-weight:700;color:#0F172A;">{{ $bank['swift_code'] }}</span>
+                </div>
+                @endif
+            </div>
+            <p style="font-size:12.5px;color:#1E3A8A;margin:12px 0 0;">
+                Quote <strong>{{ $mpesaAccountRef }}</strong> in the transfer narration and share the bank slip with us via the portal or by replying to this email.
+            </p>
+        </div>
+        @endif
+
         @if(!empty($milestones) && count($milestones) > 0)
         <div class="section">
             <h3>Payment Milestones</h3>

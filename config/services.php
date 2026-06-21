@@ -44,4 +44,14 @@ return [
         'environment' => env('MPESA_ENVIRONMENT', 'sandbox'),
     ],
 
+    // Company bank details shown to clients on quotations and emails. Set
+    // BANK_NAME in env to enable display; leave unset to hide the section.
+    'bank' => [
+        'name'           => env('BANK_NAME'),
+        'branch'         => env('BANK_BRANCH'),
+        'account_name'   => env('BANK_ACCOUNT_NAME'),
+        'account_number' => env('BANK_ACCOUNT_NUMBER'),
+        'swift_code'     => env('BANK_SWIFT_CODE'),
+    ],
+
 ];

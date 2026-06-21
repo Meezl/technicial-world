@@ -146,6 +146,10 @@
                                 <option value="pending">Pending Review</option>
                                 <option value="quoted">Awaiting Client Approval</option>
                                 <option value="approved">Approved</option>
+                                <option value="awaiting_payment">Awaiting Payment</option>
+                                <option value="ready_for_assignment">Pending Assignment</option>
+                                <option value="en_route">Technician En Route</option>
+                                <option value="in_progress">In Progress</option>
                                 <option value="rejected">Rejected</option>
                             </select>
                         </label>
@@ -690,9 +694,21 @@
                                         </small>
                                     </div>
                                     <div class="form-group">
-                                        <label><i class="fas fa-sticky-note"></i> Additional Notes:</label>
-                                        <textarea v-model="quotationForm.notes" class="form-control" rows="3" placeholder="Any additional information for the client..."></textarea>
+                                        <label><i class="fas fa-clock"></i> Expected Duration:</label>
+                                        <div style="display:flex;gap:.5rem;align-items:center;">
+                                            <input v-model.number="quotationForm.duration_weeks" type="number" min="0" class="form-control" placeholder="0" style="width:80px;">
+                                            <span>weeks</span>
+                                            <input v-model.number="quotationForm.duration_extra_days" type="number" min="0" max="6" class="form-control" placeholder="0" style="width:80px;">
+                                            <span>days</span>
+                                        </div>
+                                        <small style="color: var(--text-muted); font-size: 0.8rem; display: block; margin-top: 0.2rem;">
+                                            Quoted to the client as the expected time on site after the technician starts.
+                                        </small>
                                     </div>
+                                </div>
+                                <div class="form-group">
+                                    <label><i class="fas fa-sticky-note"></i> Additional Notes:</label>
+                                    <textarea v-model="quotationForm.notes" class="form-control" rows="3" placeholder="Any additional information for the client..."></textarea>
                                 </div>
 
                                 <!-- Billing schedule (#21) -->
@@ -708,6 +724,7 @@
                                             <span>Milestone label</span>
                                             <span>Progress %</span>
                                             <span>Amount (KSH)</span>
+                                            <span>Running total / Balance</span>
                                             <span></span>
                                         </div>
                                         <div
@@ -735,6 +752,12 @@
                                                 min="0" step="0.01"
                                                 placeholder="0.00"
                                             />
+                                            <span class="billing-ms-running" :class="{ 'billing-ms-warn': milestoneRunningRows[idx]?.over }">
+                                                <strong>{{ formatCurrency(milestoneRunningRows[idx]?.cumulative || 0) }}</strong>
+                                                <small style="display:block;color:var(--text-muted);font-size:0.7rem;">
+                                                    Balance: KSH {{ formatCurrency(milestoneRunningRows[idx]?.balance || 0) }}
+                                                </small>
+                                            </span>
                                             <button
                                                 type="button"
                                                 class="btn btn-danger btn-xs"
@@ -743,6 +766,20 @@
                                             >
                                                 <i class="fas fa-trash"></i>
                                             </button>
+                                        </div>
+                                        <div v-if="milestoneTotalsSummary.set > 0" class="billing-ms-summary" :class="{ 'billing-ms-warn': milestoneTotalsSummary.over }">
+                                            <span>
+                                                <strong>Total scheduled:</strong>
+                                                KSH {{ formatCurrency(milestoneTotalsSummary.scheduled) }}
+                                                <small>({{ milestoneTotalsSummary.pct }}% of quote)</small>
+                                            </span>
+                                            <span>
+                                                <strong>Unscheduled balance:</strong>
+                                                KSH {{ formatCurrency(milestoneTotalsSummary.unscheduled) }}
+                                            </span>
+                                            <span v-if="milestoneTotalsSummary.over" style="color:var(--danger-color,#dc2626);font-weight:600;">
+                                                ⚠ Exceeds total quote of KSH {{ formatCurrency(milestoneTotalsSummary.total) }}
+                                            </span>
                                         </div>
                                     </div>
                                     <p v-else style="color:var(--text-muted);font-size:0.85rem;margin-top:0.25rem;">
@@ -1238,6 +1275,8 @@ const quotationForm = ref({
     labor_cost: 0,
     transport_cost: 0,
     down_payment: null,
+    duration_weeks: 0,
+    duration_extra_days: 0,
     notes: '',
     materials_file: null,
     billing_milestones: [],
@@ -1246,6 +1285,49 @@ const quotationForm = ref({
 const addBillingMilestone = () => {
     quotationForm.value.billing_milestones.push({ label: '', progress_pct: null, amount: null })
 }
+
+/**
+ * Running totals for the milestone schedule. For each row, compute the
+ * cumulative scheduled amount up to and including that row, and the
+ * remaining unscheduled balance against the quote total. Lets the admin
+ * see at-a-glance whether the milestones cover the full quote.
+ */
+const quoteTotalForMilestones = computed(() => {
+    const materials = (quotationForm.value.materials || [])
+        .reduce((sum, m) => sum + ((Number(m.quantity) || 0) * (Number(m.unit_price) || 0)), 0)
+    const labor = Number(quotationForm.value.labor_cost) || 0
+    const transport = Number(quotationForm.value.transport_cost) || 0
+    return materials + labor + transport
+})
+
+const milestoneRunningRows = computed(() => {
+    const total = quoteTotalForMilestones.value
+    let cumulative = 0
+    return (quotationForm.value.billing_milestones || []).map((ms) => {
+        const amt = Number(ms.amount) || 0
+        cumulative += amt
+        return {
+            cumulative,
+            balance: Math.max(0, total - cumulative),
+            over: cumulative > total + 0.001 && total > 0,
+        }
+    })
+})
+
+const milestoneTotalsSummary = computed(() => {
+    const total = quoteTotalForMilestones.value
+    const rows = quotationForm.value.billing_milestones || []
+    const scheduled = rows.reduce((s, m) => s + (Number(m.amount) || 0), 0)
+    const set = rows.filter(m => Number(m.amount) > 0).length
+    return {
+        total,
+        scheduled,
+        unscheduled: Math.max(0, total - scheduled),
+        pct: total > 0 ? Math.round((scheduled / total) * 100) : 0,
+        over: scheduled > total + 0.001 && total > 0,
+        set,
+    }
+})
 
 // Set to true when admin clicks "Revise Quotation" so the controller
 // emails the client a revision notice asking them to disregard the
@@ -1438,8 +1520,21 @@ const closePaymentModal = () => { showPaymentModal.value = false; selectedRFQ.va
 
 const openProxyPaymentModal = (rfq) => {
     selectedRFQ.value = rfq
+
+    // Match the percentage to the deposit amount admin set on the quotation
+    // (just like initiatePaymentRequest does for client-initiated RFQs).
+    // If no down payment was specified, fall back to 50%.
+    const downPayment = Number(rfq.quote_down_payment) || 0
+    const total = Number(rfq.quote_amount) || 0
+    const noPrior = !(rfq.payment_requests || []).some((pr) => !['cancelled', 'failed'].includes(pr.status))
+
+    let initialPercentage = 50
+    if (noPrior && downPayment > 0 && total > 0) {
+        initialPercentage = Math.round(((downPayment / total) * 100) * 100) / 100
+    }
+
     proxyPaymentForm.value = {
-        percentage: 50,
+        percentage: initialPercentage,
         payment_method: '',
         cheque_number: '',
         bank_reference: '',
@@ -1558,12 +1653,15 @@ const submitQuote = () => {
     const validMilestones = quotationForm.value.billing_milestones.filter(
         m => m.label && m.progress_pct > 0 && m.amount >= 0
     )
+    const durationDays = ((quotationForm.value.duration_weeks || 0) * 7) + (quotationForm.value.duration_extra_days || 0)
+
     router.post('/admin/rfq/quote', {
         service_request_id: selectedRFQ.value.id,
         materials: quotationForm.value.materials.filter(m => m.name && m.quantity > 0),
         labor_cost: quotationForm.value.labor_cost,
         transport_cost: quotationForm.value.transport_cost || 0,
         down_payment: quotationForm.value.down_payment || null,
+        expected_duration_days: durationDays || null,
         total_amount: totalQuoteAmount.value,
         notes: quotationForm.value.notes,
         materials_file: quotationForm.value.materials_file,
@@ -2364,7 +2462,11 @@ defineOptions({ layout: null })
 .flash-leave-to { opacity: 0; transform: translateY(-6px); }
 
 .billing-milestones-table { margin-top: 0.5rem; border: 1px solid var(--border-color, #e5e7eb); border-radius: 0.375rem; overflow: hidden; }
-.billing-ms-header, .billing-ms-row { display: grid; grid-template-columns: 3fr 1fr 2fr auto; gap: 0.5rem; padding: 0.5rem 0.75rem; align-items: center; }
+.billing-ms-header, .billing-ms-row { display: grid; grid-template-columns: 3fr 1fr 2fr 2fr auto; gap: 0.5rem; padding: 0.5rem 0.75rem; align-items: center; }
+.billing-ms-running { font-size: 0.85rem; }
+.billing-ms-warn { color: var(--danger-color, #dc2626); }
+.billing-ms-summary { display: flex; gap: 1rem; flex-wrap: wrap; padding: 0.6rem 0.75rem; background: var(--bg-secondary, #f9fafb); border-top: 2px solid var(--border-color, #e5e7eb); font-size: 0.85rem; }
+.billing-ms-summary > span { display: flex; flex-direction: column; }
 .billing-ms-header { background: var(--bg-secondary, #f9fafb); font-size: 0.75rem; font-weight: 600; color: var(--text-muted, #6b7280); text-transform: uppercase; letter-spacing: 0.04em; }
 .billing-ms-row { border-top: 1px solid var(--border-color, #e5e7eb); }
 .billing-ms-row input { padding: 0.25rem 0.5rem; font-size: 0.85rem; }

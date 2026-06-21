@@ -414,9 +414,13 @@ class TechnicianController extends Controller
             ]);
         }
 
-        $toolRequest->update([
-            'status' => ToolRequest::STATUS_CANCELLED,
-            'decided_at' => now(),
+        // tool_requests table only has `status` — decision metadata
+        // (decided_at / decision_notes) lives on tool_request_items.
+        $toolRequest->update(['status' => ToolRequest::STATUS_CANCELLED]);
+        $toolRequest->items()->whereNull('decided_at')->update([
+            'status'         => ToolRequest::STATUS_CANCELLED,
+            'decided_by'     => $user->id,
+            'decided_at'     => now(),
             'decision_notes' => 'Cancelled by technician.',
         ]);
 

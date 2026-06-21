@@ -59,6 +59,7 @@ class QuotationSent extends Mailable
                 'notes' => $this->serviceRequest->quote_notes,
                 'mpesaPaybill' => config('services.mpesa.shortcode'),
                 'mpesaAccountRef' => $this->serviceRequest->request_id,
+                'bank' => config('services.bank'),
                 'milestones' => $milestones,
             ]
         );
@@ -71,8 +72,11 @@ class QuotationSent extends Mailable
      */
     public function attachments(): array
     {
+        $attachments = [];
+        $serviceRequest = $this->serviceRequest;
+
+        // 1. Generated PDF of the quotation (mirrors the email body)
         try {
-            $serviceRequest = $this->serviceRequest;
             $milestones = $serviceRequest->milestones()
                 ->orderBy('progress_step')
                 ->get(['progress_step', 'amount', 'notes', 'status']);
@@ -86,17 +90,48 @@ class QuotationSent extends Mailable
                 'totalAmount'    => $serviceRequest->quote_amount ?? 0,
                 'notes'          => $serviceRequest->quote_notes,
                 'milestones'     => $milestones,
+                'mpesaPaybill'   => config('services.mpesa.shortcode'),
+                'bank'           => config('services.bank'),
             ]);
 
             $filename = 'Quotation-' . ($serviceRequest->request_id ?? $serviceRequest->id) . '.pdf';
-
-            return [
-                Attachment::fromData(fn () => $pdf->output(), $filename)
-                    ->withMime('application/pdf'),
-            ];
+            $attachments[] = Attachment::fromData(fn () => $pdf->output(), $filename)
+                ->withMime('application/pdf');
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('QuotationSent PDF generation failed', ['error' => $e->getMessage()]);
-            return [];
         }
+
+        // 2. Admin-uploaded materials file attached when sending the quote
+        if ($serviceRequest->quote_materials_file_path) {
+            try {
+                $disk = \Illuminate\Support\Facades\Storage::disk('public');
+                if ($disk->exists($serviceRequest->quote_materials_file_path)) {
+                    $attachments[] = Attachment::fromStorageDisk('public', $serviceRequest->quote_materials_file_path)
+                        ->as('Materials-' . ($serviceRequest->request_id ?? 'breakdown') . '.' . pathinfo($serviceRequest->quote_materials_file_path, PATHINFO_EXTENSION));
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('QuotationSent materials file attach failed', ['error' => $e->getMessage()]);
+            }
+        }
+
+        // 3. Files the client uploaded with the original RFQ (if any) — gives
+        //    context on what the quote is for.
+        $files = $serviceRequest->files ?? [];
+        if (is_array($files)) {
+            foreach ($files as $file) {
+                if (empty($file['path'])) continue;
+                try {
+                    $disk = \Illuminate\Support\Facades\Storage::disk('public');
+                    if ($disk->exists($file['path'])) {
+                        $attachments[] = Attachment::fromStorageDisk('public', $file['path'])
+                            ->as($file['name'] ?? basename($file['path']));
+                    }
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('QuotationSent client file attach failed', ['error' => $e->getMessage(), 'path' => $file['path']]);
+                }
+            }
+        }
+
+        return $attachments;
     }
 }

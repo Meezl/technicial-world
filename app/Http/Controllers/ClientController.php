@@ -241,6 +241,16 @@ class ClientController extends Controller
 
             $serviceRequest->update($updateData);
 
+            // #4 — If this approval is for a REVISED quote and the job already
+            // has validated progress, retrigger any milestones whose threshold
+            // is below the current progress so the new figures get billed.
+            $isRevisionApproval = $currentRevision > 0;
+            $hasProgress = (float) $serviceRequest->progress_percentage > 0;
+            if ($isRevisionApproval && $hasProgress) {
+                app(\App\Services\ProgressService::class)
+                    ->retriggerMilestonesForApprovedRevision($serviceRequest->fresh());
+            }
+
             return response()->json(['success' => true, 'message' => 'Quotation approved successfully']);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::error('approveRFQ failed', [

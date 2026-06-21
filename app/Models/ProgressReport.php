@@ -21,6 +21,7 @@ class ProgressReport extends Model
         'validated_at',
         'validated_percent',
         'validation_notes',
+        'client_visible_notes',
         'is_pm_authored',
     ];
 

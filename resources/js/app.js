@@ -10,6 +10,11 @@ import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 import { Fragment, createApp, h } from 'vue';
 import { ZiggyVue } from '../../vendor/tightenco/ziggy';
 import WhatsAppFloat from './Components/WhatsAppFloat.vue';
+import FormErrorToast from './Components/FormErrorToast.vue';
+import { useGlobalFormErrors } from './composables/useFormErrors.js';
+
+// Wire global form-error UX: scroll-to-first-error, shake highlight, toast (#2)
+useGlobalFormErrors();
 
 const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
 
@@ -26,6 +31,7 @@ createInertiaApp({
                 h(Fragment, [
                     h(App, props),
                     h(WhatsAppFloat),
+                    h(FormErrorToast),
                 ]),
         })
             .use(plugin)

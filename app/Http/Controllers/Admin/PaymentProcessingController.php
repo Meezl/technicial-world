@@ -88,6 +88,63 @@ class PaymentProcessingController extends Controller
      *
      * cumulative_amount_due = approved_amount × (validated_progress_pct / 100)
      */
+    /**
+     * Auto-roll-down — given period_start + period_end, return one entry
+     * per (technician, service_request) with validated-progress and amounts
+     * already filled in. Admin can then edit current_period_payable per row
+     * before submitting the sheet. Mirrors what the PM "Compute" button does.
+     */
+    public function autoComputeEntries(Request $request)
+    {
+        $request->validate([
+            'period_start' => 'required|date',
+            'period_end'   => 'required|date|after_or_equal:period_start',
+        ]);
+
+        $periodEnd = \Carbon\Carbon::parse($request->period_end);
+
+        $assignments = JobAssignment::with(['serviceRequest', 'technician.user'])
+            ->whereIn('status', ['accepted', 'completed'])
+            ->get();
+
+        $rows = [];
+        foreach ($assignments as $assignment) {
+            $sr   = $assignment->serviceRequest;
+            $tech = $assignment->technician;
+            if (!$sr || !$tech) continue;
+
+            $agreed = (float) ($assignment->agreed_compensation ?? 0);
+            if ($agreed <= 0) continue;
+
+            $progress = $this->paymentService->getValidatedProgressForTechnician($sr, $tech->id);
+            if ($progress <= 0) continue;
+
+            $cumulativeDue = $this->paymentService->calculateCumulativeAmountDue($sr, $tech->id, $agreed, $progress);
+            $alreadyPaid   = $this->paymentService->getTotalLabourPaid($sr->id, $tech->id);
+            $currentPayable = max(0, round($cumulativeDue - $alreadyPaid, 2));
+
+            if ($currentPayable <= 0) continue;
+
+            $rows[] = [
+                'service_request_id'        => $sr->id,
+                'service_request_label'     => $sr->request_id . ' — ' . \Illuminate\Support\Str::limit($sr->description ?? '', 50),
+                'technician_id'             => $tech->id,
+                'technician_label'          => $tech->user->name ?? ('Tech ' . $tech->id),
+                'approved_amount'           => $agreed,
+                'cumulative_progress_pct'   => $progress,
+                'cumulative_amount_due'     => $cumulativeDue,
+                'previous_cumulative_paid'  => $alreadyPaid,
+                'current_period_payable'    => $currentPayable,
+            ];
+        }
+
+        return response()->json([
+            'count'   => count($rows),
+            'total'   => array_sum(array_column($rows, 'current_period_payable')),
+            'entries' => $rows,
+        ]);
+    }
+
     public function computeAmounts(Request $request)
     {
         $request->validate([
@@ -151,15 +208,15 @@ class PaymentProcessingController extends Controller
         ]);
 
         // Overpayment guard: per (technician, service_request), the total already paid
-        // plus this row's current_period_payable must not exceed the agreed compensation.
-        // We also cap by what's actually earned per validated progress (cumulative_amount_due).
+        // plus this row's current_period_payable must not exceed the AGREED compensation.
+        // We deliberately do NOT cap by validated-progress earnings — admin is free to
+        // pay out any cash-flow amount they choose within the agreed total.
         $errors = [];
         foreach ($request->entries as $index => $row) {
             $srId = (int) $row['service_request_id'];
             $techId = (int) $row['technician_id'];
             $agreed = (float) $row['approved_amount'];
             $payable = (float) $row['current_period_payable'];
-            $earnedToDate = (float) $row['cumulative_amount_due'];
 
             $serviceRequest = ServiceRequest::find($srId);
             $resolvedAgreed = $this->paymentService->resolveApprovedAmount($serviceRequest, $techId);
@@ -180,18 +237,6 @@ class PaymentProcessingController extends Controller
                     number_format($payable, 2),
                     number_format($newTotal, 2),
                     number_format($cap, 2)
-                );
-                continue;
-            }
-
-            // Also cannot pay more than the technician has earned per validated progress
-            if ($payable > round($earnedToDate - $alreadyPaid, 2) + 0.001) {
-                $errors["entries.$index.current_period_payable"] = sprintf(
-                    'Payment of KES %s exceeds the unpaid earned amount (KES %s earned at %s%% validated progress, KES %s already paid).',
-                    number_format($payable, 2),
-                    number_format($earnedToDate, 2),
-                    $row['cumulative_progress_pct'],
-                    number_format($alreadyPaid, 2)
                 );
             }
         }

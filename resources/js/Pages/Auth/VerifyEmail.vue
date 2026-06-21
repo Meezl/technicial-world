@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import GuestLayout from '@/Layouts/GuestLayout.vue';
 import PrimaryButton from '@/Components/PrimaryButton.vue';
-import { Head, Link, useForm } from '@inertiajs/vue3';
+import { Head, Link, useForm, usePage } from '@inertiajs/vue3';
 
 const props = defineProps({
     status: {
@@ -19,11 +19,19 @@ const submit = () => {
 const verificationLinkSent = computed(
     () => props.status === 'verification-link-sent',
 );
+
+const page = usePage();
+const denialReason = computed(() => page.props.flash?.verification_denied_reason);
 </script>
 
 <template>
     <GuestLayout>
         <Head title="Email Verification" />
+
+        <div v-if="denialReason" class="mb-4 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+            <strong>Access paused.</strong><br />
+            {{ denialReason }}
+        </div>
 
         <div class="mb-4 text-sm text-gray-600">
             Thanks for signing up! Before getting started, could you verify your

@@ -76,8 +76,7 @@
                         <h3>Monthly Job Trends</h3>
                         <div class="chart-controls">
                             <select v-model="trendYear" @change="updateTrendChart" class="chart-filter">
-                                <option value="2024">2024</option>
-                                <option value="2025">2025</option>
+                                <option v-for="y in Object.keys(chartData.trendData)" :key="y" :value="y">{{ y }}</option>
                             </select>
                         </div>
                     </div>
@@ -121,43 +120,11 @@ const props = defineProps({
     },
     chartData: {
         type: Object,
-        default: () => ({
-            statusData: { pending: 12, assigned: 8, in_progress: 15, completed: 45, cancelled: 3 },
-            categoryData: { electrical: 25, plumbing: 18, hvac: 12, carpentry: 15, painting: 20, roofing: 8, other: 12 },
-            trendData: {
-                2024: [10, 15, 18, 22, 28, 25, 30, 35, 32, 38, 42, 45],
-                2025: [48, 52, 45, 58, 62, 55, 68, 72, 65, 75, 78, 82]
-            }
-        })
+        default: () => ({ statusData: {}, categoryData: {}, trendData: {} })
     },
     recentActivity: {
         type: Array,
-        default: () => [
-            {
-                id: 1,
-                type: 'job',
-                icon: 'fas fa-check',
-                message: 'Job #J4512 completed by T. Mwangi'
-            },
-            {
-                id: 2,
-                type: 'rfq',
-                icon: 'fas fa-file-alt',
-                message: 'New RFQ received from Client A'
-            },
-            {
-                id: 3,
-                type: 'user',
-                icon: 'fas fa-user-plus',
-                message: 'New technician, L. Otieno, onboarded'
-            },
-            {
-                id: 4,
-                type: 'payment',
-                icon: 'fas fa-credit-card',
-                message: 'Payment received for Job #J4509'
-            }
-        ]
+        default: () => []
     }
 })
 
@@ -173,7 +140,7 @@ let trendChartInstance = null
 
 // Reactive data
 const categoryTimeframe = ref('all')
-const trendYear = ref('2025')
+const trendYear = ref(String(new Date().getFullYear()))
 
 // Chart colors
 const colors = {
