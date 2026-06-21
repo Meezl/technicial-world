@@ -154,31 +154,37 @@ const colors = {
     gray: '#6B7280'
 }
 
+// Cycle through palette so any number of categories/statuses gets a colour
+const palette = [colors.warning, colors.info, colors.primary, colors.success, colors.danger, colors.purple, colors.teal, colors.gray]
+const pickColors = (n) => Array.from({ length: n }, (_, i) => palette[i % palette.length])
+const prettyLabel = (s) => String(s || '').replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+
 const initStatusChart = async () => {
     await nextTick()
     if (!statusChart.value) return
 
     const ctx = statusChart.value.getContext('2d')
 
+    // Render whatever statuses the backend sends — no hardcoded keys
+    const entries = Object.entries(props.chartData.statusData || {})
+        .filter(([, v]) => Number(v) > 0)
+        .sort((a, b) => b[1] - a[1])
+
+    if (!entries.length) {
+        ctx.font = '14px sans-serif'
+        ctx.fillStyle = '#9ca3af'
+        ctx.textAlign = 'center'
+        ctx.fillText('No job data yet', ctx.canvas.width / 2, ctx.canvas.height / 2)
+        return
+    }
+
     statusChartInstance = new Chart(ctx, {
         type: 'doughnut',
         data: {
-            labels: ['Pending', 'Assigned', 'In Progress', 'Completed', 'Cancelled'],
+            labels: entries.map(([k]) => prettyLabel(k)),
             datasets: [{
-                data: [
-                    props.chartData.statusData.pending,
-                    props.chartData.statusData.assigned,
-                    props.chartData.statusData.in_progress,
-                    props.chartData.statusData.completed,
-                    props.chartData.statusData.cancelled
-                ],
-                backgroundColor: [
-                    colors.warning,
-                    colors.info,
-                    colors.primary,
-                    colors.success,
-                    colors.danger
-                ],
+                data: entries.map(([, v]) => v),
+                backgroundColor: pickColors(entries.length),
                 borderWidth: 2,
                 borderColor: '#ffffff'
             }]
@@ -189,10 +195,7 @@ const initStatusChart = async () => {
             plugins: {
                 legend: {
                     position: 'bottom',
-                    labels: {
-                        padding: 20,
-                        usePointStyle: true
-                    }
+                    labels: { padding: 20, usePointStyle: true }
                 }
             }
         }
@@ -205,30 +208,27 @@ const initCategoryChart = async () => {
 
     const ctx = categoryChart.value.getContext('2d')
 
+    // Render whatever categories the backend sends, sorted descending — no hardcoded keys
+    const entries = Object.entries(props.chartData.categoryData || {})
+        .filter(([, v]) => Number(v) > 0)
+        .sort((a, b) => b[1] - a[1])
+
+    if (!entries.length) {
+        ctx.font = '14px sans-serif'
+        ctx.fillStyle = '#9ca3af'
+        ctx.textAlign = 'center'
+        ctx.fillText('No category data yet', ctx.canvas.width / 2, ctx.canvas.height / 2)
+        return
+    }
+
     categoryChartInstance = new Chart(ctx, {
         type: 'bar',
         data: {
-            labels: ['Electrical', 'Plumbing', 'HVAC', 'Carpentry', 'Painting', 'Roofing', 'Other'],
+            labels: entries.map(([k]) => prettyLabel(k)),
             datasets: [{
                 label: 'Number of Jobs',
-                data: [
-                    props.chartData.categoryData.electrical,
-                    props.chartData.categoryData.plumbing,
-                    props.chartData.categoryData.hvac,
-                    props.chartData.categoryData.carpentry,
-                    props.chartData.categoryData.painting,
-                    props.chartData.categoryData.roofing,
-                    props.chartData.categoryData.other
-                ],
-                backgroundColor: [
-                    colors.warning,
-                    colors.info,
-                    colors.success,
-                    colors.purple,
-                    colors.teal,
-                    colors.danger,
-                    colors.gray
-                ],
+                data: entries.map(([, v]) => v),
+                backgroundColor: pickColors(entries.length),
                 borderRadius: 4,
                 borderSkipped: false
             }]
@@ -237,15 +237,23 @@ const initCategoryChart = async () => {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    display: false
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => `${ctx.label}: ${ctx.parsed.y} job${ctx.parsed.y === 1 ? '' : 's'}`
+                    }
                 }
             },
             scales: {
                 y: {
                     beginAtZero: true,
+                    ticks: { precision: 0 }
+                },
+                x: {
                     ticks: {
-                        stepSize: 5
+                        autoSkip: false,
+                        maxRotation: 35,
+                        minRotation: 0,
                     }
                 }
             }
