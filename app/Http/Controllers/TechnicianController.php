@@ -639,6 +639,13 @@ class TechnicianController extends Controller
      */
     public function submitProgressReport(Request $request, ServiceRequest $serviceRequest)
     {
+        // Mobile uploads on 4G are slow — extend the PHP execution window
+        // so a 5-photo submission doesn't trip the 30s timeout.
+        @set_time_limit(120);
+        @ini_set('upload_max_filesize', '20M');
+        @ini_set('post_max_size', '60M');
+        @ini_set('memory_limit', '256M');
+
         $user = auth()->user();
         $technician = $user->technician;
 

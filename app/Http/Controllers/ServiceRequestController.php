@@ -38,12 +38,19 @@ class ServiceRequestController extends Controller
      */
     public function store(Request $request)
     {
+        // Mobile uploads on 4G can take time. Give the request room to
+        // finish even if the user is uploading several photos.
+        @set_time_limit(120);
+        @ini_set('upload_max_filesize', '20M');
+        @ini_set('post_max_size', '60M');
+        @ini_set('memory_limit', '256M');
+
         $validated = $request->validate([
             'service_category_id' => 'required|exists:service_categories,id',
             'description' => 'required|string|min:10|max:1000',
             'location' => 'required|string|max:255',
             'urgency' => 'required|in:low,medium,high',
-            'files.*' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx|max:10240', // Max 10MB per file
+            'files.*' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx,heic,heif,webp|max:10240', // Max 10MB per file
         ]);
 
         $serviceRequest = ServiceRequest::create([
@@ -74,9 +81,24 @@ class ServiceRequestController extends Controller
             $serviceRequest->update(['files' => $uploadedFiles]);
         }
 
-        // Send notification to all admin users
-        $adminUsers = User::where('role', 'admin')->get();
-        Notification::send($adminUsers, new NewServiceRequestNotification($serviceRequest));
+        // Defer admin notifications to AFTER the response is sent so the
+        // user doesn't sit waiting on SMTP roundtrips. This eliminates the
+        // 30s timeout that happened when several admins / PMs needed
+        // notifying serially.
+        $srId = $serviceRequest->id;
+        app()->terminating(function () use ($srId) {
+            try {
+                $sr = ServiceRequest::with(['serviceCategory', 'user'])->find($srId);
+                if (!$sr) return;
+                $adminUsers = User::where('role', 'admin')->get();
+                Notification::send($adminUsers, new NewServiceRequestNotification($sr));
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('NewServiceRequest notify failed', [
+                    'service_request_id' => $srId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        });
 
         return redirect()->route('client.dashboard')
             ->with('success', 'Service request submitted successfully.')

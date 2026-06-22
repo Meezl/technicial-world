@@ -223,9 +223,30 @@
                     </label>
 
                     <button type="submit" class="btn btn-primary" :disabled="submittingReport">
-                        <i class="fas fa-camera"></i>
-                        {{ submittingReport ? 'Submitting...' : 'Submit Progress Report' }}
+                        <span v-if="!submittingReport">
+                            <i class="fas fa-camera"></i> Submit Progress Report
+                        </span>
+                        <span v-else>
+                            <i class="fas fa-spinner fa-spin"></i>
+                            {{ uploadStage || 'Submitting…' }}
+                        </span>
                     </button>
+
+                    <!-- Inline progress bar while uploading. Visible to technician
+                         on the field so they know to keep the page open. -->
+                    <div v-if="submittingReport" class="upload-progress" style="margin-top:.75rem;">
+                        <div class="upload-progress-bar" style="background:#e5e7eb;height:6px;border-radius:999px;overflow:hidden;">
+                            <div :style="{
+                                width: (uploadPercent || 25) + '%',
+                                height: '100%',
+                                background: 'linear-gradient(90deg,#10b981,#059669)',
+                                transition: 'width .4s ease',
+                            }"></div>
+                        </div>
+                        <p style="font-size:.78rem;color:var(--text-muted);margin:.4rem 0 0;text-align:center;">
+                            Please keep this screen open until you see the confirmation.
+                        </p>
+                    </div>
                 </form>
             </section>
 
@@ -337,6 +358,8 @@ function onCameraCapture(event) {
     event.target.value = '' // allow re-capturing the same photo if needed
 }
 const submittingReport = ref(false)
+const uploadStage = ref('')
+const uploadPercent = ref(0)
 const progressForm = ref({
     percent_complete: Number(props.job.progress_percentage || 0),
     report_date: new Date().toISOString().slice(0, 10),
@@ -408,8 +431,26 @@ function updateStatus(action) {
     })
 }
 
-function submitProgressReport() {
+async function submitProgressReport() {
     submittingReport.value = true
+
+    // STAGE 1 — compress photos in the browser. Without this a 5-photo
+    // submission from an iPhone over 4G easily tops 30 MB and times out.
+    const rawFiles = [
+        ...Array.from(photoInput.value?.files || []),
+        ...cameraQueue.value,
+    ].slice(0, 6)
+
+    let allFiles = rawFiles
+    if (rawFiles.length > 0) {
+        uploadStage.value = `Preparing ${rawFiles.length} photo${rawFiles.length > 1 ? 's' : ''}…`
+        const { compressAll } = await import('@/composables/useImageCompression.js')
+        allFiles = await compressAll(rawFiles, (done, total) => {
+            uploadStage.value = `Preparing photos… ${done} of ${total}`
+        })
+        uploadStage.value = 'Uploading…'
+    }
+
     const formData = new FormData()
     formData.append('percent_complete', progressForm.value.percent_complete)
     formData.append('report_date', progressForm.value.report_date)
@@ -419,20 +460,29 @@ function submitProgressReport() {
         formData.append('service_sub_task_id', progressForm.value.service_sub_task_id)
     }
 
-    // Combine file-picker selections with camera-shortcut captures (#27)
-    const allFiles = [
-        ...Array.from(photoInput.value?.files || []),
-        ...cameraQueue.value,
-    ].slice(0, 6)
     allFiles.forEach((file, index) => {
         formData.append(`photos[${index}]`, file)
     })
 
+    // STAGE 2 — upload with real-time progress feedback
+    uploadPercent.value = 0
     router.post(`/technician/jobs/${props.job.id}/progress-report`, formData, {
         forceFormData: true,
         preserveScroll: true,
+        onProgress: (event) => {
+            if (event?.percentage != null) {
+                uploadPercent.value = event.percentage
+                if (event.percentage < 100) {
+                    uploadStage.value = `Uploading… ${event.percentage}%`
+                } else {
+                    uploadStage.value = 'Saving your report…'
+                }
+            }
+        },
         onSuccess: () => {
             submittingReport.value = false
+            uploadStage.value = ''
+            uploadPercent.value = 0
             progressForm.value.notes = ''
             progressForm.value.service_sub_task_id = ''
             cameraQueue.value = []
@@ -442,6 +492,8 @@ function submitProgressReport() {
         },
         onError: () => {
             submittingReport.value = false
+            uploadStage.value = ''
+            uploadPercent.value = 0
         },
     })
 }

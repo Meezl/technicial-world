@@ -166,15 +166,27 @@
                                         style="display: none;"
                                     />
                                 </div>
-                                <div v-if="selectedFiles.length > 0" class="selected-files">
-                                    <div v-for="(file, index) in selectedFiles" :key="index" class="file-item">
-                                        <i class="fas fa-file"></i>
-                                        <span>{{ file.name }}</span>
-                                        <button type="button" @click="removeFile(index)" class="remove-file">
+                                <div v-if="filePreviews.length > 0" class="file-preview-grid">
+                                    <div v-for="(preview, index) in filePreviews" :key="index" class="file-preview-tile">
+                                        <img v-if="preview.src" :src="preview.src" :alt="preview.name" class="file-preview-img" />
+                                        <div v-else class="file-preview-icon">
+                                            <i :class="iconForType(preview.type)"></i>
+                                        </div>
+                                        <button type="button" @click="removeFile(index)" class="file-preview-remove" :disabled="isSubmitting" aria-label="Remove">
                                             <i class="fas fa-times"></i>
                                         </button>
+                                        <div class="file-preview-meta">
+                                            <span class="file-preview-name">{{ preview.name }}</span>
+                                            <span class="file-preview-size">{{ preview.sizeKB }} KB</span>
+                                        </div>
                                     </div>
                                 </div>
+                                <p v-if="totalSizeLabel" class="file-size-hint">
+                                    Total to upload: <strong>{{ totalSizeLabel }}</strong>
+                                    <span v-if="selectedFiles.length">
+                                        — photos will be auto-optimised before sending
+                                    </span>
+                                </p>
                             </div>
                         </div>
 
@@ -223,11 +235,15 @@
                                 Once submitted, your request is received as an RFQ and appears immediately in your active requests while our team reviews it.
                             </p>
                             <div class="form-step-actions form-step-actions-split">
-                                <button type="button" class="btn btn-secondary" @click="currentStep = 2" :disabled="form.processing">
+                                <button type="button" class="btn btn-secondary" @click="currentStep = 2" :disabled="isSubmitting">
                                     Back to Details
                                 </button>
-                                <button type="submit" class="btn btn-primary btn-lg" :disabled="form.processing">
-                                    {{ form.processing ? 'Submitting Request...' : 'Submit Request' }}
+                                <button type="submit" class="btn btn-primary btn-lg" :disabled="isSubmitting">
+                                    <span v-if="!isSubmitting">Submit Request</span>
+                                    <span v-else class="submit-loading">
+                                        <i class="fas fa-spinner fa-spin"></i>
+                                        {{ isProcessing ? 'Preparing photos…' : `Uploading… ${uploadProgress}%` }}
+                                    </span>
                                 </button>
                             </div>
                         </div>
@@ -235,6 +251,23 @@
                 </form>
             </section>
         </main>
+
+        <!-- Upload progress overlay — shows the user something is happening
+             during the slow part. Backdrop blocks accidental double-clicks. -->
+        <div v-if="isSubmitting" class="upload-overlay">
+            <div class="upload-card">
+                <div class="upload-spinner">
+                    <i class="fas fa-cloud-upload-alt"></i>
+                </div>
+                <h3>{{ stageMessage || 'Submitting your request…' }}</h3>
+                <div class="upload-progress-bar">
+                    <div class="upload-progress-fill" :style="{ width: (isProcessing ? 25 : Math.max(30, uploadProgress)) + '%' }"></div>
+                </div>
+                <p class="upload-hint">
+                    Please keep this page open. We're sending your photos and details to our team.
+                </p>
+            </div>
+        </div>
     </div>
 </template>
 
@@ -243,6 +276,7 @@ import { Link, useForm } from '@inertiajs/vue3'
 import { computed, ref } from 'vue'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
 import ClientBottomNav from '../../Components/ClientBottomNav.vue'
+import { compressAll, totalBytes } from '../../composables/useImageCompression.js'
 
 const props = defineProps({
     serviceCategories: {
@@ -257,12 +291,19 @@ const props = defineProps({
 })
 
 const selectedFiles = ref([])
+const filePreviews = ref([])           // [{ name, src (objectURL or null), sizeKB }]
 const fileInput = ref(null)
 const currentStep = ref(1)
 const submissionFeedback = ref({
     type: '',
     message: '',
 })
+
+// Upload progress state
+const isProcessing = ref(false)        // running compression
+const isUploading = ref(false)         // bytes going over the wire
+const uploadProgress = ref(0)          // 0-100
+const stageMessage = ref('')           // status text shown to user
 
 const availableCategories = computed(() => {
     return props.serviceCategories.length > 0 ? props.serviceCategories : [
@@ -355,9 +396,8 @@ function goToReviewStep() {
     currentStep.value = 3
 }
 
-function submitRequest() {
+async function submitRequest() {
     clearFeedback()
-    form.files = selectedFiles.value
 
     // Append additional notes (site availability, hours, access, etc.) to description on submit
     const notes = additionalNotes.value.trim()
@@ -365,20 +405,67 @@ function submitRequest() {
         form.description = `${form.description.trim()}\n\nAdditional Notes:\n${notes}`
     }
 
-    submissionFeedback.value = {
-        type: 'success',
-        message: 'Submitting your request…',
+    let filesToUpload = selectedFiles.value
+
+    // STAGE 1 — compress images in the browser. Cuts a 5 MB iPhone photo
+    // to ~400 KB; total upload time drops ~10× on 4G.
+    if (filesToUpload.length > 0) {
+        isProcessing.value = true
+        const beforeBytes = totalBytes(filesToUpload)
+        stageMessage.value = `Preparing ${filesToUpload.length} file${filesToUpload.length > 1 ? 's' : ''}…`
+
+        filesToUpload = await compressAll(filesToUpload, (done, total) => {
+            stageMessage.value = `Preparing photos… ${done} of ${total}`
+        })
+
+        const afterBytes = totalBytes(filesToUpload)
+        const savedPct = beforeBytes > 0 ? Math.round((1 - afterBytes / beforeBytes) * 100) : 0
+        if (savedPct >= 20) {
+            stageMessage.value = `Photos optimised (${savedPct}% smaller). Uploading…`
+        } else {
+            stageMessage.value = 'Uploading…'
+        }
+        isProcessing.value = false
     }
+
+    form.files = filesToUpload
+
+    // STAGE 2 — upload. Inertia gives us a real progress callback we can
+    // surface to the user so they see the bar move instead of staring at
+    // a frozen button.
+    isUploading.value = true
+    uploadProgress.value = 0
 
     form.post(route('service-requests.store'), {
         preserveScroll: true,
+        forceFormData: true,
+        onProgress: (event) => {
+            if (event?.percentage != null) {
+                uploadProgress.value = event.percentage
+                if (event.percentage < 100) {
+                    stageMessage.value = `Uploading… ${event.percentage}%`
+                } else {
+                    stageMessage.value = 'Almost done — saving your request…'
+                }
+            }
+        },
+        onSuccess: () => {
+            isUploading.value = false
+            uploadProgress.value = 100
+            stageMessage.value = ''
+        },
         onError: (errors) => {
+            isUploading.value = false
+            uploadProgress.value = 0
+            stageMessage.value = ''
             submissionFeedback.value = {
                 type: 'error',
                 message: 'Request not submitted yet. Review the highlighted fields and try again.',
             }
-
             currentStep.value = errors.service_category_id ? 1 : 2
+        },
+        onFinish: () => {
+            isUploading.value = false
         },
     })
 }
@@ -389,18 +476,52 @@ function triggerFileUpload() {
 
 function handleFileSelect(event) {
     const files = Array.from(event.target.files)
-    selectedFiles.value = [...selectedFiles.value, ...files]
-    clearFeedback()
+    addFiles(files)
 }
 
 function handleFileDrop(event) {
     const files = Array.from(event.dataTransfer.files)
+    addFiles(files)
+}
+
+function addFiles(files) {
     selectedFiles.value = [...selectedFiles.value, ...files]
+    // Generate previews so the user sees their photos immediately
+    files.forEach((f) => {
+        const sizeKB = Math.round(f.size / 1024)
+        let src = null
+        if (f.type.startsWith('image/')) {
+            try { src = URL.createObjectURL(f) } catch {}
+        }
+        filePreviews.value.push({ name: f.name, src, sizeKB, type: f.type })
+    })
     clearFeedback()
 }
 
 function removeFile(index) {
     selectedFiles.value.splice(index, 1)
+    const removed = filePreviews.value.splice(index, 1)[0]
+    if (removed?.src) {
+        try { URL.revokeObjectURL(removed.src) } catch {}
+    }
+}
+
+// Total upload size estimate (shown to user pre-upload)
+const totalSizeLabel = computed(() => {
+    const bytes = totalBytes(selectedFiles.value)
+    if (bytes === 0) return ''
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+})
+
+const isSubmitting = computed(() => isProcessing.value || isUploading.value)
+
+function iconForType(type) {
+    if (!type) return 'fas fa-file'
+    if (type.includes('pdf')) return 'fas fa-file-pdf'
+    if (type.includes('word') || type.includes('document')) return 'fas fa-file-word'
+    if (type.startsWith('image/')) return 'fas fa-image'
+    return 'fas fa-file'
 }
 
 function formatUrgency(value) {
@@ -937,4 +1058,141 @@ defineOptions({
     margin-top: 0.4rem;
     line-height: 1.5;
 }
+
+/* === File preview thumbnails === */
+.file-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 0.7rem;
+    margin-top: 0.75rem;
+}
+.file-preview-tile {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+.file-preview-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.file-preview-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #9ca3af;
+    font-size: 1.8rem;
+}
+.file-preview-remove {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 0;
+    background: rgba(0,0,0,0.65);
+    color: white;
+    cursor: pointer;
+    font-size: 0.7rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.file-preview-remove:hover:not(:disabled) {
+    background: #dc2626;
+}
+.file-preview-remove:disabled { opacity: 0.4; cursor: not-allowed; }
+.file-preview-meta {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(transparent, rgba(0,0,0,0.75));
+    color: white;
+    padding: 1rem 0.4rem 0.35rem;
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.68rem;
+    align-items: flex-end;
+}
+.file-preview-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 70%;
+}
+.file-preview-size { opacity: 0.85; }
+.file-size-hint { font-size: 0.78rem; color: #6b7280; margin-top: 0.5rem; }
+
+/* === Submit button inline spinner === */
+.submit-loading {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* === Full-page upload overlay === */
+.upload-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+.upload-card {
+    background: white;
+    border-radius: 12px;
+    padding: 2rem;
+    text-align: center;
+    max-width: 380px;
+    width: 100%;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    animation: upload-pop 0.25s ease-out;
+}
+@keyframes upload-pop {
+    from { transform: scale(0.92); opacity: 0; }
+    to   { transform: scale(1);    opacity: 1; }
+}
+.upload-spinner {
+    font-size: 2.4rem;
+    color: #053272;
+    margin-bottom: 0.75rem;
+    animation: upload-float 1.6s ease-in-out infinite;
+}
+@keyframes upload-float {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-6px); }
+}
+.upload-card h3 {
+    margin: 0 0 1rem;
+    color: #1e293b;
+    font-size: 1rem;
+    font-weight: 600;
+}
+.upload-progress-bar {
+    background: #e5e7eb;
+    height: 8px;
+    border-radius: 999px;
+    overflow: hidden;
+    margin-bottom: 0.75rem;
+}
+.upload-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #053272, #2563eb);
+    border-radius: 999px;
+    transition: width 0.4s ease;
+    box-shadow: 0 0 8px rgba(37, 99, 235, 0.4);
+}
+.upload-hint { font-size: 0.82rem; color: #6b7280; margin: 0; }
 </style>

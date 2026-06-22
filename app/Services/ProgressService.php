@@ -141,19 +141,25 @@ class ProgressService
                 'validated_percent' => $data['validated_percent'] ?? $report->percent_complete,
             ]);
 
-            // Email the client about the validated progress
-            try {
-                $serviceRequest->loadMissing('user');
-                if ($serviceRequest->user?->email) {
-                    Mail::to($serviceRequest->user->email)
-                        ->send(new ProgressApproved($serviceRequest, $report));
+            // Email the client about the validated progress — deferred to
+            // run AFTER the HTTP response is sent so SMTP latency doesn't
+            // block the admin's UI or trip the 30s execution timeout.
+            $reportId = $report->id;
+            $srId     = $serviceRequest->id;
+            app()->terminating(function () use ($reportId, $srId) {
+                try {
+                    $sr  = ServiceRequest::with('user')->find($srId);
+                    $rep = ProgressReport::find($reportId);
+                    if ($sr?->user?->email && $rep) {
+                        Mail::to($sr->user->email)->send(new ProgressApproved($sr, $rep));
+                    }
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('ProgressApproved email failed', [
+                        'report_id' => $reportId,
+                        'error' => $e->getMessage(),
+                    ]);
                 }
-            } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::warning('ProgressApproved email failed', [
-                    'report_id' => $report->id,
-                    'error' => $e->getMessage(),
-                ]);
-            }
+            });
 
             return $report->fresh(['photos']);
         });
@@ -244,19 +250,26 @@ class ProgressService
                 'notes'              => 'Auto-generated: billing milestone "' . $milestone['label'] . '" reached at ' . $progressPct . '% progress.',
             ]);
 
-            // Notify the client (email + database notification)
-            try {
-                $serviceRequest->loadMissing('user');
-                if ($serviceRequest->user) {
-                    $serviceRequest->user->notify(new PaymentRequestNotification($paymentRequest));
+            // Notify the client AFTER the HTTP response goes out so SMTP
+            // latency doesn't block the validation UI.
+            $prId = $paymentRequest->id;
+            $srId = $serviceRequest->id;
+            $msLabel = $milestone['label'] ?? null;
+            app()->terminating(function () use ($prId, $srId, $msLabel) {
+                try {
+                    $pr = PaymentRequest::find($prId);
+                    $sr = ServiceRequest::with('user')->find($srId);
+                    if ($pr && $sr?->user) {
+                        $sr->user->notify(new PaymentRequestNotification($pr));
+                    }
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('Milestone payment notification failed', [
+                        'service_request_id' => $srId,
+                        'milestone_label'    => $msLabel,
+                        'error'              => $e->getMessage(),
+                    ]);
                 }
-            } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::warning('Milestone payment notification failed', [
-                    'service_request_id' => $serviceRequest->id,
-                    'milestone_label'    => $milestone['label'] ?? null,
-                    'error'              => $e->getMessage(),
-                ]);
-            }
+            });
 
             $milestone['triggered'] = true;
             $changed = true;
