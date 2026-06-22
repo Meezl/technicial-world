@@ -60,6 +60,15 @@
                         Contact Us
                     </Link>
                 </li>
+                <li>
+                    <Link
+                        href="/open-ticket"
+                        :class="['nav-ticket-link', { active: currentPage === 'open-ticket' }]"
+                        @click="close"
+                    >
+                        Open a Ticket
+                    </Link>
+                </li>
             </ul>
 
             <Link
@@ -132,4 +141,24 @@ onBeforeUnmount(() => {
 
 <style>
 @import url('../../css/frontend-app.css');
+
+/* "Open a Ticket" nav entry — brand-blue pill so it stands out as a
+   call-to-action without breaking the menu rhythm. */
+.nav-ticket-link {
+    background: #053272;
+    color: #ffffff !important;
+    padding: 0.45rem 1rem;
+    border-radius: 999px;
+    font-weight: 600;
+    transition: background 0.15s ease, transform 0.15s ease;
+    text-decoration: none;
+    white-space: nowrap;
+}
+.nav-ticket-link:hover {
+    background: #042659;
+    transform: translateY(-1px);
+}
+.nav-ticket-link.active {
+    background: #042659;
+}
 </style>

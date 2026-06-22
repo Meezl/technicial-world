@@ -11,7 +11,6 @@
                     <p class="subtitle">Connect with qualified technicians across Kenya. Quality work, reliable service, transparent pricing.</p>
                     <div class="hero-cta">
                         <Link href="/contact" class="btn-primary">Get a Quote</Link>
-                        <Link href="/open-ticket" class="btn-emergency">🚨 Open a Ticket</Link>
                         <a href="#about" class="btn-secondary">Learn More</a>
                     </div>
                 </div>
@@ -158,20 +157,4 @@ defineOptions({
 </script>
 
 <style>
-.btn-emergency {
-    display: inline-block;
-    padding: 0.75rem 1.5rem;
-    background: #dc2626;
-    color: white;
-    text-decoration: none;
-    border-radius: 6px;
-    font-weight: 600;
-    margin: 0 0.5rem;
-    transition: background 0.15s, transform 0.15s;
-    box-shadow: 0 2px 8px rgba(220, 38, 38, 0.25);
-}
-.btn-emergency:hover {
-    background: #b91c1c;
-    transform: translateY(-1px);
-}
 </style>
