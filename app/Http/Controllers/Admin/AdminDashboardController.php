@@ -297,6 +297,62 @@ class AdminDashboardController extends Controller
         return back()->with('success', 'Progress validated.');
     }
 
+    /**
+     * Backfill a final 100% progress report for jobs where the technician
+     * tapped "Mark Complete" (which set status=completed + progress=100 on
+     * the service request) without first submitting/getting a 100% progress
+     * report validated. The payment system reads from the report, not the SR,
+     * so this brings them back in sync and unlocks the final payment.
+     */
+    public function backfillFinalProgress(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'notes' => 'nullable|string|max:1000',
+        ]);
+
+        if (!$serviceRequest->technician_id) {
+            return back()->with('error', 'No technician assigned to this job — cannot backfill a progress report.');
+        }
+
+        // If a 100% report is already validated, nothing to do
+        $latestPct = (int) ($serviceRequest->progressReports()
+            ->where('is_validated', true)
+            ->where('technician_id', $serviceRequest->technician_id)
+            ->orderBy('report_date', 'desc')
+            ->value('validated_percent') ?? 0);
+
+        if ($latestPct >= 100) {
+            return back()->with('error', 'This job already has a validated 100% progress report. No backfill needed.');
+        }
+
+        $report = \App\Models\ProgressReport::create([
+            'service_request_id' => $serviceRequest->id,
+            'technician_id'      => $serviceRequest->technician_id,
+            'submitted_by'       => auth()->id(),
+            'report_date'        => now()->toDateString(),
+            'percent_complete'   => 100,
+            'notes'              => $request->input('notes') ?: 'Final report backfilled by admin to close out job completion.',
+            'is_validated'       => true,
+            'validated_by'       => auth()->id(),
+            'validated_at'       => now(),
+            'validated_percent'  => 100,
+            'validation_notes'   => 'Auto-validated as part of backfill — admin confirmed completion separately.',
+            'client_visible_notes' => $request->input('notes') ?: 'Job completed.',
+            'is_pm_authored'     => true,
+        ]);
+
+        // Sync service request — this triggers billing milestones too
+        app(ProgressService::class)->retriggerMilestonesForApprovedRevision($serviceRequest->fresh());
+
+        $serviceRequest->update([
+            'progress_percentage' => 100,
+            'status' => ServiceRequest::STATUS_COMPLETED,
+            'completed_date' => $serviceRequest->completed_date ?? now(),
+        ]);
+
+        return back()->with('success', '100% final progress report backfilled. Payment processing can now bill the remaining balance.');
+    }
+
     public function storeTechnician(Request $request)
     {
         // Password is no longer entered by the admin — the system generates a

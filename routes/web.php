@@ -260,6 +260,7 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::post('/rfq/{serviceRequest}/assign-pm', [AdminDashboardController::class, 'assignPm'])->name('admin.rfq.assign-pm');
     Route::post('/rfq/{serviceRequest}/request-payment', [AdminDashboardController::class, 'requestPayment'])->name('admin.rfq.request-payment');
     Route::post('/jobs/{serviceRequest}/raise-final-payment', [AdminDashboardController::class, 'raiseFinalPayment'])->name('admin.jobs.raise-final-payment');
+    Route::post('/jobs/{serviceRequest}/backfill-final-progress', [AdminDashboardController::class, 'backfillFinalProgress'])->name('admin.jobs.backfill-final-progress');
     Route::post('/schedule-extensions/{scheduleExtension}/decide', [\App\Http\Controllers\ScheduleExtensionController::class, 'adminDecide'])->name('admin.schedule-extensions.decide');
     Route::post('/rfq/{serviceRequest}/confirm-payment-on-behalf', [AdminDashboardController::class, 'confirmPaymentOnBehalf'])->name('admin.rfq.confirm-payment-on-behalf');
 

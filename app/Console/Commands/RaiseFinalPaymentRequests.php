@@ -48,11 +48,17 @@ class RaiseFinalPaymentRequests extends Command
 
             if ($dryRun) continue;
 
+            // `requested_by` is NOT NULL on the schema. Since this command
+            // runs from cron with no authenticated user, fall back to the
+            // assigned PM, then the first admin in the system.
+            $requestedBy = $sr->assigned_pm_id
+                ?? \App\Models\User::where('role', 'admin')->value('id');
+
             $paymentRequest = PaymentRequest::create([
                 'payment_request_id' => PaymentRequest::generatePaymentRequestId(),
                 'service_request_id' => $sr->id,
                 'user_id'            => $sr->user_id,
-                'requested_by'       => null, // system-generated
+                'requested_by'       => $requestedBy,
                 'percentage'         => round(($balance / max($sr->quote_amount, 1)) * 100, 2),
                 'amount'             => $balance,
                 'status'             => PaymentRequest::STATUS_PENDING,

@@ -238,12 +238,19 @@ class ProgressService
                 continue;
             }
 
-            // Threshold crossed — raise a payment request
+            // Threshold crossed — raise a payment request.
+            // `requested_by` is NOT NULL on the schema, so we fall back from
+            // PM → the user currently validating → first admin in the system
+            // when no PM is assigned to this service request.
+            $requestedBy = $serviceRequest->assigned_pm_id
+                ?? auth()->id()
+                ?? \App\Models\User::where('role', 'admin')->value('id');
+
             $paymentRequest = PaymentRequest::create([
                 'payment_request_id' => PaymentRequest::generatePaymentRequestId(),
                 'service_request_id' => $serviceRequest->id,
                 'user_id'            => $serviceRequest->user_id,
-                'requested_by'       => $serviceRequest->assigned_pm_id,
+                'requested_by'       => $requestedBy,
                 'percentage'         => $milestone['progress_pct'],
                 'amount'             => (float) $milestone['amount'],
                 'status'             => PaymentRequest::STATUS_PENDING,

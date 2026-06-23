@@ -465,6 +465,34 @@
                             <span class="sub-task-count">{{ progressReports.length }} report{{ progressReports.length === 1 ? '' : 's' }}</span>
                         </div>
 
+                        <!-- Backfill banner — shows when job is closed (status=completed
+                             OR progress_percentage = 100) but the latest validated
+                             progress report sits below 100%. This is the
+                             "Mark Complete tapped without 100% report" scenario. -->
+                        <div
+                            v-if="needsFinalReportBackfill"
+                            class="backfill-banner"
+                        >
+                            <div>
+                                <strong>⚠ Job is marked complete but the validated progress is only {{ latestValidatedReportPct }}%</strong>
+                                <p style="margin:.35rem 0 0;font-size:.88rem;">
+                                    The technician marked the job complete without submitting a final 100% progress report,
+                                    so the payment system can't bill the remaining balance.
+                                    Click below to backfill a 100% report on their behalf — this will sync the data
+                                    and let you process the final payment.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                class="btn btn-warning"
+                                @click="backfillFinalProgressReport"
+                                :disabled="backfilling"
+                            >
+                                <i class="fas fa-sync-alt"></i>
+                                {{ backfilling ? 'Backfilling…' : 'Backfill 100% Report' }}
+                            </button>
+                        </div>
+
                         <div v-if="progressReports.length" class="admin-report-list">
                             <article v-for="report in progressReports" :key="report.id" class="admin-report-card">
                                 <div class="admin-report-top">
@@ -1682,6 +1710,33 @@ const milestoneLaborReleasedTotal = computed(() => {
     }, 0)
 })
 const progressReports = computed(() => props.job.progress_reports || [])
+
+// Detects the "Mark Complete tapped without 100% progress report" scenario:
+// the SR shows progress=100 or status=completed, but the latest validated
+// progress report sits below 100%. Admin needs to backfill to unlock final
+// payment processing.
+const latestValidatedReportPct = computed(() => {
+    const validated = progressReports.value
+        .filter(r => r.is_validated)
+        .map(r => Number(r.validated_percent ?? r.percent_complete) || 0)
+    return validated.length ? Math.max(...validated) : 0
+})
+const needsFinalReportBackfill = computed(() => {
+    const jobIsClosed = props.job.status === 'completed' || Number(props.job.progress_percentage) >= 100
+    return jobIsClosed && latestValidatedReportPct.value < 100
+})
+
+const backfilling = ref(false)
+const backfillFinalProgressReport = () => {
+    if (!confirm('Backfill a validated 100% progress report on the technician\'s behalf? This will sync the data and allow the final payment to be processed.')) return
+    backfilling.value = true
+    router.post(`/admin/jobs/${props.job.id}/backfill-final-progress`, {
+        notes: 'Final report backfilled by admin to close out completion.',
+    }, {
+        preserveScroll: true,
+        onFinish: () => { backfilling.value = false },
+    })
+}
 const completedLaborPayments = computed(() => {
     return (props.job.technician_payments || []).filter((payment) => {
         return payment.category === 'labor' && payment.status === 'completed'
@@ -3934,4 +3989,19 @@ defineOptions({
         align-items: flex-start;
     }
 }
+
+.backfill-banner {
+    margin: 0.75rem 0 1rem;
+    padding: 0.85rem 1rem;
+    border-radius: 8px;
+    background: #fef3c7;
+    border: 1px solid #fbbf24;
+    color: #78350f;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+.backfill-banner strong { display: block; color: #92400e; }
+.backfill-banner .btn { white-space: nowrap; flex-shrink: 0; }
 </style>

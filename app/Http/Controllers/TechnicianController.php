@@ -740,6 +740,25 @@ class TechnicianController extends Controller
                 // 'progress_percentage' => 50,
             ]);
         } elseif ($action === 'completed') {
+            // Block "Mark Complete" unless the technician has a validated
+            // 100% progress report. This prevents the schema disconnect
+            // where service_requests.progress_percentage jumps to 100 but
+            // the latest validated progress_report still sits at the
+            // previous %, which leaves the payment system unable to bill
+            // the remaining balance.
+            $latestValidatedPct = (int) ($serviceRequest->progressReports()
+                ->where('is_validated', true)
+                ->where('technician_id', $technician->id)
+                ->orderBy('report_date', 'desc')
+                ->value('validated_percent') ?? 0);
+
+            if ($latestValidatedPct < 100) {
+                return back()->with('error',
+                    'Submit a 100% progress report first (and wait for admin validation) before marking the job complete. ' .
+                    'Your latest validated progress is ' . $latestValidatedPct . '%.'
+                );
+            }
+
             $serviceRequest->update([
                 'progress_percentage' => 100,
                 'status' => 'completed',
