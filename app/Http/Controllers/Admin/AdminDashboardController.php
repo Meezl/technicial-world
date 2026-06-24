@@ -129,11 +129,64 @@ class AdminDashboardController extends Controller
 
         $recentActivity = $activity->sortByDesc('ts')->take(8)->values();
 
+        // Payment data-integrity health check. Surfaces duplicate payment
+        // rows so admin spots the issue before a client does.
+        $healthAlerts = $this->paymentHealthAlerts();
+
         return Inertia::render('Admin/Dashboard', [
             'stats'          => $stats,
             'chartData'      => $chartData,
             'recentActivity' => $recentActivity,
+            'healthAlerts'   => $healthAlerts,
         ]);
+    }
+
+    /**
+     * Detect data-integrity issues admin needs to act on.
+     */
+    private function paymentHealthAlerts(): array
+    {
+        $alerts = [];
+
+        // Duplicate completed payments — same payment_request_id appears more than once.
+        $dupesByPr = \Illuminate\Support\Facades\DB::table('payments')
+            ->select('payment_request_id', \Illuminate\Support\Facades\DB::raw('COUNT(*) as cnt'))
+            ->where('status', 'completed')
+            ->whereNotNull('payment_request_id')
+            ->groupBy('payment_request_id')
+            ->having('cnt', '>', 1)
+            ->get();
+
+        if ($dupesByPr->count() > 0) {
+            $alerts[] = [
+                'severity' => 'critical',
+                'title'    => 'Duplicate payment records detected',
+                'message'  => $dupesByPr->count() . ' payment request' . ($dupesByPr->count() === 1 ? ' has' : 's have') .
+                              ' more than one completed Payment row, which inflates client "Paid" totals. ' .
+                              'Run the dedup tool on the affected jobs.',
+                'action'   => [
+                    'label' => 'Run system-wide dedupe',
+                    'href'  => null,  // No safe one-click — admin must run via per-job button or shell
+                ],
+            ];
+        }
+
+        // Paid PaymentRequests with no Payment row at all (the inverse problem)
+        $orphaned = \App\Models\PaymentRequest::where('status', 'paid')
+            ->whereDoesntHave('serviceRequest.payments', fn ($q) => $q->where('status', 'completed'))
+            ->count();
+
+        if ($orphaned > 0) {
+            $alerts[] = [
+                'severity' => 'warning',
+                'title'    => 'Paid requests with no payment record',
+                'message'  => $orphaned . ' payment request' . ($orphaned === 1 ? '' : 's') .
+                              ' marked paid have no matching Payment row. The client\'s portal may show wrong balances.',
+                'action'   => null,
+            ];
+        }
+
+        return $alerts;
     }
 
     public function technicians()

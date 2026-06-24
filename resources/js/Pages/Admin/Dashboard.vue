@@ -12,6 +12,22 @@
                 </div>
             </header>
 
+            <!-- Payment data-integrity health alerts. Visible only when
+                 a problem is detected so the dashboard stays clean day-to-day. -->
+            <div v-if="healthAlerts.length" class="health-alerts">
+                <div
+                    v-for="(alert, idx) in healthAlerts"
+                    :key="idx"
+                    :class="['health-alert', `health-alert-${alert.severity}`]"
+                >
+                    <i :class="alert.severity === 'critical' ? 'fas fa-triangle-exclamation' : 'fas fa-circle-exclamation'"></i>
+                    <div>
+                        <strong>{{ alert.title }}</strong>
+                        <p>{{ alert.message }}</p>
+                    </div>
+                </div>
+            </div>
+
             <section class="kpi-grid">
                 <div class="kpi-card">
                     <h4>Total Job Volume</h4>
@@ -125,8 +141,15 @@ const props = defineProps({
     recentActivity: {
         type: Array,
         default: () => []
-    }
+    },
+    healthAlerts: {
+        type: Array,
+        default: () => []
+    },
 })
+
+// Make alerts available to the template (just an alias for readability)
+const healthAlerts = props.healthAlerts
 
 // Chart refs
 const statusChart = ref(null)
@@ -401,5 +424,28 @@ defineOptions({
         flex-wrap: wrap;
         gap: 0.5rem;
     }
+}
+
+.health-alerts { display: flex; flex-direction: column; gap: 0.6rem; padding: 0 1rem; margin-bottom: 1rem; }
+.health-alert {
+    display: flex;
+    gap: 0.85rem;
+    align-items: flex-start;
+    padding: 0.85rem 1rem;
+    border-radius: 8px;
+    border: 1px solid transparent;
+}
+.health-alert i { font-size: 1.25rem; margin-top: 2px; flex-shrink: 0; }
+.health-alert strong { display: block; margin-bottom: 0.2rem; }
+.health-alert p { margin: 0; font-size: 0.9rem; line-height: 1.45; }
+.health-alert-critical {
+    background: #fee2e2;
+    border-color: #fca5a5;
+    color: #7f1d1d;
+}
+.health-alert-warning {
+    background: #fef3c7;
+    border-color: #fbbf24;
+    color: #78350f;
 }
 </style>

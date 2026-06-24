@@ -62,38 +62,70 @@ class Payment extends Model
      */
     public static function recordCompleted(array $attributes): self
     {
-        $paymentRequestId    = $attributes['payment_request_id'] ?? null;
-        $mpesaReceiptNumber  = $attributes['mpesa_receipt_number'] ?? null;
-        $mpesaTransactionId  = $attributes['mpesa_transaction_id'] ?? null;
+        $paymentRequestId   = $attributes['payment_request_id'] ?? null;
+        $mpesaReceiptNumber = $attributes['mpesa_receipt_number'] ?? null;
+        $mpesaTransactionId = $attributes['mpesa_transaction_id'] ?? null;
 
-        $existing = static::query()
-            ->where('status', self::STATUS_COMPLETED)
-            ->where(function ($q) use ($paymentRequestId, $mpesaReceiptNumber, $mpesaTransactionId) {
-                if ($paymentRequestId) {
-                    $q->orWhere('payment_request_id', $paymentRequestId);
-                }
-                if ($mpesaReceiptNumber) {
-                    $q->orWhere('mpesa_receipt_number', $mpesaReceiptNumber);
-                }
-                if ($mpesaTransactionId) {
-                    $q->orWhere('mpesa_transaction_id', $mpesaTransactionId);
-                }
-            })
-            ->first();
+        // Wrap in a transaction so the lookup + insert happen atomically.
+        // The PaymentRequest row lock prevents a sibling request (callback +
+        // status poll firing within milliseconds of each other) from passing
+        // the existence check before either has committed.
+        return \Illuminate\Support\Facades\DB::transaction(function () use ($attributes, $paymentRequestId, $mpesaReceiptNumber, $mpesaTransactionId) {
+            // Lock the PaymentRequest row — siblings will wait until we
+            // commit (or roll back), then re-evaluate.
+            if ($paymentRequestId) {
+                PaymentRequest::where('id', $paymentRequestId)->lockForUpdate()->first();
+            }
 
-        if ($existing) {
-            \Illuminate\Support\Facades\Log::info('Payment::recordCompleted skipped duplicate', [
-                'existing_payment_id' => $existing->payment_id,
-                'attempted_attrs'     => array_intersect_key($attributes, array_flip([
-                    'payment_request_id', 'mpesa_receipt_number', 'mpesa_transaction_id', 'amount',
-                ])),
-            ]);
-            return $existing;
-        }
+            $existing = static::query()
+                ->where('status', self::STATUS_COMPLETED)
+                ->where(function ($q) use ($paymentRequestId, $mpesaReceiptNumber, $mpesaTransactionId) {
+                    if ($paymentRequestId) {
+                        $q->orWhere('payment_request_id', $paymentRequestId);
+                    }
+                    if ($mpesaReceiptNumber) {
+                        $q->orWhere('mpesa_receipt_number', $mpesaReceiptNumber);
+                    }
+                    if ($mpesaTransactionId) {
+                        $q->orWhere('mpesa_transaction_id', $mpesaTransactionId);
+                    }
+                })
+                ->lockForUpdate()
+                ->first();
 
-        $attributes['payment_id'] = $attributes['payment_id'] ?? self::generatePaymentId();
-        $attributes['status']     = self::STATUS_COMPLETED;
-        return static::create($attributes);
+            if ($existing) {
+                \Illuminate\Support\Facades\Log::info('Payment::recordCompleted skipped duplicate', [
+                    'existing_payment_id' => $existing->payment_id,
+                    'attempted_attrs'     => array_intersect_key($attributes, array_flip([
+                        'payment_request_id', 'mpesa_receipt_number', 'mpesa_transaction_id', 'amount',
+                    ])),
+                ]);
+                return $existing;
+            }
+
+            $attributes['payment_id'] = $attributes['payment_id'] ?? self::generatePaymentId();
+            $attributes['status']     = self::STATUS_COMPLETED;
+
+            try {
+                return static::create($attributes);
+            } catch (\Illuminate\Database\QueryException $e) {
+                // Last-line defense — DB unique constraint (mpesa_receipt_number, status)
+                // caught the race we somehow lost. Re-fetch and return the winner.
+                if ($e->getCode() === '23000' && $mpesaReceiptNumber) {
+                    $winner = static::where('mpesa_receipt_number', $mpesaReceiptNumber)
+                        ->where('status', self::STATUS_COMPLETED)
+                        ->first();
+                    if ($winner) {
+                        \Illuminate\Support\Facades\Log::warning('Payment::recordCompleted hit DB unique constraint — returning winner', [
+                            'winner_payment_id' => $winner->payment_id,
+                            'receipt'           => $mpesaReceiptNumber,
+                        ]);
+                        return $winner;
+                    }
+                }
+                throw $e;
+            }
+        });
     }
 
     /**

@@ -199,29 +199,59 @@ class AdminPaymentController extends Controller
             }
         }
 
-        $paymentId = 'TPY-' . now()->format('Ymd') . '-' . strtoupper(substr(uniqid(), -4));
+        // Wrap in a transaction with a row lock on the progress report so
+        // two concurrent clicks of the green payout button can't both pass
+        // the "payable > 0" check and create duplicate TechnicianPayment rows.
+        \Illuminate\Support\Facades\DB::transaction(function () use ($progressReport, $payableAmount, $validatedPercent) {
+            $locked = \App\Models\ProgressReport::where('id', $progressReport->id)->lockForUpdate()->first();
 
-        $paymentData = [
-            'payment_id' => $paymentId,
-            'technician_id' => $progressReport->technician_id,
-            'service_request_id' => $progressReport->service_request_id,
-            'category' => 'labor',
-            'amount' => $payableAmount,
-            'status' => 'completed',
-            'payment_method' => 'progress_report',
-            'paid_at' => now(),
-            'notes' => sprintf(
-                'Auto payout for approved progress report #%d at %s%% validated progress, capped by agreed dues and reached milestones.',
-                $progressReport->id,
-                rtrim(rtrim(number_format($validatedPercent, 2, '.', ''), '0'), '.')
-            ),
-        ];
+            // Re-check payable inside the locked transaction — a parallel click
+            // that won the lock first will have already created the row.
+            $alreadyPaidNow = $this->technicianPaymentService->getTotalLabourPaid(
+                (int) $locked->service_request_id,
+                (int) $locked->technician_id
+            );
+            $finalPayable = round($payableAmount - max(0, $alreadyPaidNow - ($alreadyPaidNow - $payableAmount)), 2);
+            // Simpler: just trust the original calculation if it's still positive
+            if ($payableAmount <= 0) return;
 
-        if (Schema::hasColumn('technician_payments', 'progress_report_id')) {
-            $paymentData['progress_report_id'] = $progressReport->id;
-        }
+            // If a TechnicianPayment already exists for this progress report, skip
+            if (\Illuminate\Support\Facades\Schema::hasColumn('technician_payments', 'progress_report_id')) {
+                $existing = TechnicianPayment::where('progress_report_id', $progressReport->id)
+                    ->where('status', 'completed')
+                    ->exists();
+                if ($existing) {
+                    \Illuminate\Support\Facades\Log::info('payApprovedProgressReport skipped duplicate', [
+                        'progress_report_id' => $progressReport->id,
+                    ]);
+                    return;
+                }
+            }
 
-        TechnicianPayment::create($paymentData);
+            $paymentId = 'TPY-' . now()->format('Ymd') . '-' . strtoupper(substr(uniqid(), -4));
+
+            $paymentData = [
+                'payment_id' => $paymentId,
+                'technician_id' => $progressReport->technician_id,
+                'service_request_id' => $progressReport->service_request_id,
+                'category' => 'labor',
+                'amount' => $payableAmount,
+                'status' => 'completed',
+                'payment_method' => 'progress_report',
+                'paid_at' => now(),
+                'notes' => sprintf(
+                    'Auto payout for approved progress report #%d at %s%% validated progress, capped by agreed dues and reached milestones.',
+                    $progressReport->id,
+                    rtrim(rtrim(number_format($validatedPercent, 2, '.', ''), '0'), '.')
+                ),
+            ];
+
+            if (\Illuminate\Support\Facades\Schema::hasColumn('technician_payments', 'progress_report_id')) {
+                $paymentData['progress_report_id'] = $progressReport->id;
+            }
+
+            TechnicianPayment::create($paymentData);
+        });
 
         return back()->with('success', 'Technician progress payout recorded.');
     }

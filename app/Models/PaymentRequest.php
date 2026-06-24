@@ -107,6 +107,13 @@ class PaymentRequest extends Model
      */
     public function markAsPaid(string $method, array $details = []): void
     {
+        // Idempotent — if the request is already paid, do nothing. This
+        // prevents a duplicate callback from overwriting the original
+        // paid_at timestamp or re-triggering downstream listeners.
+        if ($this->status === self::STATUS_PAID) {
+            return;
+        }
+
         $this->update([
             'status' => self::STATUS_PAID,
             'payment_method' => $method,

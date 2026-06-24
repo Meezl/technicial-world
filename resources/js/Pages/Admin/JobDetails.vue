@@ -493,6 +493,33 @@
                             </button>
                         </div>
 
+                        <!-- Payment duplicate-row banner. Surfaces when this
+                             job's payments table has more than one completed
+                             row for the same payment request — the data bug
+                             reported on REQ-I73N1L. -->
+                        <div
+                            v-if="hasDuplicatePayments"
+                            class="backfill-banner"
+                            style="background:#fee2e2;border-color:#fca5a5;color:#7f1d1d;"
+                        >
+                            <div>
+                                <strong>⚠ Duplicate payment records detected on this job</strong>
+                                <p style="margin:.35rem 0 0;font-size:.88rem;">
+                                    {{ duplicatePaymentCount }} extra payment row{{ duplicatePaymentCount === 1 ? '' : 's' }} found.
+                                    Client portal balances will be wrong until cleaned up.
+                                    Run dry-run first to see what will change, then apply the fix.
+                                </p>
+                            </div>
+                            <div style="display:flex;flex-direction:column;gap:.4rem;">
+                                <button type="button" class="btn btn-secondary btn-sm" @click="dedupePayments(true)" :disabled="deduping">
+                                    <i class="fas fa-eye"></i> Dry-run
+                                </button>
+                                <button type="button" class="btn btn-danger btn-sm" @click="dedupePayments(false)" :disabled="deduping">
+                                    <i class="fas fa-broom"></i> {{ deduping ? 'Cleaning…' : 'Remove Duplicates' }}
+                                </button>
+                            </div>
+                        </div>
+
                         <div v-if="progressReports.length" class="admin-report-list">
                             <article v-for="report in progressReports" :key="report.id" class="admin-report-card">
                                 <div class="admin-report-top">
@@ -1735,6 +1762,29 @@ const backfillFinalProgressReport = () => {
     }, {
         preserveScroll: true,
         onFinish: () => { backfilling.value = false },
+    })
+}
+
+// Detect duplicate completed Payment rows on this job — same payment_request_id
+// appearing twice, which inflates client portal totals.
+const duplicatePaymentCount = computed(() => {
+    const payments = (props.job.payments || []).filter(p => p.status === 'completed' && p.payment_request_id)
+    const counts = {}
+    payments.forEach(p => { counts[p.payment_request_id] = (counts[p.payment_request_id] || 0) + 1 })
+    return Object.values(counts).reduce((sum, n) => sum + Math.max(0, n - 1), 0)
+})
+const hasDuplicatePayments = computed(() => duplicatePaymentCount.value > 0)
+
+const deduping = ref(false)
+const dedupePayments = (dryRun) => {
+    const verb = dryRun ? 'Run a dry-run of payment dedup' : 'Remove duplicate payments (mark them refunded)'
+    if (!confirm(`${verb} on this job?`)) return
+    deduping.value = true
+    router.post(`/admin/jobs/${props.job.id}/deduplicate-payments`, {
+        dry_run: dryRun ? 1 : 0,
+    }, {
+        preserveScroll: true,
+        onFinish: () => { deduping.value = false },
     })
 }
 const completedLaborPayments = computed(() => {
