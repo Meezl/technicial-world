@@ -103,27 +103,54 @@ class PaymentProcessingController extends Controller
 
         $periodEnd = \Carbon\Carbon::parse($request->period_end);
 
+        // Include 'pending' — new assignments default to pending until the
+        // technician explicitly accepts, but they're still payable (admin
+        // set agreed_compensation at assignment time). Excluding pending
+        // was the bug that made auto-compute return nothing when admin
+        // tried it on fresh validated reports.
         $assignments = JobAssignment::with(['serviceRequest', 'technician.user'])
-            ->whereIn('status', ['accepted', 'completed'])
+            ->whereIn('status', ['pending', 'accepted', 'completed'])
             ->get();
+
+        // Diagnostics so the admin sees WHY a technician didn't show up
+        // (the most common cause is "no agreed_compensation" or "no
+        // validated progress yet").
+        $skipped = [
+            'no_assignment_data'  => 0,
+            'no_agreed_amount'    => 0,
+            'no_validated_progress' => 0,
+            'already_fully_paid'  => 0,
+        ];
 
         $rows = [];
         foreach ($assignments as $assignment) {
             $sr   = $assignment->serviceRequest;
             $tech = $assignment->technician;
-            if (!$sr || !$tech) continue;
+            if (!$sr || !$tech) {
+                $skipped['no_assignment_data']++;
+                continue;
+            }
 
             $agreed = (float) ($assignment->agreed_compensation ?? 0);
-            if ($agreed <= 0) continue;
+            if ($agreed <= 0) {
+                $skipped['no_agreed_amount']++;
+                continue;
+            }
 
             $progress = $this->paymentService->getValidatedProgressForTechnician($sr, $tech->id);
-            if ($progress <= 0) continue;
+            if ($progress <= 0) {
+                $skipped['no_validated_progress']++;
+                continue;
+            }
 
             $cumulativeDue = $this->paymentService->calculateCumulativeAmountDue($sr, $tech->id, $agreed, $progress);
             $alreadyPaid   = $this->paymentService->getTotalLabourPaid($sr->id, $tech->id);
             $currentPayable = max(0, round($cumulativeDue - $alreadyPaid, 2));
 
-            if ($currentPayable <= 0) continue;
+            if ($currentPayable <= 0) {
+                $skipped['already_fully_paid']++;
+                continue;
+            }
 
             $rows[] = [
                 'service_request_id'        => $sr->id,
@@ -139,6 +166,7 @@ class PaymentProcessingController extends Controller
         }
 
         return response()->json([
+            'skipped' => $skipped,
             'count'   => count($rows),
             'total'   => array_sum(array_column($rows, 'current_period_payable')),
             'entries' => $rows,

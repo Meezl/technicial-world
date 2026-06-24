@@ -484,7 +484,23 @@ const autoCompute = async () => {
             },
         })
         if (data.count === 0) {
-            alert('No eligible technicians with validated progress and unpaid balances in this period.')
+            // Use the backend's diagnostic breakdown so admin understands
+            // WHY zero rows came back. Common causes: assignment missing
+            // agreed_compensation, or no validated progress yet.
+            const s = data.skipped || {}
+            const reasons = []
+            if (s.no_agreed_amount > 0) reasons.push(`${s.no_agreed_amount} assignment${s.no_agreed_amount === 1 ? '' : 's'} missing agreed compensation`)
+            if (s.no_validated_progress > 0) reasons.push(`${s.no_validated_progress} assignment${s.no_validated_progress === 1 ? '' : 's'} have no validated progress yet`)
+            if (s.already_fully_paid > 0) reasons.push(`${s.already_fully_paid} technician${s.already_fully_paid === 1 ? '' : 's'} already fully paid`)
+
+            if (reasons.length > 0) {
+                alert(
+                    'No payable technicians found.\n\nDetails:\n• ' + reasons.join('\n• ') +
+                    '\n\nFix: set agreed compensation on the assignment, or validate the technician\'s progress reports first.'
+                )
+            } else {
+                alert('No eligible technicians with validated progress and unpaid balances in this period.\n\nThis usually means there are no active job assignments at all.')
+            }
             return
         }
         form.value.entries = data.entries.map(e => ({

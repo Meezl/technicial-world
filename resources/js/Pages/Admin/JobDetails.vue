@@ -527,7 +527,10 @@
                                         <strong>{{ report.service_sub_task ? `Sub-task: ${report.service_sub_task.title || report.service_sub_task.name}` : 'Whole job update' }}</strong>
                                         <p>
                                             Submitted by {{ report.submitter?.name || report.technician?.user?.name || 'Unknown' }}
-                                            on {{ formatDate(report.report_date) }}
+                                            on {{ formatDateTime(report.created_at) }}
+                                            <small v-if="report.report_date && !isSameDay(report.report_date, report.created_at)" style="color:var(--text-muted);">
+                                                (for {{ formatDateOnly(report.report_date) }})
+                                            </small>
                                         </p>
                                     </div>
                                     <span :class="['status-badge', report.is_validated ? 'approved' : 'review']">
@@ -2567,9 +2570,39 @@ const formatDate = (dateString) => {
         year: 'numeric',
         month: 'long',
         day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
+        timeZone: 'Africa/Nairobi',
     })
+}
+
+// For timestamps where a real time-of-day matters (progress submissions,
+// validation events). Falls back gracefully if no value.
+const formatDateTime = (dateString) => {
+    if (!dateString) return '—'
+    return new Date(dateString).toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'Africa/Nairobi',
+    })
+}
+
+const formatDateOnly = (dateString) => {
+    if (!dateString) return '—'
+    return new Date(dateString).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        timeZone: 'Africa/Nairobi',
+    })
+}
+
+const isSameDay = (a, b) => {
+    if (!a || !b) return true
+    const da = new Date(a).toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' })
+    const db = new Date(b).toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' })
+    return da === db
 }
 
 defineOptions({

@@ -28,6 +28,29 @@ class ProgressService
         array $photos = []
     ): ProgressReport {
         return DB::transaction(function () use ($serviceRequest, $technicianId, $submittedBy, $data, $photos) {
+            // Anti-double-submit guard: on slow mobile networks, the user
+            // can tap "Submit" twice before the first request returns. If
+            // the same technician submitted an identical report (same %,
+            // same date, same SR/sub-task) in the last 90 seconds, treat
+            // the second submission as a no-op and return the original.
+            $existing = ProgressReport::where('service_request_id', $serviceRequest->id)
+                ->where('technician_id', $technicianId)
+                ->where('service_sub_task_id', $data['service_sub_task_id'] ?? null)
+                ->where('percent_complete', (int) $data['percent_complete'])
+                ->where('created_at', '>=', now()->subSeconds(90))
+                ->lockForUpdate()
+                ->orderByDesc('id')
+                ->first();
+
+            if ($existing) {
+                \Illuminate\Support\Facades\Log::info('ProgressService::submitReport skipped duplicate', [
+                    'existing_report_id' => $existing->id,
+                    'technician_id'      => $technicianId,
+                    'service_request_id' => $serviceRequest->id,
+                ]);
+                return $existing->fresh(['photos']);
+            }
+
             $report = ProgressReport::create([
                 'service_request_id' => $serviceRequest->id,
                 'service_sub_task_id' => $data['service_sub_task_id'] ?? null,
