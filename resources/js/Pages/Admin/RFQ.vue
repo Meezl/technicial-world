@@ -274,7 +274,7 @@
                                                 <i class="fas fa-file-invoice-dollar"></i>
                                             </button>
                                             <button
-                                                v-if="rfq.rfq_status === 'approved'"
+                                                v-if="rfq.rfq_status === 'approved' && !isRfqFullyPaid(rfq)"
                                                 @click="initiatePaymentRequest(rfq)"
                                                 class="btn btn-sm btn-success"
                                                 :title="rfq.submission_mode === 'admin_proxy' ? 'Send Payment Request to Client Portal' : 'Request Payment'"
@@ -282,13 +282,20 @@
                                                 <i class="fas fa-hand-holding-usd"></i>
                                             </button>
                                             <button
-                                                v-if="rfq.rfq_status === 'approved' && rfq.submission_mode === 'admin_proxy'"
+                                                v-if="rfq.rfq_status === 'approved' && rfq.submission_mode === 'admin_proxy' && !isRfqFullyPaid(rfq)"
                                                 @click="openProxyPaymentModal(rfq)"
                                                 class="btn btn-sm btn-teal"
                                                 title="Confirm Direct Payment Received"
                                             >
                                                 <i class="fas fa-cash-register"></i>
                                             </button>
+                                            <span
+                                                v-if="rfq.rfq_status === 'approved' && isRfqFullyPaid(rfq)"
+                                                class="paid-pill"
+                                                title="All payments received in full"
+                                            >
+                                                <i class="fas fa-check-circle"></i> Paid in full
+                                            </span>
                                             <button v-if="rfq.rfq_status === 'quoted'" @click="viewRFQ(rfq)" class="btn btn-sm btn-success" title="View Quote">
                                                 <i class="fas fa-receipt"></i>
                                             </button>
@@ -353,7 +360,7 @@
                                     <i class="fas fa-file-invoice-dollar"></i> Quote
                                 </button>
                                 <button
-                                    v-if="rfq.rfq_status === 'approved'"
+                                    v-if="rfq.rfq_status === 'approved' && !isRfqFullyPaid(rfq)"
                                     @click="initiatePaymentRequest(rfq)"
                                     class="btn btn-sm btn-success"
                                     :title="rfq.submission_mode === 'admin_proxy' ? 'Send to client portal' : 'Request payment'"
@@ -361,13 +368,19 @@
                                     <i class="fas fa-hand-holding-usd"></i> Payment
                                 </button>
                                 <button
-                                    v-if="rfq.rfq_status === 'approved' && rfq.submission_mode === 'admin_proxy'"
+                                    v-if="rfq.rfq_status === 'approved' && rfq.submission_mode === 'admin_proxy' && !isRfqFullyPaid(rfq)"
                                     @click="openProxyPaymentModal(rfq)"
                                     class="btn btn-sm btn-teal"
                                     title="Confirm direct cash/cheque payment"
                                 >
                                     <i class="fas fa-cash-register"></i> Confirm Payment
                                 </button>
+                                <span
+                                    v-if="rfq.rfq_status === 'approved' && isRfqFullyPaid(rfq)"
+                                    class="paid-pill"
+                                >
+                                    <i class="fas fa-check-circle"></i> Paid in full
+                                </span>
                                 <button
                                     v-if="rfq.rfq_status === 'quoted' && rfq.submission_mode === 'admin_proxy'"
                                     @click="openApproveOnBehalfModal(rfq)"
@@ -484,6 +497,12 @@
                                     <label>Origin:</label>
                                     <span :class="['origin-badge', selectedRFQ?.submission_mode === 'admin_proxy' ? 'proxy' : 'self']">
                                         {{ getSubmissionModeLabel(selectedRFQ?.submission_mode) }}
+                                    </span>
+                                </div>
+                                <div class="info-item" v-if="selectedRFQ?.urgency">
+                                    <label>Job Urgency:</label>
+                                    <span :class="['urgency-badge', `urgency-${selectedRFQ.urgency}`]">
+                                        {{ formatUrgencyLabel(selectedRFQ.urgency) }}
                                     </span>
                                 </div>
                                 <div class="info-item" v-if="selectedRFQ?.created_by_admin">
@@ -1754,6 +1773,19 @@ const getDaysOpenLabel = (date) => {
 
 const getStatusLabel = (status) => ({ pending: 'Pending Review', quoted: 'Awaiting Approval', approved: 'Approved', rejected: 'Rejected' })[status] || 'Unknown'
 const getSubmissionModeLabel = (mode) => ({ client_self: 'Client Submitted', admin_proxy: 'Admin Assisted' })[mode] || 'Client Submitted'
+const formatUrgencyLabel = (urgency) => ({ low: 'Low', medium: 'Medium', high: 'High' })[urgency] || (urgency || '—')
+
+// Sum of all paid payment requests vs the quote total. Treats anything
+// within 1 cent of the quote as "fully paid" to absorb rounding drift.
+const isRfqFullyPaid = (rfq) => {
+    if (!rfq || !rfq.quote_amount) return false
+    const total = Number(rfq.quote_amount) || 0
+    if (total <= 0) return false
+    const paid = (rfq.payment_requests || [])
+        .filter(pr => pr.status === 'paid')
+        .reduce((sum, pr) => sum + (Number(pr.amount) || 0), 0)
+    return paid + 0.01 >= total
+}
 
 defineOptions({ layout: null })
 </script>
@@ -2471,4 +2503,10 @@ defineOptions({ layout: null })
 .billing-ms-row { border-top: 1px solid var(--border-color, #e5e7eb); }
 .billing-ms-row input { padding: 0.25rem 0.5rem; font-size: 0.85rem; }
 .btn-xs { padding: 0.25rem 0.625rem; font-size: 0.75rem; line-height: 1.25; border-radius: 0.25rem; }
+.urgency-badge { display: inline-block; padding: 0.2rem 0.55rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.urgency-low { background: #E0F2FE; color: #075985; }
+.urgency-medium { background: #FEF3C7; color: #92400E; }
+.urgency-high { background: #FEE2E2; color: #991B1B; }
+.paid-pill { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.5rem; border-radius: 999px; background: #DCFCE7; color: #166534; font-size: 0.7rem; font-weight: 700; }
+.paid-pill i { font-size: 0.65rem; }
 </style>

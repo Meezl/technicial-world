@@ -157,6 +157,12 @@ class AdminDashboardController extends Controller
         return Inertia::render('Admin/Technicians', [
             'technicians' => $technicians,
             'documentTypes' => \App\Models\TechnicianDocument::documentTypes(),
+            // Pass the real service categories so the Specialization dropdown
+            // on the create-technician form stays in sync as admin adds/removes
+            // categories from the Service Categories page.
+            'serviceCategories' => \App\Models\ServiceCategory::where('is_active', true)
+                ->orderBy('name')
+                ->get(['id', 'name']),
         ]);
     }
 
@@ -671,6 +677,11 @@ class AdminDashboardController extends Controller
             // is expected to start. Soft warning surfaces if it exceeds
             // the priority window (NOT a hard block per client preference).
             'commencement_at' => 'nullable|date',
+            // Files admin attaches when assigning — drawings, BOQ, photos.
+            // These are stored on the JobAssignment and attached to the
+            // technician's email.
+            'assignment_files'   => 'nullable|array|max:10',
+            'assignment_files.*' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx,xls,xlsx,heic,heif,webp|max:20480',
         ]);
 
         // Block direct assignment when sub-tasks exist
@@ -739,13 +750,15 @@ class AdminDashboardController extends Controller
         }
 
         $reassignmentReason = $request->input('reassignment_reason');
+        $attachments = $this->storeAssignmentAttachments($request, $serviceRequest);
         $this->syncPrimaryAssignment(
             $serviceRequest,
             currentTechnicianId: $currentTechnicianId,
             technician: $technician,
             agreedCompensation: (float) $request->agreed_compensation,
             compensationNotes: $request->compensation_notes,
-            reassignmentReason: $reassignmentReason ?: 'Admin reassigned technician from job details.'
+            reassignmentReason: $reassignmentReason ?: 'Admin reassigned technician from job details.',
+            attachments: $attachments,
         );
 
         // Update technician availability if they become busy
@@ -1179,17 +1192,23 @@ class AdminDashboardController extends Controller
         Technician $technician,
         float $agreedCompensation,
         ?string $compensationNotes,
-        string $reassignmentReason
+        string $reassignmentReason,
+        array $attachments = []
     ): JobAssignment {
         $existingAssignment = $this->findActivePrimaryAssignment($serviceRequest, $currentTechnicianId);
 
         if ($existingAssignment && (int) $existingAssignment->technician_id === (int) $technician->id) {
-            $existingAssignment->update([
+            $update = [
                 'agreed_compensation' => $agreedCompensation,
                 'compensation_notes' => $compensationNotes,
                 'assigned_by' => auth()->id(),
                 'status' => JobAssignment::STATUS_PENDING,
-            ]);
+            ];
+            if (!empty($attachments)) {
+                // Merge with any existing attachments rather than overwrite
+                $update['attachments'] = array_merge((array) ($existingAssignment->attachments ?? []), $attachments);
+            }
+            $existingAssignment->update($update);
 
             return $existingAssignment->fresh();
         }
@@ -1208,9 +1227,29 @@ class AdminDashboardController extends Controller
             'assigned_by' => auth()->id(),
             'agreed_compensation' => $agreedCompensation,
             'compensation_notes' => $compensationNotes,
+            'attachments' => !empty($attachments) ? $attachments : null,
             'status' => JobAssignment::STATUS_PENDING,
             'reassigned_from' => $existingAssignment?->technician_id,
         ]);
+    }
+
+    /**
+     * Persist uploaded assignment files to the public disk.
+     */
+    protected function storeAssignmentAttachments(Request $request, ServiceRequest $serviceRequest): array
+    {
+        if (!$request->hasFile('assignment_files')) return [];
+
+        $stored = [];
+        foreach ($request->file('assignment_files') as $file) {
+            $path = $file->store('job-assignments/' . $serviceRequest->request_id, 'public');
+            $stored[] = [
+                'path'      => $path,
+                'name'      => $file->getClientOriginalName(),
+                'mime_type' => $file->getMimeType(),
+            ];
+        }
+        return $stored;
     }
 
     protected function syncSubTaskAssignment(
@@ -2342,17 +2381,68 @@ class AdminDashboardController extends Controller
             }
         }
 
-        // Check for pending service requests if client
+        // Check for any non-terminal service requests if client. The previous
+        // version missed many statuses (awaiting_payment, ready_for_assignment,
+        // en_route, on_site, etc.), which is why the deletion appeared to silently
+        // succeed in the UI but the user still showed up on refresh.
         if ($user->role === 'client') {
-            $pendingRequests = $user->serviceRequests()->whereIn('status', ['pending', 'assigned', 'in_progress'])->count();
-            if ($pendingRequests > 0) {
-                return redirect()->route('admin.users')->with('error', 'Cannot delete client with pending service requests.');
+            $terminalStatuses = ['completed', 'closed', 'cancelled', 'rejected'];
+            $activeRequests = $user->serviceRequests()
+                ->whereNotIn('status', $terminalStatuses)
+                ->get(['id', 'request_id', 'status']);
+
+            if ($activeRequests->count() > 0) {
+                $refs = $activeRequests->pluck('request_id')->take(5)->implode(', ');
+                $more = $activeRequests->count() > 5 ? ' (+' . ($activeRequests->count() - 5) . ' more)' : '';
+                return redirect()->route('admin.users')->with(
+                    'error',
+                    sprintf(
+                        'Cannot delete client: they have %d active service request%s — %s%s. Close, cancel or complete these requests first.',
+                        $activeRequests->count(),
+                        $activeRequests->count() === 1 ? '' : 's',
+                        $refs,
+                        $more
+                    )
+                );
+            }
+
+            // Also block deletion if they have pending payment requests
+            // (money owed or partially paid).
+            $pendingPayments = \App\Models\PaymentRequest::where('user_id', $user->id)
+                ->where('status', \App\Models\PaymentRequest::STATUS_PENDING)
+                ->count();
+            if ($pendingPayments > 0) {
+                return redirect()->route('admin.users')->with(
+                    'error',
+                    "Cannot delete client: they have {$pendingPayments} pending payment request" .
+                    ($pendingPayments === 1 ? '' : 's') . '. Settle or cancel these first.'
+                );
             }
         }
 
         $user->delete();
 
         return redirect()->route('admin.users')->with('success', 'User deleted successfully!');
+    }
+
+    /**
+     * Repair duplicate Payment rows on a specific service request.
+     * Runs the same dedup logic as the artisan command but targeted to a
+     * single SR so admin can fix the client-reported case without affecting
+     * anything else.
+     */
+    public function deduplicatePayments(Request $request, ServiceRequest $serviceRequest)
+    {
+        $dryRun = (bool) $request->boolean('dry_run', false);
+
+        \Illuminate\Support\Facades\Artisan::call('payments:deduplicate', array_filter([
+            '--dry-run' => $dryRun,
+            '--service-request' => $serviceRequest->id,
+        ]));
+
+        $output = trim(\Illuminate\Support\Facades\Artisan::output());
+
+        return back()->with('success', ($dryRun ? '[Dry-run] ' : '') . 'Payment dedup complete. ' . $output);
     }
 
     /**
@@ -2567,14 +2657,12 @@ class AdminDashboardController extends Controller
         // Immediately mark as paid — admin is confirming on behalf
         $paymentRequest->markAsPaid($request->payment_method);
 
-        // Create the Payment record
-        Payment::create([
-            'payment_id'           => Payment::generatePaymentId(),
+        // Create the Payment record — dedup so a late callback can't double up.
+        Payment::recordCompleted([
             'payment_request_id'   => $paymentRequest->id,
             'service_request_id'   => $serviceRequest->id,
             'user_id'              => $serviceRequest->user_id,
             'amount'               => $amount,
-            'status'               => Payment::STATUS_COMPLETED,
             'payment_method'       => $request->payment_method,
             'phone_number'         => $request->phone_number ?: ($serviceRequest->user->phone ?? ''),
             'mpesa_receipt_number' => $request->mpesa_receipt_number,

@@ -51,6 +51,52 @@ class Payment extends Model
     }
 
     /**
+     * Create a completed Payment record while guarding against duplicates.
+     *
+     * Two writes can race when the same M-Pesa transaction is reported by
+     * more than one channel (callback + status poll, callback + C2B, manual
+     * admin confirm + late callback). This helper checks for an existing
+     * COMPLETED payment for the same PaymentRequest or with the same M-Pesa
+     * receipt number before inserting — returning the existing row instead
+     * of creating a duplicate.
+     */
+    public static function recordCompleted(array $attributes): self
+    {
+        $paymentRequestId    = $attributes['payment_request_id'] ?? null;
+        $mpesaReceiptNumber  = $attributes['mpesa_receipt_number'] ?? null;
+        $mpesaTransactionId  = $attributes['mpesa_transaction_id'] ?? null;
+
+        $existing = static::query()
+            ->where('status', self::STATUS_COMPLETED)
+            ->where(function ($q) use ($paymentRequestId, $mpesaReceiptNumber, $mpesaTransactionId) {
+                if ($paymentRequestId) {
+                    $q->orWhere('payment_request_id', $paymentRequestId);
+                }
+                if ($mpesaReceiptNumber) {
+                    $q->orWhere('mpesa_receipt_number', $mpesaReceiptNumber);
+                }
+                if ($mpesaTransactionId) {
+                    $q->orWhere('mpesa_transaction_id', $mpesaTransactionId);
+                }
+            })
+            ->first();
+
+        if ($existing) {
+            \Illuminate\Support\Facades\Log::info('Payment::recordCompleted skipped duplicate', [
+                'existing_payment_id' => $existing->payment_id,
+                'attempted_attrs'     => array_intersect_key($attributes, array_flip([
+                    'payment_request_id', 'mpesa_receipt_number', 'mpesa_transaction_id', 'amount',
+                ])),
+            ]);
+            return $existing;
+        }
+
+        $attributes['payment_id'] = $attributes['payment_id'] ?? self::generatePaymentId();
+        $attributes['status']     = self::STATUS_COMPLETED;
+        return static::create($attributes);
+    }
+
+    /**
      * Get the payment request associated with this payment.
      */
     public function paymentRequest(): BelongsTo

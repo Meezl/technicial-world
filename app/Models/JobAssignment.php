@@ -14,6 +14,7 @@ class JobAssignment extends Model
         'assigned_by',
         'agreed_compensation',
         'compensation_notes',
+        'attachments',
         'status',
         'expected_start',
         'expected_end',
@@ -25,6 +26,7 @@ class JobAssignment extends Model
 
     protected $casts = [
         'agreed_compensation' => 'decimal:2',
+        'attachments' => 'array',
         'expected_start' => 'datetime',
         'expected_end' => 'datetime',
         'actual_start' => 'datetime',

@@ -184,7 +184,10 @@
                             <span>Specialization</span>
                             <select v-model="specializationFilter" class="filter-input">
                                 <option value="">All Specializations</option>
-                                <option v-for="spec in uniqueSpecializations" :key="spec" :value="spec">{{ spec }}</option>
+                                <!-- Show every active service category, not just those already
+                                     covered by a registered technician — so admin can search
+                                     for a trade we don't yet have anyone for. -->
+                                <option v-for="cat in serviceCategories" :key="cat.id" :value="cat.name">{{ cat.name }}</option>
                             </select>
                         </label>
                         <label class="filter-field">
@@ -369,14 +372,9 @@
                                         <label>Specialization <span class="req">*</span></label>
                                         <select v-model="form.specialization" required>
                                             <option value="">Select specialization</option>
-                                            <option value="Electrical">Electrical</option>
-                                            <option value="Plumbing">Plumbing</option>
-                                            <option value="HVAC">HVAC</option>
-                                            <option value="Carpentry">Carpentry</option>
-                                            <option value="Painting">Painting</option>
-                                            <option value="Roofing">Roofing</option>
-                                            <option value="Flooring">Flooring</option>
-                                            <option value="General Maintenance">General Maintenance</option>
+                                            <option v-for="cat in serviceCategories" :key="cat.id" :value="cat.name">
+                                                {{ cat.name }}
+                                            </option>
                                         </select>
                                     </div>
                                     <div class="form-group">
@@ -822,6 +820,7 @@ import { ref, computed, watch } from 'vue'
 const props = defineProps({
     technicians: { type: Array, default: () => [] },
     documentTypes: { type: Object, default: () => ({}) },
+    serviceCategories: { type: Array, default: () => [] },
 })
 
 const page = usePage()

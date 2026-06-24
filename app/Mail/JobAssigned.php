@@ -59,6 +59,51 @@ class JobAssigned extends Mailable
      */
     public function attachments(): array
     {
-        return [];
+        $attachments = [];
+
+        // 1. Files the client originally uploaded with their RFQ
+        foreach ((array) $this->serviceRequest->files as $f) {
+            if (empty($f['path'])) continue;
+            try {
+                $disk = \Illuminate\Support\Facades\Storage::disk('public');
+                if ($disk->exists($f['path'])) {
+                    $attachments[] = \Illuminate\Mail\Mailables\Attachment::fromStorageDisk('public', $f['path'])
+                        ->as($f['name'] ?? basename($f['path']));
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('JobAssigned client-file attach failed', [
+                    'service_request_id' => $this->serviceRequest->id,
+                    'path' => $f['path'],
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        // 2. Files admin attached when assigning (BOQ, drawings, photos)
+        $latestAssignment = $this->serviceRequest->jobAssignments()
+            ->where('technician_id', $this->serviceRequest->technician_id)
+            ->orderByDesc('id')
+            ->first();
+
+        if ($latestAssignment) {
+            foreach ((array) $latestAssignment->attachments as $f) {
+                if (empty($f['path'])) continue;
+                try {
+                    $disk = \Illuminate\Support\Facades\Storage::disk('public');
+                    if ($disk->exists($f['path'])) {
+                        $attachments[] = \Illuminate\Mail\Mailables\Attachment::fromStorageDisk('public', $f['path'])
+                            ->as($f['name'] ?? basename($f['path']));
+                    }
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('JobAssigned assignment-file attach failed', [
+                        'service_request_id' => $this->serviceRequest->id,
+                        'path' => $f['path'],
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
+
+        return $attachments;
     }
 }

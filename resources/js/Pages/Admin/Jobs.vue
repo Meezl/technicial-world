@@ -205,6 +205,25 @@
                             placeholder="Enter agreed fee for this technician"
                         />
                     </div>
+                    <div class="form-group" style="margin-top:1rem;">
+                        <label>Attach Files (optional)</label>
+                        <input
+                            ref="assignmentFileInput"
+                            type="file"
+                            multiple
+                            accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                            @change="onAssignmentFilesChange"
+                            class="form-control"
+                        />
+                        <small style="color:#6b7280;display:block;margin-top:.25rem;">
+                            BOQ, drawings, site photos, etc. (up to 10 files, 20 MB each) — sent with the technician's assignment email.
+                        </small>
+                        <ul v-if="assignmentFiles.length" style="margin:.5rem 0 0;padding-left:1.1rem;font-size:.85rem;color:#374151;">
+                            <li v-for="(f, i) in assignmentFiles" :key="i">
+                                {{ f.name }} <small>({{ Math.round(f.size / 1024) }} KB)</small>
+                            </li>
+                        </ul>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button @click="closeModal" class="btn btn-secondary">Cancel</button>
@@ -242,7 +261,13 @@ const showModal = ref(false)
 const selectedJob = ref(null)
 const selectedTechnician = ref(null)
 const agreedCompensation = ref(0)
+const assignmentFiles = ref([])
+const assignmentFileInput = ref(null)
 const isReassigning = ref(false)
+
+const onAssignmentFilesChange = (e) => {
+    assignmentFiles.value = Array.from(e.target.files || [])
+}
 
 // Watch for changes in search and status to trigger server-side filtering
 import { watch } from 'vue'
@@ -377,22 +402,38 @@ const assignTechnician = () => {
             alert('Please provide a brief reason (at least 5 characters) for the reassignment.')
             return
         }
-        router.post(`/admin/jobs/${selectedJob.value.id}/assign`, {
+        const payload = buildAssignmentFormData({
             technician_id: selectedTechnician.value.id,
             agreed_compensation: agreedCompensation.value || 0,
             reassignment_reason: trimmed,
-        }, { onSuccess: () => closeModal() })
+        })
+        router.post(`/admin/jobs/${selectedJob.value.id}/assign`, payload, {
+            forceFormData: true,
+            onSuccess: () => closeModal(),
+        })
         return
     }
 
-    router.post(`/admin/jobs/${selectedJob.value.id}/assign`, {
+    const payload = buildAssignmentFormData({
         technician_id: selectedTechnician.value.id,
         agreed_compensation: agreedCompensation.value || 0,
-    }, {
+    })
+    router.post(`/admin/jobs/${selectedJob.value.id}/assign`, payload, {
+        forceFormData: true,
         onSuccess: () => {
             closeModal()
         }
     })
+}
+
+// Build FormData so we can include uploaded files alongside scalar fields.
+const buildAssignmentFormData = (scalars) => {
+    const fd = new FormData()
+    Object.entries(scalars).forEach(([k, v]) => {
+        if (v !== null && v !== undefined) fd.append(k, v)
+    })
+    assignmentFiles.value.forEach((f, i) => fd.append(`assignment_files[${i}]`, f))
+    return fd
 }
 
 const getAssignedTechCount = (job) => {
@@ -410,6 +451,8 @@ const closeModal = () => {
     selectedJob.value = null
     selectedTechnician.value = null
     agreedCompensation.value = 0
+    assignmentFiles.value = []
+    if (assignmentFileInput.value) assignmentFileInput.value.value = ''
     isReassigning.value = false
 }
 

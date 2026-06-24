@@ -12,8 +12,18 @@
             <section class="page-content">
                 <div class="about-content">
                     <div class="about-images">
-                        <img src="https://images.unsplash.com/photo-1521791136064-7986c2920216?q=80&w=2940&auto=format&fit=crop" alt="Team collaborating on a project">
-                        <img src="https://bbraun.webpinn.com/assets/img/vg.jpeg" alt="">
+                        <img
+                            src="https://images.unsplash.com/photo-1521791136064-7986c2920216?q=80&w=1600&auto=format&fit=crop"
+                            alt="Team collaborating on a project"
+                            loading="lazy"
+                            @error="(e) => e.target.src = 'https://images.unsplash.com/photo-1556761175-5973dc0f32e7?q=80&w=1600&auto=format&fit=crop'"
+                        >
+                        <img
+                            src="https://images.unsplash.com/photo-1581094794329-c8112a89af12?q=80&w=1600&auto=format&fit=crop"
+                            alt="Technician at work on site"
+                            loading="lazy"
+                            @error="(e) => e.target.src = 'https://images.unsplash.com/photo-1503387762-592deb58ef4e?q=80&w=1600&auto=format&fit=crop'"
+                        >
                     </div>
                     <div class="about-text">
                         <h3>Who We Are</h3>

@@ -100,13 +100,11 @@ class MpesaTransactionController extends Controller
                 'phone_number'         => $mpesaTransaction->phone_number,
             ]);
 
-            \App\Models\Payment::create([
-                'payment_id'           => \App\Models\Payment::generatePaymentId(),
+            \App\Models\Payment::recordCompleted([
                 'payment_request_id'   => $paymentRequest->id,
                 'service_request_id'   => $paymentRequest->service_request_id,
                 'user_id'              => $paymentRequest->user_id,
                 'amount'               => $mpesaTransaction->amount,
-                'status'               => \App\Models\Payment::STATUS_COMPLETED,
                 'payment_method'       => \App\Models\Payment::METHOD_MPESA,
                 'mpesa_transaction_id' => $mpesaTransaction->receipt_number,
                 'mpesa_receipt_number' => $mpesaTransaction->receipt_number,

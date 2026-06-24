@@ -164,21 +164,20 @@ class PaymentController extends Controller
             'phone_number' => $result['phone_number'],
         ]);
 
-        // Create payment record
-        Payment::create([
-            'payment_id' => Payment::generatePaymentId(),
-            'payment_request_id' => $paymentRequest->id,
-            'service_request_id' => $paymentRequest->service_request_id,
-            'user_id' => $paymentRequest->user_id,
-            'amount' => $result['amount'],
-            'status' => Payment::STATUS_COMPLETED,
-            'payment_method' => Payment::METHOD_MPESA,
+        // Create payment record — dedup against existing rows so the same
+        // M-Pesa receipt is never recorded twice (callback + status poll + C2B).
+        Payment::recordCompleted([
+            'payment_request_id'   => $paymentRequest->id,
+            'service_request_id'   => $paymentRequest->service_request_id,
+            'user_id'              => $paymentRequest->user_id,
+            'amount'               => $result['amount'],
+            'payment_method'       => Payment::METHOD_MPESA,
             'mpesa_transaction_id' => $result['mpesa_receipt_number'],
             'mpesa_receipt_number' => $result['mpesa_receipt_number'],
-            'phone_number' => $result['phone_number'],
-            'paybill_number' => config('services.mpesa.shortcode'),
-            'account_reference' => $paymentRequest->serviceRequest->request_id,
-            'paid_at' => now(),
+            'phone_number'         => $result['phone_number'],
+            'paybill_number'       => config('services.mpesa.shortcode'),
+            'account_reference'    => $paymentRequest->serviceRequest->request_id,
+            'paid_at'              => now(),
         ]);
 
         // Transition the service request status to ready_for_assignment
@@ -235,20 +234,18 @@ class PaymentController extends Controller
                         'phone_number' => $result['phone_number'] ?? null,
                     ]);
 
-                    Payment::create([
-                        'payment_id' => Payment::generatePaymentId(),
-                        'payment_request_id' => $paymentRequest->id,
-                        'service_request_id' => $paymentRequest->service_request_id,
-                        'user_id' => $paymentRequest->user_id,
-                        'amount' => $paymentRequest->amount,
-                        'status' => Payment::STATUS_COMPLETED,
-                        'payment_method' => Payment::METHOD_MPESA,
+                    Payment::recordCompleted([
+                        'payment_request_id'   => $paymentRequest->id,
+                        'service_request_id'   => $paymentRequest->service_request_id,
+                        'user_id'              => $paymentRequest->user_id,
+                        'amount'               => $paymentRequest->amount,
+                        'payment_method'       => Payment::METHOD_MPESA,
                         'mpesa_transaction_id' => $result['mpesa_receipt_number'] ?? null,
                         'mpesa_receipt_number' => $result['mpesa_receipt_number'] ?? null,
-                        'phone_number' => $result['phone_number'] ?? null,
-                        'account_reference' => $paymentRequest->serviceRequest->request_id,
-                        'paid_at' => now(),
-                        'notes' => 'M-Pesa payment recorded via status poll (callback may have been missed)',
+                        'phone_number'         => $result['phone_number'] ?? null,
+                        'account_reference'    => $paymentRequest->serviceRequest->request_id,
+                        'paid_at'              => now(),
+                        'notes'                => 'M-Pesa payment recorded via status poll (callback may have been missed)',
                     ]);
 
                     // Ensure the M-Pesa transactions log shows this too. If we
@@ -415,19 +412,19 @@ class PaymentController extends Controller
 
             $paymentRequest->markAsPaid($method);
 
-            // Create payment record
-            Payment::create([
-                'payment_id' => Payment::generatePaymentId(),
+            // Create payment record — dedup against any existing completed
+            // payment for the same request so a late callback or a duplicate
+            // admin click doesn't create a phantom second row.
+            Payment::recordCompleted([
                 'payment_request_id' => $paymentRequest->id,
                 'service_request_id' => $paymentRequest->service_request_id,
-                'user_id' => $paymentRequest->user_id,
-                'amount' => $paymentRequest->amount,
-                'status' => Payment::STATUS_COMPLETED,
-                'payment_method' => $method,
-                'phone_number' => $paymentRequest->user->phone ?? '',
-                'account_reference' => $paymentRequest->serviceRequest->request_id,
-                'paid_at' => now(),
-                'notes' => $request->input('notes') ?: 'Offline payment confirmed by admin',
+                'user_id'            => $paymentRequest->user_id,
+                'amount'             => $paymentRequest->amount,
+                'payment_method'     => $method,
+                'phone_number'       => $paymentRequest->user->phone ?? '',
+                'account_reference'  => $paymentRequest->serviceRequest->request_id,
+                'paid_at'            => now(),
+                'notes'              => $request->input('notes') ?: 'Offline payment confirmed by admin',
             ]);
 
             // Transition the service request status to ready_for_assignment
@@ -579,13 +576,11 @@ class PaymentController extends Controller
                 'phone_number'         => $msisdn,
             ]);
 
-            Payment::create([
-                'payment_id'           => Payment::generatePaymentId(),
+            Payment::recordCompleted([
                 'payment_request_id'   => $paymentRequest->id,
                 'service_request_id'   => $paymentRequest->service_request_id,
                 'user_id'              => $paymentRequest->user_id,
                 'amount'               => $transAmount,
-                'status'               => Payment::STATUS_COMPLETED,
                 'payment_method'       => Payment::METHOD_MPESA,
                 'mpesa_transaction_id' => $transId,
                 'mpesa_receipt_number' => $transId,
