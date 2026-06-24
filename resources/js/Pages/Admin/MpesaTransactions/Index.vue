@@ -154,11 +154,24 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="tx in transactions.data" :key="tx.id">
+                                <tr
+                                    v-for="tx in transactions.data"
+                                    :key="tx.id"
+                                    :class="['mpesa-row', linkedGroupClass(tx)]"
+                                >
                                     <td>
                                         <span :class="['source-badge', tx.source === 'c2b' ? 'src-c2b' : 'src-stk']">
                                             {{ tx.source === 'c2b' ? 'Paybill' : 'STK Push' }}
                                         </span>
+                                        <!-- When the same receipt appears more than once on this page, mark the
+                                             secondary channels so admin instantly sees they're not separate money. -->
+                                        <small
+                                            v-if="linkedCount(tx) > 1"
+                                            class="linked-pill"
+                                            :title="`Same M-Pesa receipt as ${linkedCount(tx) - 1} other ${linkedCount(tx) - 1 === 1 ? 'row' : 'rows'} on this page — one physical payment, multiple Safaricom notifications.`"
+                                        >
+                                            <i class="fas fa-link"></i> +{{ linkedCount(tx) - 1 }} channel{{ linkedCount(tx) - 1 === 1 ? '' : 's' }}
+                                        </small>
                                     </td>
                                     <td>{{ tx.receipt_number || tx.checkout_request_id || 'N/A' }}</td>
                                     <td>
@@ -289,6 +302,44 @@ const props = defineProps({
 
 const page = usePage()
 const successMessage = computed(() => page.props.flash?.success)
+
+// Group rows that share the same M-Pesa receipt number — those are
+// notifications about ONE physical payment from multiple Safaricom
+// channels (STK callback + C2B confirmation). Each group gets a unique
+// background tint so the relationship is visible at a glance.
+const receiptGroups = computed(() => {
+    const groups = {}
+    for (const tx of (props.transactions.data || [])) {
+        if (!tx.receipt_number) continue
+        groups[tx.receipt_number] = (groups[tx.receipt_number] || 0) + 1
+    }
+    return groups
+})
+
+const linkedCount = (tx) => {
+    if (!tx.receipt_number) return 1
+    return receiptGroups.value[tx.receipt_number] || 1
+}
+
+// A receipt that appears more than once gets a tinted row so the eye
+// can pair them. Different receipts get different tints (cycled).
+const groupTints = ['linked-tint-a', 'linked-tint-b', 'linked-tint-c', 'linked-tint-d', 'linked-tint-e']
+const receiptToTint = computed(() => {
+    const map = {}
+    let i = 0
+    for (const [receipt, count] of Object.entries(receiptGroups.value)) {
+        if (count > 1) {
+            map[receipt] = groupTints[i % groupTints.length]
+            i++
+        }
+    }
+    return map
+})
+
+const linkedGroupClass = (tx) => {
+    if (!tx.receipt_number) return ''
+    return receiptToTint.value[tx.receipt_number] || ''
+}
 
 const statusOptions = [
     { value: '', label: 'All' },
@@ -573,4 +624,33 @@ defineOptions({
 .filter-search input {
     min-width: 260px;
 }
+
+/* Linked notifications — when multiple rows share an M-Pesa receipt
+   (STK callback + C2B confirmation for the same payment), tint the
+   group so admin instantly sees they're not separate money. */
+.linked-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-left: 0.4rem;
+    padding: 0.1rem 0.45rem;
+    background: #ddd6fe;
+    color: #5b21b6;
+    border-radius: 999px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    cursor: help;
+}
+.linked-pill i { font-size: 0.55rem; }
+
+.mpesa-row.linked-tint-a td { background: #faf5ff; }
+.mpesa-row.linked-tint-b td { background: #fefce8; }
+.mpesa-row.linked-tint-c td { background: #ecfdf5; }
+.mpesa-row.linked-tint-d td { background: #eff6ff; }
+.mpesa-row.linked-tint-e td { background: #fdf2f8; }
+.mpesa-row.linked-tint-a:hover td,
+.mpesa-row.linked-tint-b:hover td,
+.mpesa-row.linked-tint-c:hover td,
+.mpesa-row.linked-tint-d:hover td,
+.mpesa-row.linked-tint-e:hover td { filter: brightness(0.96); }
 </style>

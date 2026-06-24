@@ -16,10 +16,13 @@ import { useGlobalFormErrors } from './composables/useFormErrors.js';
 // Wire global form-error UX: scroll-to-first-error, shake highlight, toast (#2)
 useGlobalFormErrors();
 
-const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
+const appName = import.meta.env.VITE_APP_NAME || 'Technician World';
 
 createInertiaApp({
-    title: (title) => `${title} - ${appName}`,
+    // If a page didn't set its own title via <Head title="...">, fall back
+    // to just the brand name — avoids the awkward " - Technician World"
+    // (leading dash + space) when title is empty.
+    title: (title) => title ? `${title} - ${appName}` : appName,
     resolve: (name) =>
         resolvePageComponent(
             `./Pages/${name}.vue`,

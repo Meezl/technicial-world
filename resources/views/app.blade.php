@@ -6,7 +6,7 @@
         <meta name="csrf-token" content="{{ csrf_token() }}">
         <meta name="theme-color" content="#053272">
 
-        <title inertia>{{ config('app.name', 'Laravel') }}</title>
+        <title inertia>{{ config('app.name', 'Technician World') }}</title>
 
         <!-- PWA -->
         <meta name="apple-mobile-web-app-capable" content="yes">
