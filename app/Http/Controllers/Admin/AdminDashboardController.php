@@ -2301,16 +2301,26 @@ class AdminDashboardController extends Controller
 
     public function storeUser(Request $request)
     {
+        // Strip technician-only fields when creating any non-technician role.
+        // The Vue form sends these as empty strings or stale values from a
+        // previous selection — without this, validation has to dance around
+        // them with nullable rules that some hosting layers don't honour
+        // the same way (e.g. when ConvertEmptyStringsToNull is disabled).
+        if ($request->input('role') !== 'technician') {
+            $request->merge([
+                'specialization' => null,
+                'location'       => null,
+                'availability'   => null,
+                'skills'         => null,
+            ]);
+        }
+
         $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
             'password' => 'required|string|min:8|confirmed',
             'phone' => 'nullable|string|max:20',
             'role' => 'required|in:client,technician,project_manager,admin,storeman',
-            // `nullable` first so the `string|max:255` rules are skipped when
-            // the value is null (e.g. creating a storeman or admin where
-            // specialization doesn't apply). `required_if` still enforces it
-            // for technicians.
             'specialization' => 'nullable|required_if:role,technician|string|max:255',
             'location' => 'nullable|required_if:role,technician|string|max:255',
             'availability' => 'nullable|in:available,busy,on_leave',
@@ -2358,13 +2368,23 @@ class AdminDashboardController extends Controller
 
     public function updateUser(Request $request, User $user)
     {
+        // Strip technician-only fields when updating a non-technician.
+        // Editing a client's name should never trip on an empty specialization
+        // sitting in the form state from the technician branch of the modal.
+        if ($request->input('role') !== 'technician') {
+            $request->merge([
+                'specialization' => null,
+                'location'       => null,
+                'availability'   => null,
+                'skills'         => null,
+            ]);
+        }
+
         $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email,' . $user->id,
             'phone' => 'nullable|string|max:20',
             'role' => 'required|in:client,technician,project_manager,admin,storeman',
-            // `nullable` first so the `string|max:255` rules are skipped when
-            // editing a non-technician user that has no specialization.
             'specialization' => 'nullable|required_if:role,technician|string|max:255',
             'location' => 'nullable|required_if:role,technician|string|max:255',
             'availability' => 'nullable|in:available,busy,on_leave',
