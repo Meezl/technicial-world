@@ -2307,8 +2307,12 @@ class AdminDashboardController extends Controller
             'password' => 'required|string|min:8|confirmed',
             'phone' => 'nullable|string|max:20',
             'role' => 'required|in:client,technician,project_manager,admin,storeman',
-            'specialization' => 'required_if:role,technician|string|max:255',
-            'location' => 'required_if:role,technician|string|max:255',
+            // `nullable` first so the `string|max:255` rules are skipped when
+            // the value is null (e.g. creating a storeman or admin where
+            // specialization doesn't apply). `required_if` still enforces it
+            // for technicians.
+            'specialization' => 'nullable|required_if:role,technician|string|max:255',
+            'location' => 'nullable|required_if:role,technician|string|max:255',
             'availability' => 'nullable|in:available,busy,on_leave',
             'bio' => 'nullable|string',
             'skills' => 'nullable|array'
@@ -2359,8 +2363,10 @@ class AdminDashboardController extends Controller
             'email' => 'required|email|unique:users,email,' . $user->id,
             'phone' => 'nullable|string|max:20',
             'role' => 'required|in:client,technician,project_manager,admin,storeman',
-            'specialization' => 'required_if:role,technician|string|max:255',
-            'location' => 'required_if:role,technician|string|max:255',
+            // `nullable` first so the `string|max:255` rules are skipped when
+            // editing a non-technician user that has no specialization.
+            'specialization' => 'nullable|required_if:role,technician|string|max:255',
+            'location' => 'nullable|required_if:role,technician|string|max:255',
             'availability' => 'nullable|in:available,busy,on_leave',
             'bio' => 'nullable|string',
             'skills' => 'nullable|array'

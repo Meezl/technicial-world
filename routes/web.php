@@ -43,6 +43,13 @@ Route::post('/join-as-technician', [TechnicianLeadController::class, 'store'])->
 
 // Public ticket creation (open to guests and registered users)
 Route::get('/open-ticket', [\App\Http\Controllers\TicketController::class, 'create'])->name('tickets.create');
+
+// Storage file serving — PHP-served fallback for /storage/* so Railway's
+// FrankenPHP/Caddy 403 on symlinked files no longer breaks image and
+// document URLs. Allows slashes inside the path parameter.
+Route::get('/storage/{path}', [\App\Http\Controllers\StorageController::class, 'serve'])
+    ->where('path', '.*')
+    ->name('storage.serve');
 Route::post('/open-ticket', [\App\Http\Controllers\TicketController::class, 'store'])->name('tickets.store');
 
 // M-Pesa callback route (no auth required)
