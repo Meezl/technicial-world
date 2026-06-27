@@ -330,14 +330,39 @@ const getStatusClass = (status) => {
 }
 
 const formatStatus = (status) => {
+    // Status pipeline:
+    //   pending → awaiting_quote_generation → awaiting_quote_approval → awaiting_payment
+    //   → ready_for_assignment → assigned → en_route / on_site → in_progress
+    //   → completed_pending_confirmation → completed → closed
+    // (cancelled / rejected / suspended branch out)
+    //
+    // "pending" used to be labelled "Pending Assignment" which was wrong —
+    // assignment only happens after payment is received. Match the client
+    // portal and RFQ Management page wording ("Pending Review") instead.
     const statusMap = {
-        'pending': 'Pending Assignment',
-        'assigned': 'Assigned',
-        'in_progress': 'In Progress',
-        'completed': 'Completed',
-        'cancelled': 'Cancelled'
+        'pending':                          'Pending Review',
+        'draft_rfq':                        'Draft RFQ',
+        'awaiting_pm_assignment':           'Awaiting PM Assignment',
+        'awaiting_quote_generation':        'Awaiting Quote',
+        'awaiting_quote_approval':          'Awaiting Client Approval',
+        'awaiting_payment':                 'Awaiting Payment',
+        'payment_pending_approval':         'Payment Pending Approval',
+        'ready_for_assignment':             'Pending Assignment',
+        'awaiting_tech_availability':       'Awaiting Technician Availability',
+        'queued':                           'Queued',
+        'assigned':                         'Assigned',
+        'en_route':                         'Technician En Route',
+        'on_site':                          'On Site',
+        'in_progress':                      'In Progress',
+        'delayed':                          'Delayed',
+        'suspended':                        'Suspended',
+        'completed_pending_confirmation':   'Completed — Pending Confirmation',
+        'completed':                        'Completed',
+        'closed':                           'Closed',
+        'cancelled':                        'Cancelled',
+        'rejected':                         'Rejected',
     }
-    return statusMap[status] || status
+    return statusMap[status] || status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
 
 const formatUrgency = (urgency) => {

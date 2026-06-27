@@ -22,6 +22,7 @@ class Technician extends Model
         'bio',
         'experience_narrative',
         'skills',
+        'pending_profile_changes',
         'profile_photo_path',
         'vetting_status',
         'vetted_by',
@@ -33,6 +34,7 @@ class Technician extends Model
     protected $casts = [
         'skills' => 'array',
         'trades' => 'array',
+        'pending_profile_changes' => 'array',
         'rating' => 'decimal:1',
         'vetted_at' => 'datetime',
         'is_active' => 'boolean',

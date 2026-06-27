@@ -186,6 +186,18 @@ class AdminDashboardController extends Controller
             ];
         }
 
+        // Technician profile changes awaiting admin approval
+        $pendingProfileCount = Technician::whereNotNull('pending_profile_changes')->count();
+        if ($pendingProfileCount > 0) {
+            $alerts[] = [
+                'severity' => 'warning',
+                'title'    => 'Technician profile changes awaiting approval',
+                'message'  => $pendingProfileCount . ' technician' . ($pendingProfileCount === 1 ? ' has' : 's have') .
+                              ' submitted profile updates (skills or bio) that need your review before they go live.',
+                'action'   => ['label' => 'Review on Technicians page', 'href' => '/admin/technicians'],
+            ];
+        }
+
         return $alerts;
     }
 
@@ -363,6 +375,59 @@ class AdminDashboardController extends Controller
      * report validated. The payment system reads from the report, not the SR,
      * so this brings them back in sync and unlocks the final payment.
      */
+    /**
+     * Approve pending profile changes (skills + bio) submitted by a
+     * technician via the self-service profile page. Admin can approve all,
+     * approve specific fields, or reject (which just clears the pending).
+     */
+    public function approveTechnicianProfileChanges(Request $request, Technician $technician)
+    {
+        $request->validate([
+            'action' => 'required|in:approve_all,approve_field,reject',
+            'field'  => 'nullable|in:skills,bio',
+        ]);
+
+        $pending = (array) ($technician->pending_profile_changes ?? []);
+        if (empty($pending)) {
+            return back()->with('error', 'No pending profile changes to act on.');
+        }
+
+        if ($request->action === 'reject') {
+            $technician->update(['pending_profile_changes' => null]);
+            return back()->with('success', 'Pending profile changes rejected.');
+        }
+
+        // Apply requested fields
+        $applyAll = $request->action === 'approve_all';
+        $applyField = $request->action === 'approve_field' ? $request->field : null;
+
+        $updates = [];
+        if ($applyAll || $applyField === 'skills') {
+            if (array_key_exists('skills', $pending)) {
+                $updates['skills'] = $pending['skills'];
+                unset($pending['skills']);
+            }
+        }
+        if ($applyAll || $applyField === 'bio') {
+            if (array_key_exists('bio', $pending)) {
+                $updates['bio'] = $pending['bio'];
+                unset($pending['bio']);
+            }
+        }
+
+        if (empty($updates)) {
+            return back()->with('error', 'No matching pending field to approve.');
+        }
+
+        // Strip the meta key if nothing else remains
+        $remaining = array_diff_key($pending, ['submitted_at' => null]);
+        $updates['pending_profile_changes'] = empty($remaining) ? null : $pending;
+
+        $technician->update($updates);
+
+        return back()->with('success', 'Profile changes approved.');
+    }
+
     public function backfillFinalProgress(Request $request, ServiceRequest $serviceRequest)
     {
         $request->validate([
@@ -625,7 +690,19 @@ class AdminDashboardController extends Controller
     public function showTechnicianDocument(\App\Models\TechnicianDocument $document)
     {
         $user = auth()->user();
-        if (!$user || !in_array($user->role, ['admin', 'project_manager'], true)) {
+        if (!$user) {
+            abort(403);
+        }
+
+        // Admins and PMs can view any document. Technicians can view their
+        // OWN documents — fixes the 403 that admin and technicians were
+        // hitting on Railway when the symlinked /storage/ URL failed.
+        $isStaff = in_array($user->role, ['admin', 'project_manager'], true);
+        $isOwner = $user->role === 'technician'
+            && $user->technician
+            && (int) $document->technician_id === (int) $user->technician->id;
+
+        if (!$isStaff && !$isOwner) {
             abort(403);
         }
 
@@ -633,19 +710,22 @@ class AdminDashboardController extends Controller
             abort(404, 'Document record has no file path.');
         }
 
-        if (!\Illuminate\Support\Facades\Storage::disk('public')->exists($document->file_path)) {
-            // Try the public URL as a redirect fallback for documents stored before the disk was configured
-            $publicPath = public_path('storage/' . $document->file_path);
-            if (file_exists($publicPath)) {
-                return redirect('/storage/' . $document->file_path);
-            }
+        $disk = \Illuminate\Support\Facades\Storage::disk('public');
+        if (!$disk->exists($document->file_path)) {
             abort(404, 'Document file not found. It may have been deleted or not yet uploaded.');
         }
 
-        return \Illuminate\Support\Facades\Storage::disk('public')->response(
-            $document->file_path,
-            $document->file_name ?? basename($document->file_path)
-        );
+        // Stream the file directly via PHP using an absolute path so we
+        // never depend on the public/storage symlink (which 403s on Railway).
+        $absolutePath = $disk->path($document->file_path);
+        $displayName  = $document->file_name ?? basename($document->file_path);
+        $mime         = $disk->mimeType($document->file_path) ?: 'application/octet-stream';
+
+        return response()->file($absolutePath, [
+            'Content-Type'        => $mime,
+            'Content-Disposition' => 'inline; filename="' . str_replace('"', '', $displayName) . '"',
+            'Cache-Control'       => 'private, max-age=3600',
+        ]);
     }
 
     /**

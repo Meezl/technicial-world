@@ -117,7 +117,7 @@
                         <span class="section-pill">{{ activeRequests.length }}</span>
                     </div>
                     <Link
-                        v-for="request in activeRequests.slice(0, 3)"
+                        v-for="request in mobileVisibleActiveRequests"
                         :key="`m-${request.id}`"
                         :href="`/client/request-status/${request.id}`"
                         class="mobile-active-card"
@@ -130,6 +130,24 @@
                             {{ formatStatus(request.status, request) }}
                         </span>
                     </Link>
+
+                    <!-- Show more / less toggle when there are more than 3 active requests.
+                         Previously the list was hard-capped at 3 with no way to expand. -->
+                    <button
+                        v-if="activeRequests.length > 3"
+                        type="button"
+                        class="mobile-show-more"
+                        @click="showAllActive = !showAllActive"
+                    >
+                        <span v-if="!showAllActive">
+                            <i class="fas fa-chevron-down"></i>
+                            Show all {{ activeRequests.length }} requests
+                        </span>
+                        <span v-else>
+                            <i class="fas fa-chevron-up"></i>
+                            Show less
+                        </span>
+                    </button>
                 </section>
 
                 <Link href="/client/new-request" class="mobile-promo">
@@ -454,6 +472,13 @@ const activeRequests = computed(() => {
         !['completed', 'cancelled', 'closed', 'archived'].includes(request.status)
     )
 })
+
+// Mobile dashboard: show top 3 active requests by default with a
+// "Show all N requests" toggle to expand the full list.
+const showAllActive = ref(false)
+const mobileVisibleActiveRequests = computed(() =>
+    showAllActive.value ? activeRequests.value : activeRequests.value.slice(0, 3)
+)
 
 const heroMessage = computed(() => {
     if (activeRequests.value.length > 0) {
@@ -1376,6 +1401,29 @@ defineOptions({
     color: #64748b;
     font-size: 0.78rem;
 }
+
+.mobile-show-more {
+    width: 100%;
+    padding: 0.7rem 1rem;
+    margin-top: 0.5rem;
+    background: transparent;
+    border: 1px dashed #94a3b8;
+    border-radius: 10px;
+    color: #053272;
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    transition: background 0.15s, border-color 0.15s;
+}
+.mobile-show-more:hover {
+    background: #f1f5f9;
+    border-color: #053272;
+}
+.mobile-show-more i { font-size: 0.75rem; }
 
 .mobile-promo {
     display: flex;

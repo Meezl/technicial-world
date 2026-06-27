@@ -384,12 +384,22 @@ class TechnicianController extends Controller
         ]);
 
         foreach ($data['items'] as $item) {
+            // When the technician picks a tool from inventory, the frontend
+            // only sends tool_id — but the table requires tool_name_requested
+            // NOT NULL. Backfill it from the actual Tool record so admin
+            // queues and emails always show a meaningful name.
+            $requestedName = $item['tool_name_requested'] ?? null;
+            if (empty($requestedName) && !empty($item['tool_id'])) {
+                $tool = Tool::find($item['tool_id']);
+                $requestedName = $tool?->name ?? 'Inventory tool';
+            }
+
             \App\Models\ToolRequestItem::create([
-                'tool_request_id' => $toolRequest->id,
-                'tool_id' => $item['tool_id'] ?? null,
-                'tool_name_requested' => $item['tool_name_requested'] ?? null,
-                'quantity' => $item['quantity'] ?? 1,
-                'status' => ToolRequest::STATUS_PENDING,
+                'tool_request_id'     => $toolRequest->id,
+                'tool_id'             => $item['tool_id'] ?? null,
+                'tool_name_requested' => $requestedName ?: 'Unspecified tool',
+                'quantity'            => $item['quantity'] ?? 1,
+                'status'              => ToolRequest::STATUS_PENDING,
             ]);
         }
 
@@ -521,44 +531,74 @@ class TechnicianController extends Controller
         }
 
         $request->validate([
-            'name' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'location' => 'nullable|string|max:255',
-            'trade' => 'nullable|in:' . implode(',', array_keys(Technician::trades())),
-            'specialization' => 'nullable|string|max:255',
-            'bio' => 'nullable|string|max:1000',
-            'experience_narrative' => 'nullable|string|max:2000',
-            'skills' => 'nullable|array',
-            'profile_photo' => 'nullable|file|mimes:jpg,jpeg,png|max:3072',
+            'phone'          => 'nullable|string|max:20',
+            'profile_photo'  => 'nullable|file|mimes:jpg,jpeg,png|max:3072',
+            'skills'         => 'nullable|array',
+            'skills.*'       => 'string|max:80',
+            'bio'            => 'nullable|string|max:1000',
         ]);
 
-        // Update user details
-        $user->update([
-            'name' => $request->name,
-            'phone' => $request->phone,
-        ]);
+        // === Auto-applied fields (low risk) ============================
+        if ($request->filled('phone')) {
+            $user->update(['phone' => $request->phone]);
+        }
 
-        // Update technician details
-        $techData = [
-            'location' => $request->location,
-            'trade' => $request->trade,
-            'specialization' => $request->specialization,
-            'bio' => $request->bio,
-            'experience_narrative' => $request->experience_narrative,
-            'skills' => $request->skills,
-        ];
-
-        // Handle profile photo upload
         if ($request->hasFile('profile_photo')) {
             if ($technician->profile_photo_path) {
                 \Illuminate\Support\Facades\Storage::disk('public')->delete($technician->profile_photo_path);
             }
-            $techData['profile_photo_path'] = $request->file('profile_photo')->store('technician-photos/' . $technician->id, 'public');
+            $technician->update([
+                'profile_photo_path' => $request->file('profile_photo')->store('technician-photos/' . $technician->id, 'public'),
+            ]);
         }
 
-        $technician->update($techData);
+        // === Approval-gated fields (skills + bio) ======================
+        // Only queue a pending change if the submitted value actually
+        // differs from what's already on the technician — avoids creating
+        // a "pending" entry when the technician just hits Save without
+        // editing those fields.
+        $pending = (array) ($technician->pending_profile_changes ?? []);
+        $changed = false;
+
+        $currentSkills = array_values(array_filter((array) ($technician->skills ?? [])));
+        $newSkills = $request->has('skills')
+            ? array_values(array_filter(array_map('trim', (array) $request->input('skills', []))))
+            : null;
+        if ($newSkills !== null && $newSkills !== $currentSkills) {
+            $pending['skills'] = $newSkills;
+            $changed = true;
+        }
+
+        if ($request->has('bio')) {
+            $newBio = trim((string) $request->input('bio'));
+            if ($newBio !== trim((string) $technician->bio)) {
+                $pending['bio'] = $newBio;
+                $changed = true;
+            }
+        }
+
+        if ($changed) {
+            $pending['submitted_at'] = now()->toIso8601String();
+            $technician->update(['pending_profile_changes' => $pending]);
+            return back()->with('success', 'Profile updated. Skills and bio changes are now awaiting admin approval.');
+        }
 
         return back()->with('success', 'Profile updated successfully.');
+    }
+
+    /**
+     * Withdraw a pending profile change submission (technician changed mind).
+     */
+    public function withdrawPendingProfileChanges()
+    {
+        $user = auth()->user();
+        $technician = $user->technician;
+        if (!$technician) {
+            return back()->with('error', 'Technician profile not found');
+        }
+
+        $technician->update(['pending_profile_changes' => null]);
+        return back()->with('success', 'Pending profile changes withdrawn.');
     }
 
     /**

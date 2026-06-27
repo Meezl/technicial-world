@@ -289,6 +289,10 @@
                             <p v-if="tech.bio" class="technician-bio">{{ truncate(tech.bio, 130) }}</p>
                             <p v-else class="technician-bio empty">No bio provided yet.</p>
 
+                            <span v-if="tech.pending_profile_changes" class="pending-changes-pill" title="This technician has profile changes awaiting your approval">
+                                <i class="fas fa-clock"></i> Changes pending approval
+                            </span>
+
                             <div class="technician-actions">
                                 <button @click="viewTechnician(tech)" class="btn btn-secondary btn-sm">View</button>
                                 <Link :href="`/admin/technicians/${tech.id}/report`" class="btn btn-info btn-sm">Report</Link>
@@ -613,6 +617,37 @@
                             </div>
                         </div>
 
+                        <!-- Pending profile changes — admin approves/rejects -->
+                        <div v-if="viewingTechnician.pending_profile_changes" class="pending-changes-card">
+                            <h4>
+                                <i class="fas fa-clock" style="color:#92400e;"></i>
+                                Profile changes awaiting approval
+                            </h4>
+                            <div v-if="viewingTechnician.pending_profile_changes.skills" class="pending-row">
+                                <strong>New skills:</strong>
+                                <div class="skills-list" style="margin-top:.35rem;">
+                                    <span v-for="s in viewingTechnician.pending_profile_changes.skills" :key="s" class="skill-tag">{{ s }}</span>
+                                </div>
+                                <div style="margin-top:.5rem;display:flex;gap:.5rem;">
+                                    <button class="btn btn-primary btn-sm" @click="actOnProfileChange('approve_field', 'skills')">✓ Approve Skills</button>
+                                </div>
+                            </div>
+                            <div v-if="viewingTechnician.pending_profile_changes.bio" class="pending-row" style="margin-top:.75rem;">
+                                <strong>New bio:</strong>
+                                <p style="background:#fff;padding:.5rem .75rem;border-radius:6px;border:1px solid #e5e7eb;margin:.35rem 0;white-space:pre-wrap;">{{ viewingTechnician.pending_profile_changes.bio }}</p>
+                                <div style="display:flex;gap:.5rem;">
+                                    <button class="btn btn-primary btn-sm" @click="actOnProfileChange('approve_field', 'bio')">✓ Approve Bio</button>
+                                </div>
+                            </div>
+                            <div style="margin-top:.75rem;display:flex;gap:.5rem;border-top:1px solid #fbbf24;padding-top:.75rem;">
+                                <button class="btn btn-success btn-sm" @click="actOnProfileChange('approve_all')">✓ Approve All</button>
+                                <button class="btn btn-danger btn-sm" @click="actOnProfileChange('reject')">✗ Reject All</button>
+                            </div>
+                            <small v-if="viewingTechnician.pending_profile_changes.submitted_at" style="display:block;color:#6b7280;margin-top:.5rem;">
+                                Submitted {{ formatDate(viewingTechnician.pending_profile_changes.submitted_at) }}
+                            </small>
+                        </div>
+
                         <div class="profile-grid">
                             <div class="profile-stat">
                                 <span>Email</span>
@@ -841,6 +876,23 @@ const saving = ref(false)
 const formErrors = ref({})
 const uploadingDoc = ref(false)
 const verifyingDoc = ref(null)
+
+// Handle approve / reject of pending profile changes
+const actOnProfileChange = (action, field = null) => {
+    if (!viewingTechnician.value) return
+    if (action === 'reject' && !confirm('Reject all pending profile changes? This cannot be undone.')) return
+
+    router.post(`/admin/technicians/${viewingTechnician.value.id}/profile-changes`, {
+        action,
+        field,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            // Trigger a full reload so the latest technician data flows back
+            router.reload({ only: ['technicians'] })
+        },
+    })
+}
 const editDocType = ref('')
 const viewDocType = ref('')
 const flashError = ref(null)
@@ -1506,4 +1558,36 @@ defineOptions({ layout: null })
     .stats-grid { grid-template-columns: 1fr; }
     .modal-content { width: 95%; max-height: 95vh; }
 }
+
+.pending-changes-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fbbf24;
+    padding: 0.25rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin: 0.5rem 0;
+}
+.pending-changes-pill i { font-size: 0.72rem; }
+
+.pending-changes-card {
+    background: #fffbeb;
+    border: 1px solid #fbbf24;
+    border-radius: 8px;
+    padding: 1rem 1.15rem;
+    margin: 1rem 0;
+}
+.pending-changes-card h4 {
+    margin: 0 0 0.75rem;
+    color: #78350f;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.pending-changes-card .pending-row { padding: 0.4rem 0; }
 </style>

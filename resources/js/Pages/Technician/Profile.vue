@@ -105,56 +105,54 @@
                         </div>
                     </div>
 
+                    <!-- Pending changes banner — visible when skills/bio submissions
+                         are waiting for admin approval. -->
+                    <div v-if="hasPendingChanges" class="pending-banner">
+                        <i class="fas fa-clock"></i>
+                        <div style="flex:1;">
+                            <strong>Profile updates submitted</strong>
+                            <p style="margin:.25rem 0 .5rem;font-size:.85rem;">
+                                Your skills{{ pendingChanges.bio ? ' and bio' : '' }}{{ pendingChanges.skills ? '' : '' }} are awaiting admin approval. The current public version will stay live until they review.
+                            </p>
+                            <button type="button" class="btn btn-secondary btn-sm" @click="withdrawPending">Withdraw submission</button>
+                        </div>
+                    </div>
+
                     <form @submit.prevent="saveProfile" class="profile-form">
+                        <!-- Auto-applied fields (no approval needed) -->
                         <div class="form-grid">
                             <label class="form-field">
-                                <span>Full name</span>
-                                <input v-model="profileForm.name" type="text" class="input" :disabled="!isEditing">
-                            </label>
-
-                            <label class="form-field">
-                                <span>Phone</span>
+                                <span>Phone <small style="color:#10b981;">(updates immediately)</small></span>
                                 <input v-model="profileForm.phone" type="text" class="input" :disabled="!isEditing">
                             </label>
 
                             <label class="form-field">
-                                <span>Location</span>
-                                <input v-model="profileForm.location" type="text" class="input" :disabled="!isEditing">
-                            </label>
-
-                            <label class="form-field">
-                                <span>Trade</span>
-                                <select v-model="profileForm.trade" class="input" :disabled="!isEditing">
-                                    <option value="">Select trade</option>
-                                    <option v-for="(label, key) in trades" :key="key" :value="key">{{ label }}</option>
-                                </select>
-                            </label>
-
-                            <label class="form-field">
-                                <span>Specialization</span>
-                                <input v-model="profileForm.specialization" type="text" class="input" :disabled="!isEditing">
-                            </label>
-
-                            <label class="form-field">
-                                <span>Profile photo</span>
+                                <span>Profile photo <small style="color:#10b981;">(updates immediately)</small></span>
                                 <input ref="profilePhotoInput" type="file" accept=".jpg,.jpeg,.png" class="input" :disabled="!isEditing">
                             </label>
                         </div>
 
+                        <!-- Approval-gated fields -->
                         <label class="form-field">
-                            <span>Skills</span>
+                            <span>Skills / Key Competences <small style="color:#92400e;">(requires admin approval)</small></span>
                             <input v-model="skillsInput" type="text" class="input" placeholder="Separate skills with commas" :disabled="!isEditing">
                         </label>
 
                         <label class="form-field">
-                            <span>Bio</span>
+                            <span>Bio / About me <small style="color:#92400e;">(requires admin approval)</small></span>
                             <textarea v-model="profileForm.bio" rows="4" class="input textarea" :disabled="!isEditing"></textarea>
                         </label>
 
-                        <label class="form-field">
-                            <span>Experience narrative</span>
-                            <textarea v-model="profileForm.experience_narrative" rows="4" class="input textarea" :disabled="!isEditing"></textarea>
-                        </label>
+                        <!-- Read-only context (not editable from this form) -->
+                        <details class="read-only-fields">
+                            <summary>Other profile details (contact admin to change)</summary>
+                            <div class="form-grid" style="margin-top:.75rem;">
+                                <label class="form-field"><span>Full name</span><input :value="profileForm.name" type="text" class="input" disabled></label>
+                                <label class="form-field"><span>Location</span><input :value="profileForm.location" type="text" class="input" disabled></label>
+                                <label class="form-field"><span>Trade</span><input :value="trades[profileForm.trade] || '—'" type="text" class="input" disabled></label>
+                                <label class="form-field"><span>Specialization</span><input :value="profileForm.specialization || '—'" type="text" class="input" disabled></label>
+                            </div>
+                        </details>
 
                         <div v-if="isEditing" class="form-actions">
                             <button type="button" @click="resetProfileForm" class="btn btn-secondary">Reset</button>
@@ -217,11 +215,11 @@
                                     {{ doc.verified ? 'Verified' : 'Pending review' }}
                                 </span>
                                 <div class="action-row">
-                                    <a :href="`/storage/${doc.file_path}`" target="_blank" class="btn btn-secondary btn-sm">
+                                    <a :href="`/technician/documents/${doc.id}/download`" target="_blank" class="btn btn-secondary btn-sm">
                                         <i class="fas fa-eye"></i>
                                         View
                                     </a>
-                                    <a :href="`/storage/${doc.file_path}`" download class="btn btn-secondary btn-sm">
+                                    <a :href="`/technician/documents/${doc.id}/download`" download class="btn btn-secondary btn-sm">
                                         <i class="fas fa-download"></i>
                                         Download
                                     </a>
@@ -319,6 +317,15 @@ const profilePhotoInput = ref(null)
 const documentInput = ref(null)
 
 const profileForm = ref(createProfileForm())
+
+// Pending profile changes (skills + bio) awaiting admin approval.
+const pendingChanges = computed(() => props.technician?.pending_profile_changes || null)
+const hasPendingChanges = computed(() => !!pendingChanges.value && (pendingChanges.value.skills || pendingChanges.value.bio))
+
+const withdrawPending = () => {
+    if (!confirm('Withdraw your pending profile changes? You can resubmit them later.')) return
+    router.post('/technician/profile/withdraw-changes', {}, { preserveScroll: true })
+}
 const documentForm = ref({
     document_type: '',
 })
@@ -909,5 +916,33 @@ defineOptions({ layout: null })
     .action-row .btn {
         width: 100%;
     }
+}
+
+.pending-banner {
+    display: flex;
+    gap: 0.85rem;
+    align-items: flex-start;
+    background: #fffbeb;
+    border: 1px solid #fbbf24;
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1rem;
+    color: #78350f;
+}
+.pending-banner i { font-size: 1.1rem; margin-top: 3px; flex-shrink: 0; }
+.pending-banner strong { display: block; margin-bottom: 0.2rem; }
+
+.read-only-fields {
+    margin-top: 1rem;
+    padding: 0.6rem 0.75rem;
+    background: #f9fafb;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+}
+.read-only-fields summary {
+    cursor: pointer;
+    color: #6b7280;
+    font-size: 0.85rem;
+    font-weight: 500;
 }
 </style>

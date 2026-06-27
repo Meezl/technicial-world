@@ -189,6 +189,9 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::get('/technicians/{technician}/report', [AdminDashboardController::class, 'technicianReport'])->name('admin.technicians.report');
     Route::post('/technicians/{technician}/documents', [AdminDashboardController::class, 'uploadTechnicianDocument'])->name('admin.technicians.documents.upload');
     Route::post('/technician-documents/{document}/verify', [AdminDashboardController::class, 'verifyTechnicianDocument'])->name('admin.technicians.documents.verify');
+
+    // Profile-change approvals (technician self-service edits)
+    Route::post('/technicians/{technician}/profile-changes', [AdminDashboardController::class, 'approveTechnicianProfileChanges'])->name('admin.technicians.profile-changes.act');
     Route::get('/technician-documents/{document}/download', [AdminDashboardController::class, 'showTechnicianDocument'])->name('admin.technicians.documents.show');
 
     // Job management
@@ -384,6 +387,14 @@ Route::middleware(['auth', 'role:technician'])->group(function () {
     Route::get('/technician/profile', [\App\Http\Controllers\TechnicianController::class, 'profile'])->name('technician.profile');
     Route::post('/technician/profile/update', [\App\Http\Controllers\TechnicianController::class, 'updateProfile'])->name('technician.profile.update');
     Route::post('/technician/profile/document', [\App\Http\Controllers\TechnicianController::class, 'uploadDocument'])->name('technician.profile.document');
+
+    // Technician views their OWN document via the PHP-served controller
+    // endpoint (the showTechnicianDocument method now allows owner access).
+    // Avoids the /storage/... 403 on Railway entirely.
+    Route::get('/technician/documents/{document}/download', [\App\Http\Controllers\Admin\AdminDashboardController::class, 'showTechnicianDocument'])->name('technician.documents.show');
+
+    // Withdraw a pending profile change submission
+    Route::post('/technician/profile/withdraw-changes', [\App\Http\Controllers\TechnicianController::class, 'withdrawPendingProfileChanges'])->name('technician.profile.withdraw-changes');
     Route::post('/technician/availability', [\App\Http\Controllers\TechnicianController::class, 'updateAvailability'])->name('technician.availability');
     Route::post('/technician/jobs/{serviceRequest}/status', [\App\Http\Controllers\TechnicianController::class, 'updateJobStatus'])->name('technician.jobs.status');
     Route::post('/technician/tools/{tool}/return', [\App\Http\Controllers\TechnicianController::class, 'returnTool'])->name('technician.tools.return');

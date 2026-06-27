@@ -24,6 +24,9 @@
                     <div>
                         <strong>{{ alert.title }}</strong>
                         <p>{{ alert.message }}</p>
+                        <Link v-if="alert.action?.href" :href="alert.action.href" style="font-size:.85rem;font-weight:600;">
+                            {{ alert.action.label }} →
+                        </Link>
                     </div>
                 </div>
             </div>
