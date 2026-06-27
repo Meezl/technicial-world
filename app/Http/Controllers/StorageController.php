@@ -21,13 +21,15 @@ class StorageController extends Controller
     {
         // Reject path traversal and absolute-path tricks up front
         if (str_contains($path, '..') || str_starts_with($path, '/')) {
-            abort(404);
+            return $this->notFoundResponse($path);
         }
 
-        // Resolve against the public disk; bail if Storage doesn't see it
+        // Resolve against the public disk; return a clear text 404 if the
+        // file is missing — without this the browser tries to save the
+        // HTML error page with the requested filename, confusing the user.
         $disk = Storage::disk('public');
         if (!$disk->exists($path)) {
-            abort(404);
+            return $this->notFoundResponse($path);
         }
 
         // Resolve and double-check the actual filesystem path stays inside
@@ -36,7 +38,7 @@ class StorageController extends Controller
         $absolute = realpath($disk->path($path));
         $diskRoot = realpath($disk->path(''));
         if ($absolute === false || $diskRoot === false || !str_starts_with($absolute, $diskRoot . DIRECTORY_SEPARATOR)) {
-            abort(404);
+            return $this->notFoundResponse($path);
         }
 
         $mime = $disk->mimeType($path) ?: 'application/octet-stream';
@@ -52,5 +54,22 @@ class StorageController extends Controller
         $response->setEtag('"' . md5_file($absolute) . '"');
 
         return $response;
+    }
+
+    /**
+     * Plain-text 404 with a meaningful message, so the browser can't
+     * accidentally save an HTML error page using the original filename.
+     */
+    private function notFoundResponse(string $path): Response
+    {
+        $message = "File not found: {$path}\n\n" .
+            "This file's metadata is on record but the actual file is missing from storage. " .
+            "On Railway, this typically means the container's ephemeral filesystem was wiped between deploys. " .
+            "Please re-upload, and contact the administrator if the issue persists.\n";
+
+        return new Response($message, 404, [
+            'Content-Type' => 'text/plain; charset=utf-8',
+            'Cache-Control' => 'no-store',
+        ]);
     }
 }
