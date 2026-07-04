@@ -11,9 +11,14 @@
 	# layer (returns 403). The StorageController serves files instead.
 	@storage path /storage/*
 	handle @storage {
+		# Rewrite to index.php and let Laravel's router handle it
 		rewrite * /index.php
-		php
+		php_handler
 	}
 
-	php_server
+	# Try files: if file exists serve it, otherwise rewrite to index.php for Laravel
+	try_files {path} /index.php
+
+	# PHP handler for all requests
+	php_handler
 }
