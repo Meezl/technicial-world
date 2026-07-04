@@ -6,13 +6,14 @@
 	root * /app/public
 	encode zstd gzip
 
-	# /storage/* must go through PHP — the public/storage symlink to
-	# storage/app/public doesn't reliably work on Railway's deployment
-	# layer (returns 403). The StorageController serves files instead.
-	@storage path /storage/*
-	handle @storage {
-		rewrite * /index.php
-		php
+	# Serve /storage/* directly from the Railway persistent volume
+	# at /app/storage/app/public. Bypasses the (dangling) public/storage
+	# symlink and the Laravel round-trip — both of which produced 403s
+	# on this deployment layer. handle_path strips the /storage/ prefix
+	# before file_server resolves the path against the volume root.
+	handle_path /storage/* {
+		root * /app/storage/app/public
+		file_server
 	}
 
 	php_server
