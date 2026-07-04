@@ -17,6 +17,25 @@ class User extends Authenticatable implements MustVerifyEmail
     const ROLE_TECHNICIAN = 'technician';
     const ROLE_PROJECT_MANAGER = 'project_manager';
     const ROLE_STOREMAN = 'storeman';
+    const ROLE_FOREMAN = 'foreman';
+    const ROLE_OFFICE = 'office';
+    const ROLE_PROCUREMENT = 'procurement';
+    const ROLE_ACCOUNTS = 'accounts';
+
+    // Single source of truth for valid role values. Mirrored by the
+    // `users.role` ENUM (see sync_user_role_enum migration) and by
+    // validation rules that accept a role on input.
+    const ROLES = [
+        self::ROLE_ADMIN,
+        self::ROLE_CLIENT,
+        self::ROLE_TECHNICIAN,
+        self::ROLE_PROJECT_MANAGER,
+        self::ROLE_STOREMAN,
+        self::ROLE_FOREMAN,
+        self::ROLE_OFFICE,
+        self::ROLE_PROCUREMENT,
+        self::ROLE_ACCOUNTS,
+    ];
 
     /**
      * The attributes that are mass assignable.

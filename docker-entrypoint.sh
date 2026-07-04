@@ -18,11 +18,7 @@ else
     echo "WARNING: APP_KEY is not set. Skipping configuration caching."
 fi
 
-# ── 3. Storage symlink ─────────────────────────────────────────────────────────
-if [ ! -L "/app/public/storage" ]; then
-    echo "==> Creating storage symlink..."
-    php artisan storage:link
-fi
+
 
 # ── 4. Diagnostics ────────────────────────────────────────────────────────────
 echo "==> Environment check:"
