@@ -15,5 +15,10 @@
 		php
 	}
 
+	# Try files: if file exists serve it, otherwise rewrite to index.php for Laravel
+	try_files {path} /index.php
+
+	# PHP handler for all requests
 	php
 }
+
