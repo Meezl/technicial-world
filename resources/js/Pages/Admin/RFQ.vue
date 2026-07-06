@@ -792,12 +792,16 @@
                                                 KSH {{ formatCurrency(milestoneTotalsSummary.scheduled) }}
                                                 <small>({{ milestoneTotalsSummary.pct }}% of quote)</small>
                                             </span>
+                                            <span v-if="milestoneTotalsSummary.downPayment > 0">
+                                                <strong>Deposit (already committed):</strong>
+                                                KSH {{ formatCurrency(milestoneTotalsSummary.downPayment) }}
+                                            </span>
                                             <span>
                                                 <strong>Unscheduled balance:</strong>
                                                 KSH {{ formatCurrency(milestoneTotalsSummary.unscheduled) }}
                                             </span>
                                             <span v-if="milestoneTotalsSummary.over" style="color:var(--danger-color,#dc2626);font-weight:600;">
-                                                ⚠ Exceeds total quote of KSH {{ formatCurrency(milestoneTotalsSummary.total) }}
+                                                ⚠ Deposit + milestones exceed total quote of KSH {{ formatCurrency(milestoneTotalsSummary.total) }}
                                             </span>
                                         </div>
                                     </div>
@@ -1321,14 +1325,15 @@ const quoteTotalForMilestones = computed(() => {
 
 const milestoneRunningRows = computed(() => {
     const total = quoteTotalForMilestones.value
+    const downPayment = Number(quotationForm.value.down_payment) || 0
     let cumulative = 0
     return (quotationForm.value.billing_milestones || []).map((ms) => {
         const amt = Number(ms.amount) || 0
         cumulative += amt
         return {
             cumulative,
-            balance: Math.max(0, total - cumulative),
-            over: cumulative > total + 0.001 && total > 0,
+            balance: Math.max(0, total - cumulative - downPayment),
+            over: (cumulative + downPayment) > total + 0.001 && total > 0,
         }
     })
 })
@@ -1337,13 +1342,17 @@ const milestoneTotalsSummary = computed(() => {
     const total = quoteTotalForMilestones.value
     const rows = quotationForm.value.billing_milestones || []
     const scheduled = rows.reduce((s, m) => s + (Number(m.amount) || 0), 0)
+    const downPayment = Number(quotationForm.value.down_payment) || 0
+    const committed = scheduled + downPayment
     const set = rows.filter(m => Number(m.amount) > 0).length
     return {
         total,
         scheduled,
-        unscheduled: Math.max(0, total - scheduled),
+        downPayment,
+        committed,
+        unscheduled: Math.max(0, total - committed),
         pct: total > 0 ? Math.round((scheduled / total) * 100) : 0,
-        over: scheduled > total + 0.001 && total > 0,
+        over: committed > total + 0.001 && total > 0,
         set,
     }
 })
