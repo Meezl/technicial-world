@@ -38,6 +38,27 @@
                     <input type="search" placeholder="Search requests, payments, services…" aria-label="Search" />
                 </div>
 
+                <!-- Payment-Due alert: shown when there's at least one pending
+                     payment request. Made prominent (colour, size, primary CTA)
+                     so the client can't miss it. Deep-links straight to the
+                     payment form if only one request is outstanding. -->
+                <Link
+                    v-if="requestsWithPendingPayment.length > 0"
+                    :href="payNowHref"
+                    class="mobile-payment-due-card"
+                >
+                    <div class="payment-due-copy">
+                        <span class="payment-due-tag"><i class="fas fa-exclamation-circle"></i> Payment Due</span>
+                        <strong class="payment-due-amount">KSH {{ formatCurrency(pendingPaymentsTotal) }}</strong>
+                        <span class="payment-due-meta">
+                            {{ requestsWithPendingPayment.length }} request{{ requestsWithPendingPayment.length === 1 ? '' : 's' }} awaiting payment
+                        </span>
+                    </div>
+                    <span class="payment-due-cta">
+                        Pay Now <i class="fas fa-arrow-right"></i>
+                    </span>
+                </Link>
+
                 <article class="mobile-featured-card">
                     <header class="featured-head">
                         <div class="featured-brand">
@@ -182,6 +203,29 @@
                     </Link>
                     <Link href="/client/new-request" class="btn btn-secondary banner-button">
                         Submit Another Request
+                    </Link>
+                </div>
+            </section>
+
+            <!-- Desktop payment-due alert: mirror of the mobile banner
+                 but sized for the wider layout. Sits above the hero so
+                 it's the first thing a client with an outstanding payment
+                 sees on landing. -->
+            <section v-if="requestsWithPendingPayment.length > 0" class="payment-due-banner">
+                <div class="payment-due-banner-copy">
+                    <span class="payment-due-banner-tag">
+                        <i class="fas fa-exclamation-circle"></i> Payment Due
+                    </span>
+                    <h2>KSH {{ formatCurrency(pendingPaymentsTotal) }} outstanding</h2>
+                    <p>
+                        You have {{ requestsWithPendingPayment.length }} request{{ requestsWithPendingPayment.length === 1 ? '' : 's' }} awaiting payment.
+                        Pay now to keep your job{{ requestsWithPendingPayment.length === 1 ? '' : 's' }} moving.
+                    </p>
+                </div>
+                <div class="payment-due-banner-actions">
+                    <Link :href="payNowHref" class="btn btn-primary banner-button">
+                        <i class="fas fa-credit-card"></i>
+                        {{ requestsWithPendingPayment.length === 1 ? 'Pay Now' : 'View & Pay' }}
                     </Link>
                 </div>
             </section>
@@ -473,6 +517,33 @@ const activeRequests = computed(() => {
     )
 })
 
+// Requests with an actively pending payment request the client can act on.
+// Used to size and drive the "Payment Due" alert at the top of the page.
+const requestsWithPendingPayment = computed(() =>
+    props.serviceRequests.filter((r) => (r.payment_requests || []).length > 0)
+)
+
+// Total KSH owed across every pending payment request. Rendered as the
+// headline number in the alert so the client sees the bill at a glance.
+const pendingPaymentsTotal = computed(() => {
+    if (props.stats?.pendingPaymentsTotal !== undefined) {
+        return Number(props.stats.pendingPaymentsTotal) || 0
+    }
+    return requestsWithPendingPayment.value.reduce(
+        (sum, r) => sum + (r.payment_requests || []).reduce((s, pr) => s + (Number(pr.amount) || 0), 0),
+        0,
+    )
+})
+
+// If there's exactly one request-with-pending-payment, take the client
+// directly to its status page anchored to the payment form. Otherwise
+// send them to /client/payments where they can pick which to pay first.
+const payNowHref = computed(() => {
+    const list = requestsWithPendingPayment.value
+    if (list.length === 1) return `/client/request-status/${list[0].id}#payment`
+    return '/client/payments'
+})
+
 // Mobile dashboard: show top 3 active requests by default with a
 // "Show all N requests" toggle to expand the full list.
 const showAllActive = ref(false)
@@ -631,6 +702,112 @@ defineOptions({
 .client-dashboard {
     display: grid;
     gap: 1.4rem;
+}
+
+/* Payment-due alert — visible, warm, action-oriented. Amber-red gradient
+   so it reads as attention-worthy without being alarming. Sized to sit
+   comfortably at the top of the dashboard as the first thing a client
+   with an outstanding payment sees. */
+.mobile-payment-due-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 1.15rem;
+    margin: 0.5rem 0 1rem;
+    border-radius: 18px;
+    background: linear-gradient(135deg, #fef3c7, #fee2e2);
+    border: 1px solid #fca5a5;
+    color: #7f1d1d;
+    text-decoration: none;
+    box-shadow: 0 8px 20px -12px rgba(220, 38, 38, 0.35);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.mobile-payment-due-card:hover,
+.mobile-payment-due-card:focus-visible {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 24px -12px rgba(220, 38, 38, 0.45);
+}
+.payment-due-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+}
+.payment-due-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #b91c1c;
+}
+.payment-due-amount {
+    font-size: 1.35rem;
+    line-height: 1.1;
+    color: #7f1d1d;
+}
+.payment-due-meta {
+    font-size: 0.8rem;
+    color: #991b1b;
+    opacity: 0.85;
+}
+.payment-due-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 0.9rem;
+    background: #dc2626;
+    color: #fff;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* Desktop version — wider, more room for copy. Same colour language. */
+.payment-due-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 1.4rem 1.6rem;
+    border-radius: 24px;
+    background: linear-gradient(135deg, #fef3c7, #fee2e2);
+    border: 1px solid #fca5a5;
+    color: #7f1d1d;
+    box-shadow: 0 12px 30px -18px rgba(220, 38, 38, 0.4);
+}
+.payment-due-banner-copy h2 {
+    margin: 0.35rem 0 0.3rem;
+    font-size: 1.55rem;
+    color: #7f1d1d;
+}
+.payment-due-banner-copy p {
+    margin: 0;
+    color: #991b1b;
+    opacity: 0.9;
+}
+.payment-due-banner-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #b91c1c;
+}
+.payment-due-banner-actions .btn.btn-primary {
+    background: #dc2626;
+    border-color: #dc2626;
+}
+.payment-due-banner-actions .btn.btn-primary:hover {
+    background: #b91c1c;
+    border-color: #b91c1c;
 }
 
 .submission-banner {

@@ -200,7 +200,14 @@
                                 <span v-if="pr.percentage > 0" class="pr-percent">{{ pr.percentage }}% milestone</span>
                                 <span class="pr-date">Requested {{ formatDate(pr.created_at) }}</span>
                             </div>
-                            <span class="status-badge review">Awaiting Payment</span>
+                            <!-- Pay Now — deep-links to the request status page's
+                                 payment section via #payment anchor. Removes the
+                                 "OK so how do I actually pay?" step from what
+                                 was previously a status-only card. -->
+                            <Link :href="`/client/request-status/${job.id}#payment`" class="pr-pay-now-btn">
+                                <i class="fas fa-credit-card"></i>
+                                Pay Now
+                            </Link>
                         </div>
                     </div>
 
@@ -271,7 +278,7 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { router } from '@inertiajs/vue3'
+import { Link, router } from '@inertiajs/vue3'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
 import ClientBottomNav from '../../Components/ClientBottomNav.vue'
 
@@ -440,6 +447,32 @@ defineOptions({ layout: null })
 </script>
 
 <style>
+
+/* Pay Now button on each pending request card — clear, high-contrast,
+   matches the payment-due colour language on the dashboard alert. */
+.pending-request-card {
+    align-items: center;
+}
+.pr-pay-now-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 1rem;
+    background: #dc2626;
+    color: #fff;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    text-decoration: none;
+    white-space: nowrap;
+    box-shadow: 0 6px 14px -8px rgba(220, 38, 38, 0.55);
+    transition: background 0.15s ease, transform 0.15s ease;
+}
+.pr-pay-now-btn:hover,
+.pr-pay-now-btn:focus-visible {
+    background: #b91c1c;
+    transform: translateY(-1px);
+}
 
 .payments-content {
     background:

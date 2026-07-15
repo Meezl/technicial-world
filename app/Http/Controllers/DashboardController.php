@@ -28,7 +28,18 @@ class DashboardController extends Controller
         $user = $request->user();
 
         $serviceRequests = ServiceRequest::where('user_id', $user->id)
-            ->with(['serviceCategory', 'technician.user', 'latestQuotation'])
+            ->with([
+                'serviceCategory',
+                'technician.user',
+                'latestQuotation',
+                // Bring back the actual pending PRs so the dashboard can
+                // deep-link to the payment form and show amount-due tiles
+                // without a second round trip.
+                'paymentRequests' => function ($q) {
+                    $q->where('status', 'pending')
+                      ->select(['id', 'service_request_id', 'payment_request_id', 'amount', 'percentage', 'created_at', 'status']);
+                },
+            ])
             ->withCount([
                 // For #13 — let the frontend distinguish "Awaiting payment
                 // request from TW" (admin hasn't billed yet) from
@@ -41,10 +52,15 @@ class DashboardController extends Controller
             ->orderBy('created_at', 'desc')
             ->get();
 
+        $pendingPaymentsTotal = $serviceRequests
+            ->flatMap(fn ($sr) => $sr->paymentRequests)
+            ->sum(fn ($pr) => (float) $pr->amount);
+
         $stats = [
             'activeRequests' => $serviceRequests->whereNotIn('status', ['closed', 'archived', 'cancelled'])->count(),
             'completedJobs' => $serviceRequests->whereIn('status', ['closed', 'archived', 'completed_pending_confirmation'])->count(),
             'pendingPayments' => $serviceRequests->whereIn('status', ['awaiting_payment', 'payment_pending_approval'])->count(),
+            'pendingPaymentsTotal' => $pendingPaymentsTotal,
             'totalSpent' => (float) $user->payments()->where('status', 'completed')->sum('amount'),
         ];
 

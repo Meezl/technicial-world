@@ -11,6 +11,25 @@
                 </Link>
             </header>
 
+            <!-- Top-of-page payment alert. When a payment is outstanding
+                 we lead with it so the client doesn't have to hunt down
+                 the form; a single click jumps them straight to it. -->
+            <section v-if="pendingPaymentRequest" class="request-payment-alert">
+                <div class="request-payment-alert-copy">
+                    <span class="request-payment-alert-tag">
+                        <i class="fas fa-exclamation-circle"></i> Payment Required
+                    </span>
+                    <strong>KSH {{ formatCurrency(pendingPaymentRequest.amount) }}</strong>
+                    <span class="request-payment-alert-meta">
+                        Reference {{ pendingPaymentRequest.payment_request_id }}
+                        <template v-if="pendingPaymentRequest.percentage"> · {{ pendingPaymentRequest.percentage }}% milestone</template>
+                    </span>
+                </div>
+                <button type="button" @click="jumpToPaymentForm" class="btn btn-primary request-payment-alert-cta">
+                    <i class="fas fa-credit-card"></i> Pay Now
+                </button>
+            </section>
+
             <!-- RFQ Status Section -->
             <section class="panel-section" v-if="serviceRequest.rfq_status">
                 <div class="panel-card full-width rfq-status-card">
@@ -166,7 +185,7 @@
                         </div>
 
                         <!-- Payment Request Section -->
-                        <div v-if="pendingPaymentRequest" class="payment-request-section">
+                        <div v-if="pendingPaymentRequest" id="payment" ref="paymentSection" class="payment-request-section">
                             <div class="payment-request-header">
                                 <i class="fas fa-credit-card"></i>
                                 <h4>Payment Required</h4>
@@ -731,7 +750,7 @@
 
 <script setup>
 import { Link } from '@inertiajs/vue3'
-import { reactive, ref, computed } from 'vue'
+import { reactive, ref, computed, onMounted, nextTick } from 'vue'
 import { router } from '@inertiajs/vue3'
 import axios from 'axios'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
@@ -852,6 +871,36 @@ const evidenceFileInput = ref(null)
 const handleEvidenceFile = (e) => {
     bankForm.evidence = e.target.files[0] || null
 }
+
+// Ref on the Payment Required section so we can scroll to it either
+// automatically on load (if a payment is pending) or on Pay Now click
+// from the top alert / any deep link.
+const paymentSection = ref(null)
+
+const jumpToPaymentForm = () => {
+    if (!paymentSection.value) return
+    paymentSection.value.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // Also preselect M-Pesa by default so the form is one tap away —
+    // most clients pay via M-Pesa and this saves them from having to
+    // pick before they can start typing their phone number.
+    if (!selectedPaymentMethod.value) {
+        selectedPaymentMethod.value = 'mpesa'
+    }
+}
+
+// On mount, if there's a pending payment OR the URL was deep-linked
+// with #payment, glide the client straight to the payment form. Uses
+// nextTick to wait for the DOM to settle after Inertia's render.
+onMounted(async () => {
+    await nextTick()
+    const hasPending = props.serviceRequest.payment_requests?.some(pr => pr.status === 'pending')
+    const wantsPayment = typeof window !== 'undefined' && window.location.hash === '#payment'
+    if (hasPending && (wantsPayment || document.referrer.includes('/client/payments') || document.referrer.includes('/client/dashboard'))) {
+        // Small delay lets the entrance animation on the alert finish
+        // so the scroll doesn't compete with the fade-in.
+        setTimeout(() => jumpToPaymentForm(), 150)
+    }
+})
 
 // Computed properties for payment requests
 const pendingPaymentRequest = computed(() => {
@@ -1270,6 +1319,67 @@ defineOptions({
 </script>
 
 <style>
+
+/* Top-of-page payment alert — mirrors the dashboard's payment-due
+   card language so a client who came from there sees continuity. */
+.request-payment-alert {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    padding: 1.15rem 1.4rem;
+    margin: 0 0 1.5rem;
+    border-radius: 20px;
+    background: linear-gradient(135deg, #fef3c7, #fee2e2);
+    border: 1px solid #fca5a5;
+    color: #7f1d1d;
+    box-shadow: 0 12px 26px -18px rgba(220, 38, 38, 0.4);
+}
+.request-payment-alert-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+}
+.request-payment-alert-copy strong {
+    font-size: 1.5rem;
+    color: #7f1d1d;
+}
+.request-payment-alert-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #b91c1c;
+}
+.request-payment-alert-meta {
+    font-size: 0.85rem;
+    color: #991b1b;
+    opacity: 0.9;
+}
+.request-payment-alert-cta {
+    background: #dc2626 !important;
+    border-color: #dc2626 !important;
+    color: #fff !important;
+    padding: 0.7rem 1.4rem !important;
+    font-weight: 600;
+}
+.request-payment-alert-cta:hover,
+.request-payment-alert-cta:focus-visible {
+    background: #b91c1c !important;
+    border-color: #b91c1c !important;
+}
+
+/* Give the actual payment form section a subtle scroll-margin so when
+   we scrollIntoView it doesn't hug the very top of the viewport under
+   the sticky sidebar header. */
+.payment-request-section {
+    scroll-margin-top: 90px;
+}
 
 /* RFQ Status Styles */
 .rfq-status-card {
