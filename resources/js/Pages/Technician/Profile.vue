@@ -72,6 +72,34 @@
                 </div>
             </section>
 
+            <!-- Company Documents card — Technician World's own KRA PIN,
+                 always downloadable so the technician can hand it to any
+                 supplier they're procuring from on TW's behalf without
+                 having to message ops first. Same card layout as the
+                 dashboard so it feels like one system. -->
+            <a
+                href="/documents/technician-world-kra-pin.pdf"
+                target="_blank"
+                rel="noopener"
+                download
+                class="panel-card"
+                style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; text-decoration: none; color: inherit; margin-bottom: 1rem;"
+            >
+                <div>
+                    <span class="section-kicker" style="color: #b45309;">Company Documents</span>
+                    <h3 style="margin: 0.35rem 0 0.25rem;">
+                        <i class="fas fa-file-pdf" style="color: #dc2626; margin-right: 0.4rem;"></i>
+                        Technician World KRA PIN
+                    </h3>
+                    <p style="margin: 0; font-size: 0.85rem; color: var(--light-text, #64748b);">
+                        Download when a supplier asks for TW's PIN during procurement.
+                    </p>
+                </div>
+                <span class="btn btn-primary btn-sm" style="white-space: nowrap;">
+                    <i class="fas fa-download"></i> Download
+                </span>
+            </a>
+
             <section class="panel-card checklist-card">
                 <div class="section-heading">
                     <div>

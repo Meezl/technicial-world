@@ -71,6 +71,33 @@
                 </div>
             </Link>
 
+            <!-- Company Documents — Technician World's KRA PIN, always
+                 downloadable so technicians doing procurement or purchases
+                 on TW's behalf can hand it to the supplier on the spot
+                 instead of asking ops every time. -->
+            <a
+                href="/documents/technician-world-kra-pin.pdf"
+                target="_blank"
+                rel="noopener"
+                download
+                class="pwa-card"
+                style="display: block; text-decoration: none; color: inherit; margin-bottom: 1rem;"
+            >
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
+                    <div>
+                        <span style="display: inline-block; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #b45309; margin-bottom: 0.35rem;">Company Documents</span>
+                        <h3 style="margin: 0 0 0.25rem 0; font-size: 1rem;">
+                            <i class="fas fa-file-pdf" style="color: #dc2626; margin-right: 0.4rem;"></i>
+                            Technician World KRA PIN
+                        </h3>
+                        <p style="margin: 0; font-size: 0.85rem; color: var(--light-text);">
+                            Download for suppliers when doing procurement on behalf of Technician World.
+                        </p>
+                    </div>
+                    <i class="fas fa-download" style="color: var(--primary-color);"></i>
+                </div>
+            </a>
+
             <!-- Incoming Jobs (Assigned but not started) -->
             <div v-if="incomingJobs.length > 0">
                 <h2 style="font-size: 1rem; color: var(--light-text); margin-bottom: 0.5rem; padding-left: 0.5rem;">Incoming Requests</h2>
