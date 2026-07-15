@@ -388,9 +388,9 @@
                                 </div>
                                 <div class="form-row">
                                     <div class="form-group">
-                                        <label>KRA PIN</label>
+                                        <label>KRA PIN <span style="color: var(--text-muted); font-weight: normal;">(optional)</span></label>
                                         <input type="text" v-model="form.kra_pin" placeholder="e.g. A123456789Z" maxlength="32" style="text-transform: uppercase;">
-                                        <small style="color: var(--text-muted); font-size: 0.8rem;">Read it off the KRA PIN certificate — displayed on the profile for quick copy during procurement.</small>
+                                        <small style="color: var(--text-muted); font-size: 0.8rem;">Optional. Read it off the KRA PIN certificate — displayed on the profile for quick copy during procurement. Can be added later from the technician's profile.</small>
                                     </div>
                                 </div>
                                 <div class="form-row">
