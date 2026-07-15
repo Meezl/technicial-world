@@ -2294,6 +2294,55 @@ class AdminDashboardController extends Controller
         return redirect()->route('admin.rfq')->with('success', 'Service request rejected successfully.');
     }
 
+    /**
+     * Cancel a service request outright (as opposed to rejecting the quotation).
+     *
+     * Fills the gap where admin-assisted RFQs couldn't be pulled once they
+     * were in flight — clients had a decline path for their own RFQs, admins
+     * had nothing equivalent for the ones they'd created on behalf. Works
+     * for both submission modes; guarded against terminal states so we
+     * can't cancel something that's already completed/closed/cancelled.
+     */
+    public function cancelRfq(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'reason' => 'required|string|min:10|max:1000',
+        ]);
+
+        $terminalStatuses = [
+            ServiceRequest::STATUS_COMPLETED,
+            ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION,
+            ServiceRequest::STATUS_CLOSED,
+            ServiceRequest::STATUS_ARCHIVED,
+            ServiceRequest::STATUS_CANCELLED,
+        ];
+
+        if (in_array($serviceRequest->status, $terminalStatuses, true)) {
+            return redirect()->route('admin.rfq')
+                ->with('error', 'This request is already in a terminal state and cannot be cancelled.');
+        }
+
+        $oldValues = [
+            'status'     => $serviceRequest->status,
+            'rfq_status' => $serviceRequest->rfq_status,
+        ];
+
+        $serviceRequest->update([
+            'status'           => ServiceRequest::STATUS_CANCELLED,
+            'rejection_reason' => 'Cancelled by admin: ' . $request->reason,
+        ]);
+
+        AuditLog::log(AuditLog::ACTION_STATE_CHANGED, $serviceRequest, $oldValues, [
+            'status'         => $serviceRequest->status,
+            'cancelled_by'   => auth()->id(),
+            'cancelled_at'   => now()->toDateTimeString(),
+            'cancel_reason'  => $request->reason,
+        ]);
+
+        return redirect()->route('admin.rfq')
+            ->with('success', 'Service request cancelled successfully.');
+    }
+
     public function approveRfqOnBehalf(Request $request, ServiceRequest $serviceRequest)
     {
         $request->validate([

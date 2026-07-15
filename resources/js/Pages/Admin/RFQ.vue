@@ -307,6 +307,14 @@
                                             >
                                                 <i class="fas fa-user-check"></i>
                                             </button>
+                                            <button
+                                                v-if="canCancelRfq(rfq)"
+                                                @click="openCancelModal(rfq)"
+                                                class="btn btn-sm btn-danger"
+                                                title="Cancel this request"
+                                            >
+                                                <i class="fas fa-ban"></i>
+                                            </button>
                                         </div>
                                     </td>
                                 </tr>
@@ -387,6 +395,13 @@
                                     class="btn btn-sm btn-warning"
                                 >
                                     <i class="fas fa-user-check"></i> Approve
+                                </button>
+                                <button
+                                    v-if="canCancelRfq(rfq)"
+                                    @click="openCancelModal(rfq)"
+                                    class="btn btn-sm btn-danger"
+                                >
+                                    <i class="fas fa-ban"></i> Cancel
                                 </button>
                             </div>
                         </article>
@@ -1227,6 +1242,38 @@
                 </div>
             </div>
         </div>
+
+        <!-- Cancellation Modal -->
+        <div v-if="showCancelModal" class="modal-overlay">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h3>Cancel Service Request</h3>
+                    <button @click="closeCancelModal" class="modal-close">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+
+                <div class="modal-body">
+                    <p v-if="rfqToCancel" style="margin-bottom: 0.75rem; color: var(--text-muted);">
+                        Cancelling request <strong>#{{ rfqToCancel.id }}</strong> for
+                        <strong>{{ rfqToCancel.user?.name || 'this client' }}</strong>.
+                        This is recorded in the audit log.
+                    </p>
+                    <div class="form-group">
+                        <label>Reason for cancellation (min. 10 characters):</label>
+                        <textarea v-model="cancelReason" class="form-control" rows="4" placeholder="Why is this request being cancelled? e.g. client withdrew, out of scope, duplicate of #123..." required></textarea>
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button @click="closeCancelModal" class="btn btn-secondary" :disabled="isSubmittingCancel">Back</button>
+                    <button @click="confirmCancel" class="btn btn-danger" :disabled="cancelReason.trim().length < 10 || isSubmittingCancel">
+                        <i class="fas fa-ban"></i>
+                        {{ isSubmittingCancel ? 'Cancelling...' : 'Cancel Request' }}
+                    </button>
+                </div>
+            </div>
+        </div>
     </div>
 </template>
 
@@ -1517,6 +1564,51 @@ const reviewRFQ = (rfq) => { selectedRFQ.value = rfq; resetQuotationForm(); show
 const closeReviewModal = () => { showReviewModal.value = false; selectedRFQ.value = null; resetQuotationForm() }
 const closeRejectModal = () => { showRejectModal.value = false; rejectionReason.value = '' }
 const rejectRFQ = () => { showRejectModal.value = true }
+
+// ── Cancel Request ─────────────────────────────────────────────────────────
+// Complements the reject flow: reject targets the quotation, cancel voids
+// the whole request. Primarily filling the admin-assisted gap where clients
+// couldn't withdraw the request from their side.
+const showCancelModal = ref(false)
+const cancelReason = ref('')
+const rfqToCancel = ref(null)
+const isSubmittingCancel = ref(false)
+
+const canCancelRfq = (rfq) => {
+    if (!rfq) return false
+    const terminalStatuses = ['completed', 'completed_pending_confirmation', 'closed', 'archived', 'cancelled']
+    if (terminalStatuses.includes(rfq.status)) return false
+    if (rfq.rfq_status === 'rejected') return false
+    return true
+}
+
+const openCancelModal = (rfq) => {
+    rfqToCancel.value = rfq
+    cancelReason.value = ''
+    showCancelModal.value = true
+}
+
+const closeCancelModal = () => {
+    if (isSubmittingCancel.value) return
+    showCancelModal.value = false
+    cancelReason.value = ''
+    rfqToCancel.value = null
+}
+
+const confirmCancel = () => {
+    if (!rfqToCancel.value) return
+    if (cancelReason.value.trim().length < 10) return
+    isSubmittingCancel.value = true
+    router.post(`/admin/rfq/${rfqToCancel.value.id}/cancel`, { reason: cancelReason.value }, {
+        preserveScroll: true,
+        onSuccess: () => { closeCancelModal() },
+        onError: (errors) => {
+            const messages = Object.values(errors).flat().filter(Boolean)
+            alert("Couldn't cancel the request:\n" + (messages.join('\n') || 'Unknown error.'))
+        },
+        onFinish: () => { isSubmittingCancel.value = false },
+    })
+}
 
 const initiatePaymentRequest = (rfq) => {
     selectedRFQ.value = rfq
