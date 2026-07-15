@@ -230,6 +230,11 @@
                             <p>{{ form.description || 'No description provided yet.' }}</p>
                         </div>
 
+                        <div v-if="additionalNotes && additionalNotes.trim().length > 0" class="review-note">
+                            <span class="review-label">Additional notes</span>
+                            <p style="white-space: pre-wrap;">{{ additionalNotes }}</p>
+                        </div>
+
                         <div class="form-actions">
                             <p>
                                 Once submitted, your request is received as an RFQ and appears immediately in your active requests while our team reviews it.
