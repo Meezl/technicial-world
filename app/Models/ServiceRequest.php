@@ -40,6 +40,7 @@ class ServiceRequest extends Model
         'expected_duration_days',
         'commencement_at',
         'target_completion_at',
+        'contact_time_minutes',
         'quote_materials_file_path',
         'quote_materials_file_paths',
         'rejection_reason',

@@ -1104,6 +1104,24 @@
                         </div>
                     </div>
 
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Expected on-site contact time (minutes)</label>
+                            <input
+                                type="number"
+                                v-model.number="assignmentForm.contact_time_minutes"
+                                min="5"
+                                max="480"
+                                step="5"
+                                class="form-control"
+                                placeholder="e.g. 45"
+                            >
+                            <small class="assignment-field-help">
+                                Shown to the client after assignment so they know how long to plan around the visit. 5–480 minutes.
+                            </small>
+                        </div>
+                    </div>
+
                     <p v-if="assignmentOverBudget" class="assignment-inline-error">
                         This amount is above the remaining labor budget for the current assignment mix.
                     </p>
@@ -1696,6 +1714,7 @@ const budgetForm = reactive({
 const assignmentForm = reactive({
     agreed_compensation: '',
     compensation_notes: '',
+    contact_time_minutes: null,
 })
 const progressValidationForms = reactive({})
 
@@ -2154,6 +2173,7 @@ const assignSingleTechnician = () => {
         technician_id: selectedTechnician.value.id,
         agreed_compensation: normalizedAssignmentCompensation.value,
         compensation_notes: assignmentForm.compensation_notes,
+        contact_time_minutes: assignmentForm.contact_time_minutes || null,
     }, {
         preserveState: false,
         onSuccess: () => {

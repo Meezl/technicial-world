@@ -460,6 +460,11 @@
                             <h4><i class="fas fa-user-hard-hat"></i> Assigned Technician</h4>
                             <p>{{ serviceRequest.technician.user?.name || 'Not assigned' }}</p>
                         </div>
+
+                        <div class="detail-item" v-if="serviceRequest.contact_time_minutes">
+                            <h4><i class="fas fa-stopwatch"></i> Expected On-Site Time</h4>
+                            <p>{{ formatContactTime(serviceRequest.contact_time_minutes) }}</p>
+                        </div>
                     </div>
 
                     <div class="detail-section">
@@ -1074,6 +1079,18 @@ const formatDate = (date) => {
         hour: '2-digit',
         minute: '2-digit'
     })
+}
+
+// Turns a raw minute count into a human phrase the client can plan around.
+// 45 → "45 minutes"; 90 → "1 hour 30 minutes"; 120 → "2 hours".
+const formatContactTime = (mins) => {
+    const n = Number(mins) || 0
+    if (n <= 0) return ''
+    if (n < 60) return `${n} minute${n === 1 ? '' : 's'}`
+    const h = Math.floor(n / 60)
+    const rem = n % 60
+    const hPart = `${h} hour${h === 1 ? '' : 's'}`
+    return rem === 0 ? hPart : `${hPart} ${rem} minute${rem === 1 ? '' : 's'}`
 }
 
 const submitFeedback = () => {

@@ -76,7 +76,16 @@ Route::middleware('auth')->group(function () {
 
 Route::middleware(['auth'])->group(function () {
     Route::get('/client/dashboard', [DashboardController::class, 'client'])->name('client.dashboard');
+    // Wizard is three URLs so each step gets a real browser history entry,
+    // is bookmarkable, and starts at the top of the page instead of making
+    // the client scroll the same long form.
     Route::get('/client/new-request', [ServiceRequestController::class, 'create'])->name('client.new-request');
+    Route::get('/client/new-request/{category}', [ServiceRequestController::class, 'create'])
+        ->where('category', '[0-9]+')
+        ->name('client.new-request.details');
+    Route::get('/client/new-request/{category}/review', function ($category) {
+        return app(ServiceRequestController::class)->create($category, 'review');
+    })->where('category', '[0-9]+')->name('client.new-request.review');
     Route::post('/client/service-requests', [ServiceRequestController::class, 'store'])->name('service-requests.store');
     Route::get('/client/request-status/{serviceRequest}', [ServiceRequestController::class, 'show'])->name('client.request-status');
     Route::get('/client/payments', [\App\Http\Controllers\ClientController::class, 'payments'])->name('client.payments');

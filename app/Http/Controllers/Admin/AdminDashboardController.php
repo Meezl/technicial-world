@@ -820,6 +820,11 @@ class AdminDashboardController extends Controller
             // technician's email.
             'assignment_files'   => 'nullable|array|max:10',
             'assignment_files.*' => 'nullable|file|mimes:jpg,jpeg,png,pdf,doc,docx,xls,xlsx,heic,heif,webp|max:20480',
+            // On-site duration estimate shown to the client so they know how
+            // long to plan around the technician's visit. Capped at 8 hours
+            // (480 min) — anything longer is really a multi-day job and
+            // belongs in expected_duration_days instead.
+            'contact_time_minutes' => 'nullable|integer|min:5|max:480',
         ]);
 
         // Block direct assignment when sub-tasks exist
@@ -873,6 +878,9 @@ class AdminDashboardController extends Controller
             'assigned_at' => now(),
             'commencement_at' => $commencementAt,
             'target_completion_at' => $targetCompletionAt,
+            'contact_time_minutes' => $request->filled('contact_time_minutes')
+                ? (int) $request->contact_time_minutes
+                : $serviceRequest->contact_time_minutes,
         ]);
 
         // #12 — Soft warning if the commencement date exceeds the priority window.

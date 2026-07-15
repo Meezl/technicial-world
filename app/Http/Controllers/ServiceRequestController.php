@@ -24,12 +24,29 @@ class ServiceRequestController extends Controller
     /**
      * Show the form for creating a new resource.
      */
-    public function create()
+    public function create($categoryId = null, $stage = null)
     {
         $serviceCategories = ServiceCategory::where('is_active', true)->get();
 
+        // The wizard drives step selection from the URL so back-button works
+        // and each step is bookmarkable. Steps are:
+        //   1 = category picker         (no categoryId in URL)
+        //   2 = details for that category
+        //   3 = review + submit         (stage === 'review')
+        // Anything with a non-existent category id resets to step 1.
+        $preselectedCategory = null;
+        if ($categoryId !== null) {
+            $preselectedCategory = $serviceCategories->firstWhere('id', (int) $categoryId);
+        }
+        $initialStep = 1;
+        if ($preselectedCategory) {
+            $initialStep = ($stage === 'review') ? 3 : 2;
+        }
+
         return Inertia::render('Client/NewRequest', [
-            'serviceCategories' => $serviceCategories
+            'serviceCategories'   => $serviceCategories,
+            'preselectedCategory' => $preselectedCategory,
+            'initialStep'         => $initialStep,
         ]);
     }
 

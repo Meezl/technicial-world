@@ -240,7 +240,7 @@
                                 Once submitted, your request is received as an RFQ and appears immediately in your active requests while our team reviews it.
                             </p>
                             <div class="form-step-actions form-step-actions-split">
-                                <button type="button" class="btn btn-secondary" @click="currentStep = 2" :disabled="isSubmitting">
+                                <button type="button" class="btn btn-secondary" @click="backToDetailsFromReview" :disabled="isSubmitting">
                                     Back to Details
                                 </button>
                                 <button type="submit" class="btn btn-primary btn-lg" :disabled="isSubmitting">
@@ -277,8 +277,8 @@
 </template>
 
 <script setup>
-import { Link, useForm } from '@inertiajs/vue3'
-import { computed, ref } from 'vue'
+import { Link, useForm, router } from '@inertiajs/vue3'
+import { computed, ref, onMounted, nextTick, watch } from 'vue'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
 import ClientBottomNav from '../../Components/ClientBottomNav.vue'
 import { compressAll, totalBytes } from '../../composables/useImageCompression.js'
@@ -294,12 +294,16 @@ const props = defineProps({
             { id: 4, name: 'Tiling', icon: 'fas fa-th' },
         ],
     },
+    // Server-driven step selection via URL: /client/new-request → step 1,
+    // /client/new-request/{id} → step 2, /client/new-request/{id}/review → step 3.
+    preselectedCategory: { type: Object, default: null },
+    initialStep: { type: Number, default: 1 },
 })
 
 const selectedFiles = ref([])
 const filePreviews = ref([])           // [{ name, src (objectURL or null), sizeKB }]
 const fileInput = ref(null)
-const currentStep = ref(1)
+const currentStep = ref(props.initialStep || 1)
 const submissionFeedback = ref({
     type: '',
     message: '',
@@ -340,6 +344,27 @@ const { clear: clearDraft } = useFormAutosave('client-new-request', [
     { ref: additionalNotes },
 ], { exclude: ['files'] })
 
+// URL beats localStorage: if the page loaded on step 2/3 with a specific
+// category in the path, honour that even if a stale draft has a different
+// category cached. Runs after the autosave restore because both use
+// onMounted and Vue fires callbacks in registration order.
+onMounted(async () => {
+    await nextTick()
+    if (props.preselectedCategory?.id) {
+        form.service_category_id = props.preselectedCategory.id
+    }
+})
+
+// Because we navigate between step URLs with preserveState:true (to keep
+// picked File objects in memory), the component is not re-mounted on step
+// change. Watch the props so currentStep and category actually update.
+watch(() => props.initialStep, (val) => {
+    if (val) currentStep.value = val
+})
+watch(() => props.preselectedCategory, (val) => {
+    if (val?.id) form.service_category_id = val.id
+})
+
 const selectedCategory = computed(() => {
     return availableCategories.value.find((category) => category.id === form.service_category_id) || null
 })
@@ -363,6 +388,20 @@ function selectCategory(categoryId) {
     if (form.processing) return
     form.service_category_id = categoryId
     clearFeedback()
+    // Client asked for one-click category → details, no scroll-and-hunt.
+    // Navigate straight to the category's details URL.
+    router.get(`/client/new-request/${categoryId}`, {}, {
+        preserveState: true,
+        preserveScroll: false,
+    })
+}
+
+function backToDetailsFromReview() {
+    clearFeedback()
+    router.get(`/client/new-request/${form.service_category_id}`, {}, {
+        preserveState: true,
+        preserveScroll: false,
+    })
 }
 
 function goToDetailsStep() {
@@ -375,13 +414,23 @@ function goToDetailsStep() {
     }
 
     clearFeedback()
-    currentStep.value = 2
+    // Navigate to the per-category URL so back-button works and each step
+    // scrolls fresh instead of appending below the previous.
+    router.get(`/client/new-request/${form.service_category_id}`, {}, {
+        preserveState: true, // form + additionalNotes stay in localStorage
+        preserveScroll: false,
+    })
 }
 
 function unlockCategory() {
     if (form.processing) return
     clearFeedback()
-    currentStep.value = 1
+    // Go back to the category picker URL. Category itself stays selected
+    // in form state so the "active" pill highlights on return.
+    router.get('/client/new-request', {}, {
+        preserveState: true,
+        preserveScroll: false,
+    })
 }
 
 function goToReviewStep() {
@@ -408,7 +457,10 @@ function goToReviewStep() {
     }
 
     clearFeedback()
-    currentStep.value = 3
+    router.get(`/client/new-request/${form.service_category_id}/review`, {}, {
+        preserveState: true,
+        preserveScroll: false,
+    })
 }
 
 async function submitRequest() {
@@ -480,7 +532,13 @@ async function submitRequest() {
                 type: 'error',
                 message: 'Request not submitted yet. Review the highlighted fields and try again.',
             }
-            currentStep.value = errors.service_category_id ? 1 : 2
+            // Route back to whichever step owns the offending field so the
+            // client sees the highlighted input, not just an error banner.
+            if (errors.service_category_id || !form.service_category_id) {
+                router.get('/client/new-request', {}, { preserveState: true, preserveScroll: false })
+            } else {
+                router.get(`/client/new-request/${form.service_category_id}`, {}, { preserveState: true, preserveScroll: false })
+            }
         },
         onFinish: () => {
             isUploading.value = false
