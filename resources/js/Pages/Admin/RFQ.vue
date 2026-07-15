@@ -675,7 +675,7 @@
                                         </div>
                                         <div class="material-inputs">
                                             <input v-model="material.name" type="text" placeholder="Material name" class="form-control material-name" required>
-                                            <input v-model="material.quantity" type="number" min="1" placeholder="Qty" class="form-control material-qty" required>
+                                            <input v-model="material.quantity" type="number" step="0.01" min="0.01" placeholder="Qty" class="form-control material-qty" required>
                                             <CurrencyInput v-model="material.unit_price" placeholder="Unit Price (KSH)" class="material-price" required />
                                             <div class="material-total">KSH {{ formatCurrency((material.quantity || 0) * (material.unit_price || 0)) }}</div>
                                         </div>
@@ -1696,9 +1696,18 @@ const submitQuote = () => {
         is_revision: isRevision.value,
         billing_milestones: validMilestones.length ? validMilestones : null,
     }, {
-        preserveState: false,
+        // Keep the modal + form state on validation errors so the admin
+        // doesn't lose everything they typed if e.g. a numeric field trips.
+        preserveState: true,
+        preserveScroll: true,
         onSuccess: () => closeReviewModal(),
-        onError: (errors) => console.error('Quote submission failed:', errors),
+        onError: (errors) => {
+            const messages = Object.values(errors).flat().filter(Boolean)
+            const summary = messages.length
+                ? messages.slice(0, 5).join('\n• ')
+                : 'Please check the highlighted fields and try again.'
+            alert("Couldn't send the quotation:\n• " + summary)
+        },
         onFinish: () => { isSubmittingQuote.value = false },
     })
 }

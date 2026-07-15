@@ -2124,7 +2124,7 @@ class AdminDashboardController extends Controller
             'service_request_id' => 'required|exists:service_requests,id',
             'materials' => 'nullable|array',
             'materials.*.name' => 'required_with:materials|string',
-            'materials.*.quantity' => 'required_with:materials|numeric|min:1',
+            'materials.*.quantity' => 'required_with:materials|numeric|min:0.01',
             'materials.*.unit_price' => 'required_with:materials|numeric|min:0',
             'labor_cost' => 'required|numeric|min:0',
             'transport_cost' => 'nullable|numeric|min:0',
