@@ -388,6 +388,13 @@
                                 </div>
                                 <div class="form-row">
                                     <div class="form-group">
+                                        <label>KRA PIN</label>
+                                        <input type="text" v-model="form.kra_pin" placeholder="e.g. A123456789Z" maxlength="32" style="text-transform: uppercase;">
+                                        <small style="color: var(--text-muted); font-size: 0.8rem;">Read it off the KRA PIN certificate — displayed on the profile for quick copy during procurement.</small>
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
                                         <label>Availability</label>
                                         <select v-model="form.availability">
                                             <option value="available">Available</option>
@@ -658,6 +665,16 @@
                                 <strong>{{ viewingTechnician.user.phone || 'Not provided' }}</strong>
                             </div>
                             <div class="profile-stat">
+                                <span>KRA PIN</span>
+                                <strong v-if="viewingTechnician.kra_pin" style="display:flex; align-items:center; gap:0.4rem;">
+                                    <span style="font-family: monospace;">{{ viewingTechnician.kra_pin }}</span>
+                                    <button type="button" @click="copyKraPin(viewingTechnician.kra_pin)" class="btn btn-xs btn-secondary" :title="kraPinCopied ? 'Copied!' : 'Copy PIN'">
+                                        <i :class="kraPinCopied ? 'fas fa-check' : 'fas fa-copy'"></i>
+                                    </button>
+                                </strong>
+                                <strong v-else style="color: var(--text-muted); font-style: italic; font-size: 0.85rem;">Not on file — edit the profile to add it</strong>
+                            </div>
+                            <div class="profile-stat">
                                 <span>Rating</span>
                                 <strong>{{ Number(viewingTechnician.rating || 0).toFixed(1) }}/5</strong>
                             </div>
@@ -911,9 +928,25 @@ watch(() => page.props.flash, (flash) => {
 
 const mandatoryDocTypes = ['nca_license', 'tertiary_cert', 'id_card', 'passport_photo', 'pin_cert']
 
+// Copy-to-clipboard for the KRA PIN — saves ops from selecting text in a
+// tight modal when they need to paste it into a supplier form.
+const kraPinCopied = ref(false)
+async function copyKraPin(pin) {
+    if (!pin) return
+    try {
+        await navigator.clipboard.writeText(pin)
+    } catch (_e) {
+        // Older browsers / non-secure contexts fall through to a manual prompt.
+        prompt('Copy the KRA PIN:', pin)
+        return
+    }
+    kraPinCopied.value = true
+    setTimeout(() => { kraPinCopied.value = false }, 1500)
+}
+
 const form = ref({
     name: '', email: '', phone: '', technician_id: '',
-    specialization: '', location: '', availability: 'available',
+    specialization: '', location: '', kra_pin: '', availability: 'available',
     password: '', bio: '', skills: [],
 })
 
@@ -1106,6 +1139,7 @@ const editTechnician = (tech) => {
         id: tech.id, name: tech.user.name, email: tech.user.email,
         phone: tech.user.phone || '', technician_id: tech.technician_id,
         specialization: tech.specialization, location: tech.location,
+        kra_pin: tech.kra_pin || '',
         availability: tech.availability, bio: tech.bio || '',
         password: '', skills: tech.skills || [],
     }
@@ -1260,7 +1294,7 @@ const verifyDocument = (docId, action) => {
 }
 
 const resetForm = () => {
-    form.value = { name: '', email: '', phone: '', technician_id: '', specialization: '', location: '', availability: 'available', password: '', bio: '', skills: [] }
+    form.value = { name: '', email: '', phone: '', technician_id: '', specialization: '', location: '', kra_pin: '', availability: 'available', password: '', bio: '', skills: [] }
     skillsInput.value = ''
     docFiles.value = { nca_license: null, tertiary_cert: null, id_card: null, passport_photo: null, kra_pin: null }
     editDocType.value = ''
