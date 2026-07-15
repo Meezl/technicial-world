@@ -282,6 +282,7 @@ import { computed, ref } from 'vue'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
 import ClientBottomNav from '../../Components/ClientBottomNav.vue'
 import { compressAll, totalBytes } from '../../composables/useImageCompression.js'
+import { useFormAutosave } from '../../composables/useFormAutosave.js'
 
 const props = defineProps({
     serviceCategories: {
@@ -329,6 +330,15 @@ const form = useForm({
 })
 
 const additionalNotes = ref('')
+
+// Auto-save text fields to localStorage so a client who navigates away or
+// closes the tab can resume where they left off. Files are intentionally
+// excluded — browsers can't rehydrate a file picker from JSON, so the client
+// will still need to re-attach photos when they come back.
+const { clear: clearDraft } = useFormAutosave('client-new-request', [
+    { ref: form },
+    { ref: additionalNotes },
+], { exclude: ['files'] })
 
 const selectedCategory = computed(() => {
     return availableCategories.value.find((category) => category.id === form.service_category_id) || null
@@ -458,6 +468,9 @@ async function submitRequest() {
             isUploading.value = false
             uploadProgress.value = 100
             stageMessage.value = ''
+            // Draft has done its job — clear it so a fresh new-request
+            // starts blank instead of restoring the just-submitted values.
+            clearDraft()
         },
         onError: (errors) => {
             isUploading.value = false
