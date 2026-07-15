@@ -1,11 +1,11 @@
 <template>
     <div class="pwa-app">
         <header class="pwa-header">
-            <div>
+            <div class="header-copy">
                 <h1>My Profile</h1>
                 <p class="header-subtitle">Keep your details and compliance documents up to date.</p>
             </div>
-            <button @click="logout" class="btn btn-outline btn-sm" style="width: auto; padding: 0.5rem 1rem;">
+            <button @click="logout" class="btn btn-outline btn-icon" aria-label="Log out">
                 <i class="fas fa-sign-out-alt"></i>
             </button>
         </header>
@@ -75,27 +75,24 @@
             <!-- Company Documents card — Technician World's own KRA PIN,
                  always downloadable so the technician can hand it to any
                  supplier they're procuring from on TW's behalf without
-                 having to message ops first. Same card layout as the
-                 dashboard so it feels like one system. -->
+                 having to message ops first. Stacks on narrow screens so
+                 the button doesn't shove the copy off-screen. -->
             <a
                 href="/documents/technician-world-kra-pin.pdf"
                 target="_blank"
                 rel="noopener"
                 download
-                class="panel-card"
-                style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; text-decoration: none; color: inherit; margin-bottom: 1rem;"
+                class="panel-card company-doc-card"
             >
-                <div>
-                    <span class="section-kicker" style="color: #b45309;">Company Documents</span>
-                    <h3 style="margin: 0.35rem 0 0.25rem;">
-                        <i class="fas fa-file-pdf" style="color: #dc2626; margin-right: 0.4rem;"></i>
+                <div class="company-doc-copy">
+                    <span class="section-kicker company-doc-kicker">Company Documents</span>
+                    <h3>
+                        <i class="fas fa-file-pdf company-doc-icon"></i>
                         Technician World KRA PIN
                     </h3>
-                    <p style="margin: 0; font-size: 0.85rem; color: var(--light-text, #64748b);">
-                        Download when a supplier asks for TW's PIN during procurement.
-                    </p>
+                    <p>Download when a supplier asks for TW's PIN during procurement.</p>
                 </div>
-                <span class="btn btn-primary btn-sm" style="white-space: nowrap;">
+                <span class="btn btn-primary company-doc-cta">
                     <i class="fas fa-download"></i> Download
                 </span>
             </a>
@@ -574,13 +571,71 @@ defineOptions({ layout: null })
 .profile-page {
     display: grid;
     gap: 1rem;
+    /* Leave room for the fixed TechnicianBottomNav; without this the last
+       card can hide behind it on short viewports. */
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);
 }
 
+/* Header column shrinks to fit narrow phones so the title doesn't push
+   the logout button off-screen. */
+.pwa-header .header-copy {
+    min-width: 0;
+    flex: 1;
+}
+.pwa-header h1 {
+    margin: 0;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .header-subtitle {
     margin: 0.2rem 0 0;
     color: var(--light-text);
     font-size: 0.82rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
 }
+
+/* Icon-only header button — 44×44 tap target that meets WCAG minimum
+   and doesn't fight the title for horizontal space. */
+.btn.btn-icon {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+/* Company Documents card — flex row on wide screens, stacks on mobile
+   so the CTA drops beneath the copy instead of squeezing it. */
+.company-doc-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    text-decoration: none;
+    color: inherit;
+    margin-bottom: 1rem;
+}
+.company-doc-copy { min-width: 0; }
+.company-doc-copy h3 {
+    margin: 0.35rem 0 0.25rem;
+    font-size: 1rem;
+}
+.company-doc-copy p {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--light-text, #64748b);
+}
+.company-doc-kicker { color: #b45309 !important; }
+.company-doc-icon { color: #dc2626; margin-right: 0.4rem; }
+.company-doc-cta { white-space: nowrap; flex-shrink: 0; }
 
 .profile-hero-card,
 .panel-card,
@@ -943,6 +998,59 @@ defineOptions({ layout: null })
 
     .action-row .btn {
         width: 100%;
+    }
+
+    /* Smaller hero avatar on phones so the copy has room to breathe. */
+    .hero-avatar {
+        width: 64px;
+        height: 64px;
+        border-radius: 18px;
+        font-size: 1.5rem;
+    }
+
+    /* Tighten card padding on narrow screens. */
+    .profile-hero-card,
+    .panel-card {
+        padding: 0.85rem;
+    }
+
+    /* Info rows: allow the value to wrap under the label instead of
+       fighting for one line. Long emails or IDs are the usual culprit. */
+    .info-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.2rem;
+    }
+    .info-row strong {
+        word-break: break-word;
+    }
+
+    /* Company doc card: stack so the CTA is full-width beneath the copy. */
+    .company-doc-card {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .company-doc-cta {
+        width: 100%;
+        justify-content: center;
+        text-align: center;
+    }
+
+    /* Section pills should sit under the heading on mobile, not float
+       above the h3 (previously they wrapped awkwardly to the right). */
+    .section-pill {
+        align-self: flex-start;
+    }
+}
+
+/* Very narrow screens (older iPhones, small Androids in split view):
+   drop the header subtitle so the h1 + logout can breathe. */
+@media (max-width: 400px) {
+    .header-subtitle {
+        display: none;
+    }
+    .pwa-header h1 {
+        font-size: 1.1rem;
     }
 }
 
