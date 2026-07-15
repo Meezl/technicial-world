@@ -582,9 +582,9 @@
                                             <span class="details">{{ material.quantity }} x KSH {{ formatCurrency(material.unit_price) }} = KSH {{ formatCurrency(material.quantity * material.unit_price) }}</span>
                                         </div>
                                     </div>
-                                    <div v-if="selectedRFQ?.quote_materials_file_path" style="margin-top: 0.75rem;">
-                                        <a :href="`/storage/${selectedRFQ.quote_materials_file_path}`" target="_blank" style="display: inline-flex; align-items: center; gap: 0.5rem; color: var(--primary-color); text-decoration: none; font-weight: 500;">
-                                            <i class="fas fa-paperclip"></i> View Attached Materials List
+                                    <div v-if="quotationAttachmentUrls.length" style="margin-top: 0.75rem; display:flex; flex-direction:column; gap:0.35rem;">
+                                        <a v-for="(url, i) in quotationAttachmentUrls" :key="i" :href="url.href" target="_blank" style="display: inline-flex; align-items: center; gap: 0.5rem; color: var(--primary-color); text-decoration: none; font-weight: 500;">
+                                            <i class="fas fa-paperclip"></i> {{ url.label }}
                                         </a>
                                     </div>
                                 </div>
@@ -700,11 +700,19 @@
                                     </button>
                                 </div>
                                 <div class="form-group" style="margin-top: 1rem;">
-                                    <label><i class="fas fa-file-upload"></i> Upload Materials List (Optional)</label>
-                                    <input type="file" @change="e => quotationForm.materials_file = e.target.files[0]" accept=".pdf,.docx,.xlsx,.xls" class="form-control">
+                                    <label><i class="fas fa-file-upload"></i> Attach Supporting Documents (Optional)</label>
+                                    <input type="file" multiple @change="onMaterialsFilesChange" accept=".pdf,.docx,.xlsx,.xls,.jpg,.jpeg,.png" class="form-control">
                                     <small style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.25rem; display: block;">
-                                        Upload PDF, DOCX, or Excel file if materials list is too long (Max 10MB)
+                                        PDF, DOCX, XLSX, or image files — up to 10 files, 10MB each. Attach materials lists, spec sheets, drawings, etc.
                                     </small>
+                                    <ul v-if="quotationForm.materials_files && quotationForm.materials_files.length" style="list-style:none; padding:0; margin-top:0.5rem; display:flex; flex-direction:column; gap:0.25rem;">
+                                        <li v-for="(f, i) in quotationForm.materials_files" :key="i" style="display:flex; align-items:center; gap:0.5rem; padding:0.35rem 0.5rem; background:#F3F4F6; border-radius:4px; font-size:0.85rem;">
+                                            <i class="fas fa-paperclip" style="color: var(--text-muted);"></i>
+                                            <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ f.name }}</span>
+                                            <span style="color: var(--text-muted); font-size:0.8rem;">{{ Math.round(f.size / 1024) }} KB</span>
+                                            <button type="button" @click="removeMaterialsFile(i)" class="btn btn-xs btn-danger" title="Remove"><i class="fas fa-times"></i></button>
+                                        </li>
+                                    </ul>
                                 </div>
                             </div>
 
@@ -1349,6 +1357,7 @@ const quotationForm = ref({
     duration_extra_days: 0,
     notes: '',
     materials_file: null,
+    materials_files: [],
     billing_milestones: [],
 })
 
@@ -1716,6 +1725,7 @@ const resetQuotationForm = () => {
         down_payment: null,
         notes: '',
         materials_file: null,
+    materials_files: [],
         billing_milestones: [],
     }
     isRevision.value = false
@@ -1748,6 +1758,7 @@ const reviseExistingQuotation = (rfq) => {
             : null,
         notes: rfq.quote_notes || '',
         materials_file: null,
+    materials_files: [],
         billing_milestones: Array.isArray(rfq.billing_milestones)
             ? rfq.billing_milestones.map(m => ({ label: m.label, progress_pct: m.progress_pct, amount: m.amount }))
             : [],
@@ -1760,6 +1771,43 @@ const reviseExistingQuotation = (rfq) => {
 
 const addMaterial = () => { quotationForm.value.materials.push({ name: '', quantity: 1, unit_price: 0 }) }
 const removeMaterial = (index) => { if (quotationForm.value.materials.length > 1) quotationForm.value.materials.splice(index, 1) }
+
+// Multi-file quotation attachments. Appending (not replacing) so an admin
+// picking a batch, then adding one more file, keeps everything.
+const onMaterialsFilesChange = (e) => {
+    const picked = Array.from(e.target.files || [])
+    if (!picked.length) return
+    quotationForm.value.materials_files = [
+        ...(quotationForm.value.materials_files || []),
+        ...picked,
+    ].slice(0, 10) // enforce the same cap as the server validator
+    // Reset the input so re-picking the same file re-triggers change.
+    e.target.value = ''
+}
+const removeMaterialsFile = (index) => {
+    if (!quotationForm.value.materials_files) return
+    quotationForm.value.materials_files.splice(index, 1)
+}
+
+// Merge legacy single-file path with the new array so the "view attached"
+// list surfaces every document regardless of when it was uploaded.
+const quotationAttachmentUrls = computed(() => {
+    const out = []
+    const single = selectedRFQ.value?.quote_materials_file_path
+    if (single) out.push({ href: `/storage/${single}`, label: fileNameFromPath(single) || 'Attached materials list' })
+    const many = selectedRFQ.value?.quote_materials_file_paths
+    if (Array.isArray(many)) {
+        many.forEach((p, i) => {
+            if (p) out.push({ href: `/storage/${p}`, label: fileNameFromPath(p) || `Attachment ${i + 1}` })
+        })
+    }
+    return out
+})
+const fileNameFromPath = (path) => {
+    if (typeof path !== 'string') return ''
+    const parts = path.split('/')
+    return parts[parts.length - 1] || path
+}
 
 const isSubmittingQuote = ref(false)
 
@@ -1785,9 +1833,11 @@ const submitQuote = () => {
         total_amount: totalQuoteAmount.value,
         notes: quotationForm.value.notes,
         materials_file: quotationForm.value.materials_file,
+        materials_files: (quotationForm.value.materials_files || []),
         is_revision: isRevision.value,
         billing_milestones: validMilestones.length ? validMilestones : null,
     }, {
+        forceFormData: true, // ensure the file array is posted as multipart
         // Keep the modal + form state on validation errors so the admin
         // doesn't lose everything they typed if e.g. a numeric field trips.
         preserveState: true,

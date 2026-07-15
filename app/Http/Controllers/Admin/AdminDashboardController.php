@@ -2133,7 +2133,12 @@ class AdminDashboardController extends Controller
             'total_amount' => 'required|numeric|min:0',
             'notes' => 'nullable|string',
             'is_revision' => 'nullable|boolean',
+            // Legacy single-file field kept for older frontends that still
+            // send materials_file. The new frontend sends materials_files[]
+            // (array) so admins can attach multiple supporting documents.
             'materials_file' => 'nullable|file|mimes:pdf,docx,xlsx,xls|max:10240',
+            'materials_files' => 'nullable|array|max:10',
+            'materials_files.*' => 'file|mimes:pdf,docx,xlsx,xls,jpg,jpeg,png|max:10240',
             'billing_milestones' => 'nullable|array',
             'billing_milestones.*.label' => 'required_with:billing_milestones|string|max:200',
             'billing_milestones.*.progress_pct' => 'required_with:billing_milestones|numeric|min:1|max:100',
@@ -2142,12 +2147,29 @@ class AdminDashboardController extends Controller
 
         $serviceRequest = ServiceRequest::findOrFail($request->service_request_id);
 
+        // Legacy single-file path (backward compat with older clients).
         $filePath = null;
         if ($request->hasFile('materials_file')) {
             $file = $request->file('materials_file');
             $fileName = 'quote_materials_' . $serviceRequest->request_id . '_' . time() . '.' . $file->getClientOriginalExtension();
             $filePath = $file->storeAs('quotes', $fileName, 'public');
         }
+
+        // New multi-file path — appended to any existing array so a revision
+        // that only adds a document doesn't wipe the earlier ones.
+        $newFilePaths = [];
+        if ($request->hasFile('materials_files')) {
+            foreach ($request->file('materials_files') as $idx => $upload) {
+                if (!$upload) continue;
+                $ext = $upload->getClientOriginalExtension();
+                $filename = 'quote_materials_' . $serviceRequest->request_id . '_' . time() . '_' . $idx . '.' . $ext;
+                $newFilePaths[] = $upload->storeAs('quotes', $filename, 'public');
+            }
+        }
+        $existingFilePaths = (array) ($serviceRequest->quote_materials_file_paths ?? []);
+        $mergedFilePaths = !empty($newFilePaths)
+            ? array_values(array_merge($existingFilePaths, $newFilePaths))
+            : $existingFilePaths;
 
         $totalAmount = (float) $request->total_amount;
         $downPayment = $request->filled('down_payment') ? (float) $request->down_payment : null;
@@ -2217,6 +2239,7 @@ class AdminDashboardController extends Controller
                 : $serviceRequest->expected_duration_days,
             'quote_notes' => $request->notes,
             'quote_materials_file_path' => $filePath ?? $serviceRequest->quote_materials_file_path,
+            'quote_materials_file_paths' => !empty($mergedFilePaths) ? $mergedFilePaths : null,
             'billing_milestones' => $billingMilestones,
         ];
 

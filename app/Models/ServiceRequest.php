@@ -41,6 +41,7 @@ class ServiceRequest extends Model
         'commencement_at',
         'target_completion_at',
         'quote_materials_file_path',
+        'quote_materials_file_paths',
         'rejection_reason',
         'quoted_amount',
         'final_amount',
@@ -68,6 +69,7 @@ class ServiceRequest extends Model
     protected $casts = [
         'files' => 'array',
         'quote_materials' => 'array',
+        'quote_materials_file_paths' => 'array',
         'billing_milestones' => 'array',
         'quoted_amount' => 'decimal:2',
         'final_amount' => 'decimal:2',
