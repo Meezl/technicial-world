@@ -18,6 +18,7 @@ class DashboardController extends Controller
             User::ROLE_PROJECT_MANAGER => redirect()->route('pm.dashboard'),
             User::ROLE_TECHNICIAN => redirect()->route('technician.dashboard'),
             User::ROLE_CLIENT => redirect()->route('client.dashboard'),
+            User::ROLE_STOREMAN => redirect()->route('admin.tools'),
             default => redirect()->route('client.dashboard'),
         };
     }

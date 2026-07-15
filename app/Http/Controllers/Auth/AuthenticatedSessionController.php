@@ -42,6 +42,7 @@ class AuthenticatedSessionController extends Controller
             $user->role === 'project_manager' => route('pm.dashboard', absolute: false),
             $user->role === 'technician' => route('technician.dashboard', absolute: false),
             $user->role === 'client' => route('client.dashboard', absolute: false),
+            $user->role === 'storeman' => route('admin.tools', absolute: false),
             in_array($user->role, $requisitionRoles) => route('admin.requisitions.index', absolute: false),
             default => route('dashboard', absolute: false),
         };
