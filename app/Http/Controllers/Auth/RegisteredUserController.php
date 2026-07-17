@@ -37,10 +37,18 @@ class RegisteredUserController extends Controller
             'password' => ['required', 'confirmed', Rules\Password::defaults()],
         ]);
 
+        // Explicit role assignment. The users.role column has a DB-level
+        // default of 'client', but if that default ever fails to apply
+        // (schema drift, driver quirk, etc.) the row lands with role=NULL
+        // and every downstream role check returns false — producing the
+        // '403 unauthorized - insufficient role permissions' seen on
+        // registration. Setting it here guarantees the correct role
+        // regardless of DB defaults.
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
             'password' => Hash::make($request->password),
+            'role' => User::ROLE_CLIENT,
         ]);
 
         event(new Registered($user));
@@ -49,6 +57,14 @@ class RegisteredUserController extends Controller
         $user->notify(new WelcomeNotification());
 
         Auth::login($user);
+
+        // Wipe any stale 'intended' URL from before registration. If the
+        // visitor had tried to hit a role-restricted route (say an admin
+        // link shared in WhatsApp) they were redirected to /login and the
+        // target got cached in session; without clearing it, the next
+        // redirect after registration would bounce them straight into the
+        // 403 wall from RoleMiddleware.
+        $request->session()->forget('url.intended');
 
         return redirect(route('verification.notice'));
     }
