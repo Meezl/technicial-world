@@ -70,6 +70,16 @@ class ProgressReport extends Model
     }
 
     /**
+     * Append-only edit history for notes fields. Populated by
+     * ProgressService::validate whenever a save changes client_visible_notes
+     * or validation_notes. Ops-only — never exposed to the client portal.
+     */
+    public function noteVersions(): HasMany
+    {
+        return $this->hasMany(ProgressReportNoteVersion::class)->orderBy('created_at', 'asc');
+    }
+
+    /**
      * Get the effective progress percentage (validated takes precedence).
      */
     public function getEffectivePercentAttribute(): int

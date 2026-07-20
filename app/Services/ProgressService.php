@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Mail\ProgressApproved;
 use App\Models\PaymentRequest;
 use App\Models\ProgressReport;
+use App\Models\ProgressReportNoteVersion;
 use App\Models\ProgressPhoto;
 use App\Models\ServiceRequest;
 use App\Models\AuditLog;
@@ -127,13 +128,33 @@ class ProgressService
             $clientNotes = array_key_exists('client_visible_notes', $data)
                 ? $data['client_visible_notes']
                 : ($report->client_visible_notes ?? $report->notes);
+            $newValidationNotes = $data['validation_notes'] ?? null;
+
+            // Snapshot BEFORE overwriting so ops can answer 'what did the
+            // client actually see' when a client questions the notes later.
+            // Only records a version when the value actually changed —
+            // no-op saves don't clutter the history.
+            $this->recordNoteVersionIfChanged(
+                $report,
+                $pmId,
+                'client_visible_notes',
+                $report->client_visible_notes,
+                $clientNotes
+            );
+            $this->recordNoteVersionIfChanged(
+                $report,
+                $pmId,
+                'validation_notes',
+                $report->validation_notes,
+                $newValidationNotes
+            );
 
             $report->update([
                 'is_validated' => true,
                 'validated_by' => $pmId,
                 'validated_at' => now(),
                 'validated_percent' => $data['validated_percent'] ?? $report->percent_complete,
-                'validation_notes' => $data['validation_notes'] ?? null,
+                'validation_notes' => $newValidationNotes,
                 'client_visible_notes' => $clientNotes,
             ]);
 
@@ -309,5 +330,33 @@ class ProgressService
         if ($changed) {
             $serviceRequest->update(['billing_milestones' => $milestones]);
         }
+    }
+
+    /**
+     * Append a versions row for a notes-field change so ops can trace
+     * every version an admin has posted against a progress report.
+     * No-op when the value hasn't actually changed — the history stays
+     * clean and only records intentional edits.
+     */
+    private function recordNoteVersionIfChanged(
+        ProgressReport $report,
+        int $editedBy,
+        string $field,
+        ?string $previous,
+        ?string $next,
+    ): void {
+        // Treat null and empty string as equivalent — admins hitting
+        // Save without touching the field shouldn't create a version row.
+        if ((string) $previous === (string) $next) {
+            return;
+        }
+
+        ProgressReportNoteVersion::create([
+            'progress_report_id' => $report->id,
+            'edited_by'          => $editedBy,
+            'field_name'         => $field,
+            'previous_text'      => $previous,
+            'new_text'           => $next,
+        ]);
     }
 }

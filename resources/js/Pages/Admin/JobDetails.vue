@@ -561,6 +561,40 @@
                                 <p v-if="report.validation_notes" class="admin-report-validation-note">
                                     Validation note: {{ report.validation_notes }}
                                 </p>
+                                <p v-if="report.client_visible_notes" class="admin-report-client-notes">
+                                    <i class="fas fa-eye"></i>
+                                    <strong>What the client sees:</strong>
+                                    {{ report.client_visible_notes }}
+                                </p>
+
+                                <!-- Ops-only edit history for this report's notes.
+                                     Populated whenever validate re-saves with a
+                                     different client_visible_notes / validation_notes.
+                                     Never rendered on the client portal. -->
+                                <details v-if="report.note_versions && report.note_versions.length" class="notes-history-panel">
+                                    <summary>
+                                        <i class="fas fa-clock-rotate-left"></i>
+                                        Notes edit history ({{ report.note_versions.length }})
+                                    </summary>
+                                    <ol class="notes-history-list">
+                                        <li v-for="version in report.note_versions" :key="version.id" class="notes-history-item">
+                                            <div class="notes-history-meta">
+                                                <strong>{{ formatNoteFieldName(version.field_name) }}</strong>
+                                                <span>edited by {{ version.editor?.name || 'Unknown' }} · {{ formatDate(version.created_at) }}</span>
+                                            </div>
+                                            <div class="notes-history-diff">
+                                                <div class="notes-history-cell before">
+                                                    <span>Before</span>
+                                                    <p>{{ version.previous_text || '(empty)' }}</p>
+                                                </div>
+                                                <div class="notes-history-cell after">
+                                                    <span>After</span>
+                                                    <p>{{ version.new_text || '(empty)' }}</p>
+                                                </div>
+                                            </div>
+                                        </li>
+                                    </ol>
+                                </details>
 
                                 <div v-if="report.photos?.length" class="admin-photo-grid">
                                     <div
@@ -2594,6 +2628,17 @@ const formatDate = (dateString) => {
     })
 }
 
+// Human labels for the note-versions history panel. Stored server-side as
+// raw column names; rendered here so ops don't see 'client_visible_notes'.
+const formatNoteFieldName = (field) => {
+    switch (field) {
+        case 'client_visible_notes': return 'Client-visible notes'
+        case 'validation_notes': return 'Internal validation note'
+        case 'notes': return 'Technician notes'
+        default: return field
+    }
+}
+
 // For timestamps where a real time-of-day matters (progress submissions,
 // validation events). Falls back gracefully if no value.
 const formatDateTime = (dateString) => {
@@ -3355,6 +3400,114 @@ defineOptions({
 .admin-report-validation-note {
     color: #0f6c8f;
     font-weight: 600;
+}
+
+.admin-report-client-notes {
+    margin-top: 0.85rem;
+    padding: 0.7rem 0.9rem;
+    background: #ecfdf5;
+    border-left: 3px solid #10b981;
+    border-radius: 6px;
+    color: #065f46;
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+.admin-report-client-notes i { margin-right: 0.35rem; color: #10b981; }
+.admin-report-client-notes strong { margin-right: 0.25rem; }
+
+/* Ops-only edit history for a report's notes. Collapsed by default so
+   it doesn't clutter the report card; expands to show each version's
+   before/after with editor + timestamp. Never shown to clients. */
+.notes-history-panel {
+    margin-top: 0.85rem;
+    padding: 0.6rem 0.8rem;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 0.85rem;
+}
+.notes-history-panel > summary {
+    cursor: pointer;
+    color: #475569;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    list-style: none;
+}
+.notes-history-panel > summary::-webkit-details-marker { display: none; }
+.notes-history-panel > summary::before {
+    content: '▶';
+    display: inline-block;
+    font-size: 0.7rem;
+    transition: transform 0.2s ease;
+}
+.notes-history-panel[open] > summary::before { transform: rotate(90deg); }
+
+.notes-history-list {
+    list-style: none;
+    padding: 0;
+    margin: 0.75rem 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+}
+.notes-history-item {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 0.6rem 0.7rem;
+}
+.notes-history-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+    color: #64748b;
+    font-size: 0.8rem;
+}
+.notes-history-meta strong { color: #0f172a; font-weight: 700; }
+.notes-history-diff {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+}
+.notes-history-cell {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    padding: 0.45rem 0.55rem;
+}
+.notes-history-cell.before {
+    background: #fef2f2;
+    border-color: #fecaca;
+}
+.notes-history-cell.after {
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+}
+.notes-history-cell > span {
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #64748b;
+    margin-bottom: 0.25rem;
+}
+.notes-history-cell.before > span { color: #b91c1c; }
+.notes-history-cell.after > span { color: #15803d; }
+.notes-history-cell > p {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #0f172a;
+    line-height: 1.4;
+}
+@media (max-width: 640px) {
+    .notes-history-diff { grid-template-columns: 1fr; }
 }
 
 .admin-photo-grid {

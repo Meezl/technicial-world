@@ -288,6 +288,8 @@ class AdminDashboardController extends Controller
             'progressReports.validator',
             'progressReports.subTask',
             'progressReports.photos',
+            // Ops-only edit history for each report's notes fields.
+            'progressReports.noteVersions.editor:id,name',
         ]);
 
         $technicians = Technician::with('user')
