@@ -8,6 +8,7 @@ use App\Models\Quotation;
 use App\Models\QuotationLineItem;
 use App\Models\Technician;
 use App\Models\TechnicianPaymentSheet;
+use App\Models\TechnicianPaymentEntry;
 use App\Models\JobAssignment;
 use App\Models\CompensationAmendment;
 use App\Models\ProgressReport;
@@ -430,7 +431,14 @@ class PMDashboardController extends Controller
      */
     public function paymentSheets(Request $request)
     {
-        $sheets = TechnicianPaymentSheet::with(['creator', 'entries.technician.user', 'entries.serviceRequest'])
+        $sheets = TechnicianPaymentSheet::with([
+            'creator',
+            'entries.technician.user',
+            'entries.serviceRequest',
+            // Needed so the UI can show 'Paid by X on Y' next to each
+            // reconciled entry (Item 3c).
+            'entries.paidBy:id,name',
+        ])
             ->orderBy('created_at', 'desc')
             ->paginate(10);
 
@@ -450,16 +458,69 @@ class PMDashboardController extends Controller
             'notes' => 'nullable|string',
         ]);
 
-        $sheet = $this->paymentService->createSheet(
-            Carbon::parse($request->period_start),
-            Carbon::parse($request->period_end),
-            auth()->id(),
-            $request->notes
-        );
+        try {
+            $sheet = $this->paymentService->createSheet(
+                Carbon::parse($request->period_start),
+                Carbon::parse($request->period_end),
+                auth()->id(),
+                $request->notes
+            );
+        } catch (\RuntimeException $e) {
+            // Overlap-with-existing-draft guard (Item 3b) — surface as a
+            // validation error rather than a 500 so ops see the friendly
+            // message right on the form.
+            return redirect()->back()
+                ->withErrors(['period_start' => $e->getMessage()])
+                ->withInput();
+        }
 
         $this->paymentService->computeEntries($sheet);
 
         return redirect()->back()->with('success', 'Payment sheet created with computed entries.');
+    }
+
+    /**
+     * Item 3c — Mark a specific entry on a finalized sheet as actually paid,
+     * capturing the amount, date, method, and reference. This feeds the
+     * reconciliation pool so future auto-computes don't schedule the same
+     * amount twice.
+     */
+    public function markEntryPaid(Request $request, TechnicianPaymentEntry $entry)
+    {
+        $request->validate([
+            'paid_amount' => 'required|numeric|min:0',
+            'paid_at' => 'nullable|date',
+            'paid_method' => 'nullable|string|max:40',
+            'paid_reference' => 'nullable|string|max:100',
+            'paid_notes' => 'nullable|string|max:1000',
+        ]);
+
+        if ($entry->paymentSheet->status !== TechnicianPaymentSheet::STATUS_FINALIZED) {
+            return redirect()->back()->withErrors([
+                'paid_amount' => 'Finalize the sheet before marking entries paid.',
+            ]);
+        }
+
+        $this->paymentService->markEntryPaid($entry, $request->only([
+            'paid_amount', 'paid_at', 'paid_method', 'paid_reference', 'paid_notes',
+        ]), auth()->id());
+
+        return redirect()->back()->with('success', 'Entry marked as paid.');
+    }
+
+    /**
+     * Item 3c — Revert a mark-paid. Ops occasionally mis-click; the audit
+     * log captures who reversed and why so we keep a clean trail.
+     */
+    public function unmarkEntryPaid(Request $request, TechnicianPaymentEntry $entry)
+    {
+        $request->validate([
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        $this->paymentService->unmarkEntryPaid($entry, auth()->id(), $request->input('reason'));
+
+        return redirect()->back()->with('success', 'Payment mark reversed.');
     }
 
     /**

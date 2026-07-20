@@ -17,6 +17,12 @@ class TechnicianPaymentEntry extends Model
         'previous_cumulative_paid',
         'current_period_payable',
         'status',
+        'paid_amount',
+        'paid_at',
+        'paid_method',
+        'paid_reference',
+        'paid_by',
+        'paid_notes',
     ];
 
     protected $casts = [
@@ -25,6 +31,8 @@ class TechnicianPaymentEntry extends Model
         'previous_cumulative_paid' => 'decimal:2',
         'current_period_payable' => 'decimal:2',
         'cumulative_progress_pct' => 'integer',
+        'paid_amount' => 'decimal:2',
+        'paid_at' => 'datetime',
     ];
 
     const STATUS_PENDING = 'pending';
@@ -44,5 +52,15 @@ class TechnicianPaymentEntry extends Model
     public function serviceRequest(): BelongsTo
     {
         return $this->belongsTo(ServiceRequest::class);
+    }
+
+    public function paidBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'paid_by');
+    }
+
+    public function isPaid(): bool
+    {
+        return $this->status === self::STATUS_PAID;
     }
 }

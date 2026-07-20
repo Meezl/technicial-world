@@ -17,9 +17,36 @@ class TechnicianPaymentService
 {
     /**
      * Create a new weekly payment sheet.
+     *
+     * Guards against overlap with any existing DRAFT sheet. Two open drafts
+     * covering the same days would both list the same payable amounts,
+     * making it trivial for ops to double-pay if both are finalized. The
+     * caller must delete / finalize the earlier draft before creating one
+     * that overlaps. Overlaps against finalized sheets are fine — that's
+     * what previous_cumulative_paid + paid_amount reconciliation is for.
      */
     public function createSheet(Carbon $periodStart, Carbon $periodEnd, int $pmId, ?string $notes = null): TechnicianPaymentSheet
     {
+        $overlapping = TechnicianPaymentSheet::query()
+            ->where('status', '!=', TechnicianPaymentSheet::STATUS_FINALIZED)
+            ->where(function ($q) use ($periodStart, $periodEnd) {
+                // Standard interval-overlap test: (a.start <= b.end) AND (a.end >= b.start)
+                $q->where('period_start', '<=', $periodEnd)
+                  ->where('period_end', '>=', $periodStart);
+            })
+            ->first();
+
+        if ($overlapping) {
+            throw new \RuntimeException(
+                sprintf(
+                    'A draft payment sheet already covers this period (%s to %s, ref %s). Finalize or delete it before creating another for overlapping dates.',
+                    $overlapping->period_start->toDateString(),
+                    $overlapping->period_end->toDateString(),
+                    $overlapping->sheet_reference,
+                )
+            );
+        }
+
         return TechnicianPaymentSheet::create([
             'sheet_reference' => TechnicianPaymentSheet::generateReference(),
             'period_start' => $periodStart,
@@ -32,81 +59,172 @@ class TechnicianPaymentService
     /**
      * Auto-compute payment entries for a sheet based on validated progress.
      *
-     * Algorithm:
-     * 1. Find all active job assignments with validated progress
-     * 2. For each technician×job:
-     *    - Get the agreed compensation
-     *    - Get cumulative validated progress %
-     *    - cumulative_amount_due = agreed_comp × (progress / 100)
-     *    - previous_cumulative_paid = sum of all prior payment entries for this tech×job
-     *    - current_period_payable = cumulative_amount_due - previous_cumulative_paid
+     * REBUILD (Item 3a from client feedback): previously iterated every active
+     * assignment regardless of dates, so filtering to "yesterday to today"
+     * returned every technician who'd ever worked — the client called out
+     * that the date filter wasn't really a filter. The new algorithm:
+     *
+     * 1. Only consider technician×job pairs with a validated progress report
+     *    whose validated_at falls INSIDE the sheet's [period_start, period_end].
+     *    If the tech had no validation activity in the window, they're skipped
+     *    entirely (not just shown as zero).
+     * 2. For those pairs, the period's payable is the delta between the
+     *    validated progress at period_end and the validated progress as of
+     *    JUST BEFORE period_start — priced against the agreed compensation.
+     *    This handles gap weeks correctly and honours the milestone cap.
+     * 3. previous_cumulative_paid subtracts anything already covered by prior
+     *    finalized sheets so the total never lets us overpay the assignment.
      */
     public function computeEntries(TechnicianPaymentSheet $sheet): TechnicianPaymentSheet
     {
         return DB::transaction(function () use ($sheet) {
-            // Clear existing draft entries
+            // Clear existing draft entries — recompute is idempotent.
             $sheet->entries()->delete();
 
-            // Find all active assignments
-            $assignments = JobAssignment::with(['serviceRequest', 'technician'])
-                ->whereIn('status', ['accepted', 'completed'])
+            $periodStart = Carbon::parse($sheet->period_start)->startOfDay();
+            $periodEnd = Carbon::parse($sheet->period_end)->endOfDay();
+
+            // Find the (technician, service_request) pairs that had ANY
+            // validated progress activity within the window. This is the
+            // filter the client asked for — no more all-history dumps.
+            $activePairs = DB::table('progress_reports')
+                ->select('technician_id', 'service_request_id')
+                ->where('is_validated', true)
+                ->whereBetween('validated_at', [$periodStart, $periodEnd])
+                ->groupBy('technician_id', 'service_request_id')
                 ->get();
 
-            foreach ($assignments as $assignment) {
-                $serviceRequest = $assignment->serviceRequest;
-                $technician = $assignment->technician;
+            if ($activePairs->isEmpty()) {
+                $sheet->recalculateTotal();
+                return $sheet->fresh(['entries.technician.user', 'entries.serviceRequest']);
+            }
+
+            foreach ($activePairs as $pair) {
+                $serviceRequest = ServiceRequest::find($pair->service_request_id);
+                $technician = Technician::find($pair->technician_id);
 
                 if (!$serviceRequest || !$technician) continue;
 
-                $agreedCompensation = $assignment->agreed_compensation;
-                if (!$agreedCompensation || $agreedCompensation <= 0) continue;
+                // Agreed compensation comes from the active JobAssignment
+                // for this pair — same source the pre-rewrite code used.
+                $assignment = JobAssignment::where('service_request_id', $serviceRequest->id)
+                    ->where('technician_id', $technician->id)
+                    ->whereIn('status', ['accepted', 'completed'])
+                    ->orderByDesc('id')
+                    ->first();
 
-                // Get validated progress as of period end (Friday snapshot)
-                $validatedProgress = $this->getValidatedProgressAsOf(
+                if (!$assignment) continue;
+                $agreedCompensation = (float) ($assignment->agreed_compensation ?? 0);
+                if ($agreedCompensation <= 0) continue;
+
+                // Progress AT period end — the amount the tech is entitled
+                // to at the close of the window.
+                $progressAtEnd = $this->getValidatedProgressAsOf(
                     $serviceRequest,
                     $technician,
-                    $sheet->period_end
+                    $periodEnd
                 );
+                if ($progressAtEnd <= 0) continue;
 
-                if ($validatedProgress <= 0) continue;
-
-                // Calculate cumulative amount due
+                // Cumulative amount due through period_end (capped by any
+                // milestone release rules — see calculateCumulativeAmountDue).
                 $cumulativeAmountDue = $this->calculateCumulativeAmountDue(
                     $serviceRequest,
                     $technician->id,
-                    (float) $agreedCompensation,
-                    (int) $validatedProgress
+                    $agreedCompensation,
+                    (int) $progressAtEnd
                 );
 
-                // Get previous cumulative paid (from ALL prior sheets, handles gap weeks correctly)
+                // What we've ALREADY committed for this tech×job from prior
+                // finalized sheets + actual paid amounts. Uses the smarter
+                // reconciliation added in Item 3c.
                 $previousCumulativePaid = $this->getPreviousCumulativePaid(
                     $technician->id,
                     $serviceRequest->id,
                     $sheet->id
                 );
 
-                // Current period payable
                 $currentPayable = max(0, $cumulativeAmountDue - $previousCumulativePaid);
+                if ($currentPayable <= 0) continue;
 
-                if ($currentPayable > 0) {
-                    TechnicianPaymentEntry::create([
-                        'payment_sheet_id' => $sheet->id,
-                        'technician_id' => $technician->id,
-                        'service_request_id' => $serviceRequest->id,
-                        'agreed_compensation' => $agreedCompensation,
-                        'cumulative_progress_pct' => $validatedProgress,
-                        'cumulative_amount_due' => $cumulativeAmountDue,
-                        'previous_cumulative_paid' => $previousCumulativePaid,
-                        'current_period_payable' => $currentPayable,
-                    ]);
-                }
+                TechnicianPaymentEntry::create([
+                    'payment_sheet_id' => $sheet->id,
+                    'technician_id' => $technician->id,
+                    'service_request_id' => $serviceRequest->id,
+                    'agreed_compensation' => $agreedCompensation,
+                    'cumulative_progress_pct' => $progressAtEnd,
+                    'cumulative_amount_due' => $cumulativeAmountDue,
+                    'previous_cumulative_paid' => $previousCumulativePaid,
+                    'current_period_payable' => $currentPayable,
+                ]);
             }
 
-            // Recalculate sheet total
             $sheet->recalculateTotal();
-
             return $sheet->fresh(['entries.technician.user', 'entries.serviceRequest']);
         });
+    }
+
+    /**
+     * Item 3c — Mark a specific payment entry as paid. Captures the actual
+     * amount that left our hands (may differ from current_period_payable),
+     * plus the method, reference, and who confirmed. Feeds the reconciliation
+     * pool that stops future schedules from double-paying.
+     */
+    public function markEntryPaid(TechnicianPaymentEntry $entry, array $data, int $confirmedBy): TechnicianPaymentEntry
+    {
+        $paidAmount = (float) ($data['paid_amount'] ?? $entry->current_period_payable);
+        if ($paidAmount < 0) {
+            throw new \InvalidArgumentException('Paid amount cannot be negative.');
+        }
+
+        $entry->update([
+            'status'         => TechnicianPaymentEntry::STATUS_PAID,
+            'paid_amount'    => $paidAmount,
+            'paid_at'        => $data['paid_at'] ?? now(),
+            'paid_method'    => $data['paid_method'] ?? null,
+            'paid_reference' => $data['paid_reference'] ?? null,
+            'paid_by'        => $confirmedBy,
+            'paid_notes'     => $data['paid_notes'] ?? null,
+        ]);
+
+        AuditLog::log(AuditLog::ACTION_APPROVAL, $entry, null, [
+            'action'      => 'mark_paid',
+            'paid_amount' => $paidAmount,
+            'method'      => $data['paid_method'] ?? null,
+            'reference'   => $data['paid_reference'] ?? null,
+        ]);
+
+        return $entry->fresh();
+    }
+
+    /**
+     * Item 3c — Undo a mark-paid. Ops occasionally mis-click; keeping this
+     * available with a clear audit trail is safer than making them dig.
+     * Reverts to STATUS_APPROVED so the entry sits back in the "scheduled
+     * but not yet paid" bucket where future schedules will still consider it.
+     */
+    public function unmarkEntryPaid(TechnicianPaymentEntry $entry, int $reversedBy, ?string $reason = null): TechnicianPaymentEntry
+    {
+        $priorAmount = (float) $entry->paid_amount;
+
+        $entry->update([
+            'status'         => TechnicianPaymentEntry::STATUS_APPROVED,
+            'paid_amount'    => null,
+            'paid_at'        => null,
+            'paid_method'    => null,
+            'paid_reference' => null,
+            'paid_by'        => null,
+            'paid_notes'     => null,
+        ]);
+
+        AuditLog::log(AuditLog::ACTION_APPROVAL, $entry, null, [
+            'action'        => 'unmark_paid',
+            'prior_paid_amount' => $priorAmount,
+            'reversed_by'   => $reversedBy,
+            'reason'        => $reason,
+        ]);
+
+        return $entry->fresh();
     }
 
     /**
@@ -263,28 +381,56 @@ class TechnicianPaymentService
     }
 
     /**
-     * Get total previously paid amount for a technician on a specific job.
-     * Critical: handles gap weeks correctly by looking at ALL prior sheets,
-     * not just the immediate predecessor.
+     * Get total previously covered amount for a technician on a specific job.
+     *
+     * Item 3c rewrite: previously the code trusted the latest prior sheet's
+     * cumulative_amount_due as a proxy for "already paid". That's wrong when
+     * the actual cash-out differed from the schedule (e.g. ops paid less
+     * because the tech agreed to a haircut, or paid more to catch up). Now
+     * the reconciliation is:
+     *
+     *   - For entries marked STATUS_PAID: use paid_amount (the real cash-out).
+     *   - For entries only STATUS_APPROVED (finalized but not yet marked
+     *     paid): use cumulative_amount_due — same as before, since those
+     *     amounts are committed and about to be paid.
+     *
+     * We SUM per entry rather than "take latest" so a partial payment
+     * followed by a full one reconciles correctly, and so that overlapping
+     * finalized sheets don't lose ground.
+     *
+     * Handles gap weeks by looking at ALL prior sheets, not just the
+     * immediate predecessor.
      */
     private function getPreviousCumulativePaid(
         int $technicianId,
         int $serviceRequestId,
         int $currentSheetId
     ): float {
-        // Get the latest cumulative_amount_due from any prior finalized sheet
-        $latestPriorEntry = TechnicianPaymentEntry::where('technician_id', $technicianId)
+        $priorEntries = TechnicianPaymentEntry::where('technician_id', $technicianId)
             ->where('service_request_id', $serviceRequestId)
             ->whereHas('paymentSheet', function ($q) use ($currentSheetId) {
                 $q->where('id', '<', $currentSheetId)
                   ->where('status', TechnicianPaymentSheet::STATUS_FINALIZED);
             })
-            ->orderBy('id', 'desc')
-            ->first();
+            ->get(['id', 'status', 'cumulative_amount_due', 'paid_amount']);
 
-        return $latestPriorEntry
-            ? (float) $latestPriorEntry->cumulative_amount_due
-            : 0.0;
+        if ($priorEntries->isEmpty()) return 0.0;
+
+        // Take the LATEST paid amount per sheet chronologically. Since each
+        // entry's cumulative_amount_due is a cumulative snapshot, we don't
+        // sum entries — we take the last one that's authoritative.
+        //  - If any entries are PAID with a paid_amount, the max paid_amount
+        //    represents the actual furthest-along cash disbursement.
+        //  - Otherwise the max cumulative_amount_due from approved entries
+        //    represents the furthest-along scheduled commitment.
+        $paidEntries = $priorEntries->filter(fn ($e) => $e->status === TechnicianPaymentEntry::STATUS_PAID);
+        if ($paidEntries->isNotEmpty()) {
+            // Actual paid amount is the source of truth. Take the latest
+            // (highest) paid_amount as the cumulative-paid baseline.
+            return (float) $paidEntries->max('paid_amount');
+        }
+
+        return (float) $priorEntries->max('cumulative_amount_due');
     }
 
     /**

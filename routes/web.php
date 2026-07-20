@@ -162,6 +162,9 @@ Route::middleware(['auth', 'role:project_manager'])->prefix('pm')->group(functio
     Route::post('/payment-sheets', [PMDashboardController::class, 'createPaymentSheet'])->name('pm.payment-sheets.create');
     Route::post('/payment-sheets/{sheet}/finalize', [PMDashboardController::class, 'finalizePaymentSheet'])->name('pm.payment-sheets.finalize');
     Route::get('/payment-sheets/{sheet}/download', [PMDashboardController::class, 'downloadPaymentSheet'])->name('pm.payment-sheets.download');
+    // Item 3c — per-row mark-paid / unmark-paid reconciliation on finalized sheets.
+    Route::post('/payment-entries/{entry}/mark-paid', [PMDashboardController::class, 'markEntryPaid'])->name('pm.payment-entries.mark-paid');
+    Route::post('/payment-entries/{entry}/unmark-paid', [PMDashboardController::class, 'unmarkEntryPaid'])->name('pm.payment-entries.unmark-paid');
 
     // Compensation Amendments
     Route::post('/jobs/{serviceRequest}/compensation-amendment', [PMDashboardController::class, 'requestCompensationAmendment'])->name('pm.compensation.request');
