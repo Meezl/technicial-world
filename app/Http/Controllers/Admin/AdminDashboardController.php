@@ -2056,6 +2056,10 @@ class AdminDashboardController extends Controller
             // show "Already Billed" / remaining balance and the prior
             // payment history without an extra round-trip.
             'paymentRequests:id,service_request_id,payment_request_id,amount,percentage,status,payment_method,paid_at,created_at',
+            // Needed for the per-row "action reasons" chip on the RFQ list
+            // (see scopeNeedsAdminAction on ServiceRequest for the rules).
+            'progressReports:id,service_request_id,is_validated',
+            'compensationAmendments:id,service_request_id,status',
         ]);
 
         // Search filter
@@ -2098,6 +2102,15 @@ class AdminDashboardController extends Controller
             }
         }
 
+        // "Needs Action" toggle — narrows to REQs waiting on ops to do
+        // something (see ServiceRequest::scopeNeedsAdminAction for the
+        // exact rules). Client asked for a way to spot these without
+        // scrolling every row as the list grows.
+        $needsAction = $request->boolean('needs_action');
+        if ($needsAction) {
+            $query->needsAdminAction();
+        }
+
         // Sort order
         $sortOrder = $request->input('sort', 'newest');
         $query->orderBy('created_at', $sortOrder === 'newest' ? 'desc' : 'asc');
@@ -2115,6 +2128,9 @@ class AdminDashboardController extends Controller
             'rejected' => ServiceRequest::where('rfq_status', 'rejected')->count(),
             'total' => ServiceRequest::count(),
             'totalValue' => ServiceRequest::where('rfq_status', 'approved')->sum('quote_amount'),
+            // Feeds the count badge on the "Needs Action" filter pill so
+            // admins can see the queue depth without toggling the filter.
+            'needsAction' => ServiceRequest::needsAdminAction()->count(),
         ];
 
         return Inertia::render('Admin/RFQ', [
@@ -2126,6 +2142,7 @@ class AdminDashboardController extends Controller
                 'origin' => $request->input('origin', 'all'),
                 'sort' => $sortOrder,
                 'per_page' => $perPage,
+                'needs_action' => $needsAction,
             ],
         ]);
     }

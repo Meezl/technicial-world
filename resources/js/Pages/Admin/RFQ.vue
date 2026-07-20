@@ -129,6 +129,20 @@
                     </div>
 
                     <div class="toolbar-grid">
+                        <!-- Needs-Action toggle: single-click way to jump to the
+                             REQs waiting on ops instead of scrolling every row. -->
+                        <button
+                            type="button"
+                            class="needs-action-pill"
+                            :class="{ 'needs-action-pill-on': localNeedsAction }"
+                            @click="toggleNeedsAction"
+                            :title="localNeedsAction ? 'Showing only REQs that need action — click to show all' : 'Show only REQs that need action'"
+                        >
+                            <i class="fas fa-bell"></i>
+                            <span>Needs Action</span>
+                            <span v-if="stats?.needsAction" class="needs-action-count">{{ stats.needsAction }}</span>
+                        </button>
+
                         <label class="search-shell toolbar-field toolbar-field-wide">
                             <i class="fas fa-search"></i>
                             <input
@@ -258,6 +272,14 @@
                                         <span :class="['status-badge', rfq.rfq_status || 'pending']">
                                             {{ getStatusLabel(rfq.rfq_status || 'pending') }}
                                         </span>
+                                        <!-- Per-row action reasons — small amber chips that say WHY
+                                             this REQ needs attention. Server-computed from the same
+                                             rules as the filter pill (ServiceRequest::action_reasons). -->
+                                        <div v-if="rfq.action_reasons && rfq.action_reasons.length" class="row-action-reasons">
+                                            <span v-for="(reason, i) in rfq.action_reasons" :key="i" class="row-action-chip">
+                                                <i class="fas fa-circle-exclamation"></i> {{ reason }}
+                                            </span>
+                                        </div>
                                     </td>
                                     <td>
                                         <span v-if="rfq.quote_amount" class="quote-amount-text">
@@ -1324,6 +1346,7 @@ const localStatus = ref(props.filters.status || 'all')
 const localOrigin = ref(props.filters.origin || 'all')
 const localSort = ref(props.filters.sort || 'newest')
 const localPerPage = ref(props.filters.per_page || 15)
+const localNeedsAction = ref(Boolean(props.filters.needs_action))
 
 // Modal state
 const showViewModal = ref(false)
@@ -1463,14 +1486,18 @@ const downPaymentLocked = computed(() => {
 })
 
 // --- Server-side pagination / filtering ---
+const buildFilterQuery = (extra = {}) => ({
+    search: localSearch.value || undefined,
+    status: localStatus.value !== 'all' ? localStatus.value : undefined,
+    origin: localOrigin.value !== 'all' ? localOrigin.value : undefined,
+    sort: localSort.value !== 'newest' ? localSort.value : undefined,
+    per_page: localPerPage.value !== 15 ? localPerPage.value : undefined,
+    needs_action: localNeedsAction.value ? 1 : undefined,
+    ...extra,
+})
+
 const applyFilters = () => {
-    router.get('/admin/rfq', {
-        search: localSearch.value || undefined,
-        status: localStatus.value !== 'all' ? localStatus.value : undefined,
-        origin: localOrigin.value !== 'all' ? localOrigin.value : undefined,
-        sort: localSort.value !== 'newest' ? localSort.value : undefined,
-        per_page: localPerPage.value !== 15 ? localPerPage.value : undefined,
-    }, {
+    router.get('/admin/rfq', buildFilterQuery(), {
         preserveState: true,
         preserveScroll: true,
         replace: true,
@@ -1479,18 +1506,16 @@ const applyFilters = () => {
 
 const goToPage = (page) => {
     if (page < 1 || page > props.rfqs.last_page) return
-    router.get('/admin/rfq', {
-        page,
-        search: localSearch.value || undefined,
-        status: localStatus.value !== 'all' ? localStatus.value : undefined,
-        origin: localOrigin.value !== 'all' ? localOrigin.value : undefined,
-        sort: localSort.value !== 'newest' ? localSort.value : undefined,
-        per_page: localPerPage.value !== 15 ? localPerPage.value : undefined,
-    }, {
+    router.get('/admin/rfq', buildFilterQuery({ page }), {
         preserveState: true,
         preserveScroll: true,
         replace: true,
     })
+}
+
+const toggleNeedsAction = () => {
+    localNeedsAction.value = !localNeedsAction.value
+    applyFilters()
 }
 
 const clearFilters = () => {
@@ -1499,6 +1524,7 @@ const clearFilters = () => {
     localOrigin.value = 'all'
     localSort.value = 'newest'
     localPerPage.value = 15
+    localNeedsAction.value = false
     router.get('/admin/rfq', {}, { preserveState: true, preserveScroll: true, replace: true })
 }
 
@@ -2045,7 +2071,19 @@ defineOptions({ layout: null })
 .stat-icon.value { background: #9333EA; }
 
 .rfq-toolbar-section { margin-bottom: 1.5rem; }
-.toolbar-grid { grid-template-columns: 2fr 1fr 1fr 0.8fr; margin-top: 1rem; }
+.toolbar-grid {
+    /* Was a fixed 4-column grid; switched to flex-wrap so the new Needs
+       Action pill and any future filters flow naturally onto the next line
+       on narrow viewports instead of breaking the row. */
+    display: flex !important;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+.toolbar-grid > .toolbar-field { flex: 1 1 180px; min-width: 180px; }
+.toolbar-grid > .toolbar-field-wide { flex: 2 1 260px; min-width: 260px; }
+.toolbar-grid > .needs-action-pill { flex: 0 0 auto; }
 .toolbar-field { display: flex; flex-direction: column; gap: 0.45rem; font-weight: 700; color: #334155; }
 .search-shell { display: inline-flex; align-items: center; gap: 0.65rem; padding: 0.82rem 0.95rem; border-radius: 14px; border: 1px solid #d7dee7; background: #f8fafc; }
 .search-shell input, .status-filter { width: 100%; box-sizing: border-box; padding: 0.82rem 0.95rem; border: 1px solid #d7dee7; border-radius: 14px; background: #f8fafc; color: #0f172a; font: inherit; }
@@ -2054,6 +2092,73 @@ defineOptions({ layout: null })
 .filter-chip-row { margin-top: 1rem; }
 .filter-chip { background: #e0f2fe; color: #0f6c8f; }
 .clear-chip-btn { border: none; background: transparent; color: #0f6c8f; font-size: 0.82rem; font-weight: 700; cursor: pointer; }
+
+/* Needs-Action pill — sits inline with the search + status filters and
+   toggles the server-side needs_action=1 filter on/off. Amber when off
+   (attention-worthy but calm), solid red when the filter is active so
+   the admin sees they're viewing a subset. */
+.needs-action-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.82rem 1rem;
+    background: #fef3c7;
+    border: 1px solid #fbbf24;
+    color: #92400e;
+    border-radius: 14px;
+    font-weight: 700;
+    font-size: 0.88rem;
+    cursor: pointer;
+    transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+    white-space: nowrap;
+    align-self: end;
+}
+.needs-action-pill:hover { transform: translateY(-1px); }
+.needs-action-pill-on {
+    background: #dc2626;
+    border-color: #dc2626;
+    color: #fff;
+    box-shadow: 0 6px 14px -8px rgba(220, 38, 38, 0.55);
+}
+.needs-action-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 0.4rem;
+    background: rgba(220, 38, 38, 0.15);
+    color: #b91c1c;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+.needs-action-pill-on .needs-action-count {
+    background: rgba(255, 255, 255, 0.28);
+    color: #fff;
+}
+
+/* Per-row amber chip that names WHY a REQ needs attention. Small and
+   understated so it doesn't blow up the row; wraps if there are many. */
+.row-action-reasons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: 0.4rem;
+}
+.row-action-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.55rem;
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #fde68a;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
 
 .table-shell-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
 .summary-chip { background: #eff6ff; color: #0f6c8f; }

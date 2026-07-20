@@ -65,7 +65,7 @@ class ServiceRequest extends Model
         'preferred_date',
     ];
 
-    protected $appends = ['priority_window_ends_at'];
+    protected $appends = ['priority_window_ends_at', 'action_reasons'];
 
     protected $casts = [
         'files' => 'array',
@@ -403,6 +403,79 @@ class ServiceRequest extends Model
             self::STATUS_ARCHIVED,
             self::STATUS_CANCELLED,
         ]);
+    }
+
+    /**
+     * REQs that need action from the ops team — used by the "Needs Action"
+     * filter pill on the RFQ list so admins can jump to the queue of work
+     * without scrolling every row. Fires when any of these are true:
+     *
+     *   - RFQ awaits our quote          (rfq_status = pending)
+     *   - Client declined our quote     (rfq_status = rejected)
+     *   - Quote approved, no technician (rfq_status = approved, technician_id null)
+     *   - Client submitted payment proof needing our verification
+     *                                    (status = payment_pending_approval)
+     *   - Progress report awaits validation
+     *                                    (unvalidated progressReports row)
+     *   - Compensation amendment awaits admin approval
+     *                                    (pending compensationAmendments row)
+     *
+     * Excludes closed / archived / cancelled REQs — nothing to do on those.
+     */
+    public function scopeNeedsAdminAction($query)
+    {
+        return $query->active()
+            ->where(function ($q) {
+                $q->where('rfq_status', self::RFQ_STATUS_PENDING)
+                  ->orWhere('rfq_status', self::RFQ_STATUS_REJECTED)
+                  ->orWhere(function ($sub) {
+                      $sub->where('rfq_status', self::RFQ_STATUS_APPROVED)
+                          ->whereNull('technician_id');
+                  })
+                  ->orWhere('status', self::STATUS_PAYMENT_PENDING_APPROVAL)
+                  ->orWhereHas('progressReports', function ($pr) {
+                      $pr->where('is_validated', false);
+                  })
+                  ->orWhereHas('compensationAmendments', function ($ca) {
+                      $ca->where('status', 'pending');
+                  });
+            });
+    }
+
+    /**
+     * Per-row list of *why* this REQ needs action. Used to render the
+     * amber badge on each row so admins see the trigger at a glance
+     * instead of having to open every REQ. Returns an empty array when
+     * nothing is outstanding.
+     */
+    public function getActionReasonsAttribute(): array
+    {
+        $reasons = [];
+
+        if ($this->rfq_status === self::RFQ_STATUS_PENDING) {
+            $reasons[] = 'Quote needed';
+        }
+        if ($this->rfq_status === self::RFQ_STATUS_REJECTED) {
+            $reasons[] = 'Quote declined — revise or follow up';
+        }
+        if ($this->rfq_status === self::RFQ_STATUS_APPROVED && !$this->technician_id) {
+            $reasons[] = 'Assign a technician';
+        }
+        if ($this->status === self::STATUS_PAYMENT_PENDING_APPROVAL) {
+            $reasons[] = 'Verify client payment';
+        }
+        if ($this->relationLoaded('progressReports')
+            && $this->progressReports->contains(fn ($r) => !$r->is_validated)
+        ) {
+            $reasons[] = 'Progress report to validate';
+        }
+        if ($this->relationLoaded('compensationAmendments')
+            && $this->compensationAmendments->contains(fn ($a) => $a->status === 'pending')
+        ) {
+            $reasons[] = 'Compensation amendment pending';
+        }
+
+        return $reasons;
     }
 
     // ==================== HELPERS ====================
