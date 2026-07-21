@@ -14,6 +14,13 @@ return new class extends Migration {
     // Ops-only visibility — not exposed to the client portal.
     public function up(): void
     {
+        // Drop any orphan from a prior failed migration attempt. The very
+        // first Railway deploy crashed AFTER Schema::create had already run
+        // but BEFORE the migrations table was marked, leaving the table
+        // stranded and every retry blowing up with "table already exists".
+        // dropIfExists makes this migration idempotent so retries succeed.
+        Schema::dropIfExists('progress_report_note_versions');
+
         Schema::create('progress_report_note_versions', function (Blueprint $table) {
             $table->id();
             $table->foreignId('progress_report_id')
@@ -29,7 +36,14 @@ return new class extends Migration {
             $table->text('new_text')->nullable();
             $table->timestamp('created_at')->useCurrent();
 
-            $table->index(['progress_report_id', 'created_at']);
+            // Explicit short name — the auto-generated
+            // "progress_report_note_versions_progress_report_id_created_at_index"
+            // is 65 chars, one past MySQL's 64-char identifier limit, which
+            // crashed the initial deploy before FrankenPHP could start.
+            $table->index(
+                ['progress_report_id', 'created_at'],
+                'prnv_report_created_idx'
+            );
         });
     }
 
