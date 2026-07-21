@@ -21,6 +21,8 @@ RUN npm run build
 FROM dunglas/frankenphp:1-php8.3 AS runner
 
 # Install recommended PHP extensions
+# redis is pinned to a specific PECL release so the build does not depend on
+# the pecl.php.net channel.xml lookup, which has intermittently returned 504s.
 RUN install-php-extensions \
     bcmath \
     gd \
@@ -29,7 +31,7 @@ RUN install-php-extensions \
     pcntl \
     pdo_mysql \
     pdo_pgsql \
-    redis \
+    redis-6.1.0 \
     zip
 
 WORKDIR /app
