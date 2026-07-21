@@ -40,8 +40,9 @@ class PaymentRequestNotification extends Notification implements ShouldQueue
         $serviceRequest = $this->paymentRequest->serviceRequest;
         $percentage = $this->paymentRequest->percentage;
         $amount = number_format($this->paymentRequest->amount, 2);
+        $bank = config('services.bank');
 
-        return (new MailMessage)
+        $message = (new MailMessage)
             ->subject('Payment Request for Service - ' . $serviceRequest->request_id)
             ->greeting('Hello ' . $notifiable->name . '!')
             ->line('A payment request has been created for your approved service request.')
@@ -53,7 +54,23 @@ class PaymentRequestNotification extends Notification implements ShouldQueue
             ->line('Payment Percentage: ' . $percentage . '%')
             ->line('Amount Due: **KSH ' . $amount . '**')
             ->line('Payment Reference: ' . $this->paymentRequest->payment_request_id)
-            ->line('You can pay using M-Pesa, Cheque, or Cash.')
+            ->line('You can pay using M-Pesa, Cheque, Cash, or Bank Transfer.');
+
+        // Bank details block — mirrors what shows on the quotation email and
+        // PDF so clients settling via bank transfer don't have to hunt for
+        // the account. Guarded so a misconfigured env doesn't render blanks.
+        if (!empty($bank['name'])) {
+            $message
+                ->line('**Bank Transfer Details:**')
+                ->line('Bank: ' . $bank['name'] . (!empty($bank['branch']) ? ' — ' . $bank['branch'] : ''))
+                ->line('Account Name: ' . ($bank['account_name'] ?? ''))
+                ->line('Account Number: ' . ($bank['account_number'] ?? ''));
+            if (!empty($bank['swift_code'])) {
+                $message->line('SWIFT: ' . $bank['swift_code']);
+            }
+        }
+
+        return $message
             ->action('Make Payment Now', url('/client/request-status/' . $serviceRequest->id))
             ->line('Please complete the payment to proceed with your service request.')
             ->line('Thank you for choosing Technician World!');

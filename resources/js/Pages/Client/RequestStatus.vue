@@ -351,6 +351,39 @@
 
                                 <!-- Bank Deposit Payment Form -->
                                 <div v-if="selectedPaymentMethod === 'bank_deposit'" class="payment-form bank-form">
+                                    <!-- Send-payment-to block. Config-driven so
+                                         updating account details is a one-file edit
+                                         in config/services.php, not a template hunt. -->
+                                    <div v-if="bank && bank.name" class="bank-details-card">
+                                        <h5><i class="fas fa-university"></i> Send Payment To</h5>
+                                        <dl class="bank-details-list">
+                                            <div><dt>Bank</dt><dd>{{ bank.name }}</dd></div>
+                                            <div v-if="bank.account_name"><dt>Account Name</dt><dd>{{ bank.account_name }}</dd></div>
+                                            <div v-if="bank.account_number">
+                                                <dt>Account Number</dt>
+                                                <dd>
+                                                    <span class="bank-account-number">{{ bank.account_number }}</span>
+                                                    <button type="button" @click="copyBankValue(bank.account_number, 'acct')" class="bank-copy-btn" :title="bankCopied === 'acct' ? 'Copied!' : 'Copy account number'">
+                                                        <i :class="bankCopied === 'acct' ? 'fas fa-check' : 'fas fa-copy'"></i>
+                                                    </button>
+                                                </dd>
+                                            </div>
+                                            <div v-if="bank.branch"><dt>Branch</dt><dd>{{ bank.branch }}</dd></div>
+                                            <div v-if="bank.swift_code">
+                                                <dt>SWIFT Code</dt>
+                                                <dd>
+                                                    <span class="bank-account-number">{{ bank.swift_code }}</span>
+                                                    <button type="button" @click="copyBankValue(bank.swift_code, 'swift')" class="bank-copy-btn" :title="bankCopied === 'swift' ? 'Copied!' : 'Copy SWIFT code'">
+                                                        <i :class="bankCopied === 'swift' ? 'fas fa-check' : 'fas fa-copy'"></i>
+                                                    </button>
+                                                </dd>
+                                            </div>
+                                        </dl>
+                                        <p class="bank-details-hint">
+                                            Use <strong>{{ serviceRequest.request_id }}</strong> as the deposit reference so we can match your payment automatically.
+                                        </p>
+                                    </div>
+
                                     <div class="form-group">
                                         <label><i class="fas fa-hashtag"></i> Bank Reference / Transaction ID:</label>
                                         <input
@@ -761,8 +794,31 @@ const props = defineProps({
     serviceRequest: {
         type: Object,
         required: true
-    }
+    },
+    // Bank transfer details rendered on the Bank Deposit payment form.
+    // Nullable so an unset config just hides the block instead of crashing.
+    bank: {
+        type: Object,
+        default: null,
+    },
 })
+
+const bank = props.bank
+
+// Which bank value was just copied to the clipboard; drives the icon swap
+// on the copy buttons (checkmark for ~1.5s after a successful copy).
+const bankCopied = ref(null)
+async function copyBankValue(value, key) {
+    if (!value) return
+    try {
+        await navigator.clipboard.writeText(String(value))
+    } catch (_e) {
+        prompt('Copy the value:', value)
+        return
+    }
+    bankCopied.value = key
+    setTimeout(() => { if (bankCopied.value === key) bankCopied.value = null }, 1500)
+}
 
 const feedback = reactive({
     rating: 0,
@@ -1702,6 +1758,81 @@ defineOptions({
     padding: 1.5rem;
     border-radius: 8px;
     border: 1px solid #E5E7EB;
+}
+
+/* Bank details card at the top of the Bank Deposit form. Blue tint so it
+   reads as informational (send money to us) rather than actionable. */
+.bank-details-card {
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 8px;
+    padding: 1rem 1.15rem;
+    margin-bottom: 1.25rem;
+}
+.bank-details-card h5 {
+    margin: 0 0 0.75rem;
+    color: #1E3A8A;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+.bank-details-list {
+    margin: 0;
+    display: grid;
+    gap: 0.5rem;
+}
+.bank-details-list > div {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    align-items: center;
+    gap: 0.5rem;
+}
+.bank-details-list dt {
+    margin: 0;
+    color: #475569;
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+.bank-details-list dd {
+    margin: 0;
+    color: #0F172A;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    word-break: break-word;
+}
+.bank-account-number {
+    font-family: 'Courier New', monospace;
+    background: rgba(30, 58, 138, 0.08);
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    letter-spacing: 0.05em;
+}
+.bank-copy-btn {
+    border: none;
+    background: transparent;
+    color: #1E3A8A;
+    cursor: pointer;
+    padding: 0.25rem 0.4rem;
+    border-radius: 4px;
+}
+.bank-copy-btn:hover { background: rgba(30, 58, 138, 0.1); }
+.bank-details-hint {
+    margin: 0.85rem 0 0;
+    padding: 0.55rem 0.7rem;
+    background: rgba(255, 255, 255, 0.6);
+    border-left: 3px solid #3B82F6;
+    border-radius: 4px;
+    font-size: 0.82rem;
+    color: #1E3A8A;
+    line-height: 1.4;
+}
+@media (max-width: 520px) {
+    .bank-details-list > div { grid-template-columns: 1fr; gap: 0.1rem; }
+    .bank-details-list dt { color: #64748b; font-size: 0.76rem; }
 }
 
 .payment-form .form-group {

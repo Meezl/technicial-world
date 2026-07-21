@@ -153,7 +153,11 @@ class ServiceRequestController extends Controller
         ]);
 
         return Inertia::render('Client/RequestStatus', [
-            'serviceRequest' => $serviceRequest
+            'serviceRequest' => $serviceRequest,
+            // Bank details for the Bank Deposit payment method — client sees
+            // where to send the money without having to hunt through emails.
+            // Config-driven so we edit once (config/services.php) not per view.
+            'bank' => config('services.bank'),
         ]);
     }
 

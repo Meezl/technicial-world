@@ -44,14 +44,16 @@ return [
         'environment' => env('MPESA_ENVIRONMENT', 'sandbox'),
     ],
 
-    // Company bank details shown to clients on quotations and emails. Set
-    // BANK_NAME in env to enable display; leave unset to hide the section.
+    // Company bank details shown to clients on quotations, invoices, and
+    // payment-request emails. Defaults are Technician World's live NCBA
+    // account so the details render out-of-the-box; env vars override for
+    // dev / staging environments where a test account is preferred.
     'bank' => [
-        'name'           => env('BANK_NAME'),
-        'branch'         => env('BANK_BRANCH'),
-        'account_name'   => env('BANK_ACCOUNT_NAME'),
-        'account_number' => env('BANK_ACCOUNT_NUMBER'),
-        'swift_code'     => env('BANK_SWIFT_CODE'),
+        'name'           => env('BANK_NAME', 'NCBA'),
+        'branch'         => env('BANK_BRANCH', 'Yaya Center'),
+        'account_name'   => env('BANK_ACCOUNT_NAME', 'Technician World K Ltd'),
+        'account_number' => env('BANK_ACCOUNT_NUMBER', '6064760016'),
+        'swift_code'     => env('BANK_SWIFT_CODE', 'CBAFKENX'),
     ],
 
 ];
