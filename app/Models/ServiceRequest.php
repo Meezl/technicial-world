@@ -433,8 +433,19 @@ class ServiceRequest extends Model
                           ->whereNull('technician_id');
                   })
                   ->orWhere('status', self::STATUS_PAYMENT_PENDING_APPROVAL)
+                  // Only trigger on the LATEST progress report per REQ.
+                  // Older stale unvalidated rows (or ghost rows from the
+                  // stuck-editable-form bug on REQ-ZLS3TR that we haven't
+                  // fixed yet) don't count — ops already moved past them.
                   ->orWhereHas('progressReports', function ($pr) {
-                      $pr->where('is_validated', false);
+                      $pr->where(function ($v) {
+                          $v->where('is_validated', false)->orWhereNull('is_validated');
+                      })->whereRaw(
+                          'progress_reports.id = ('
+                          . 'SELECT MAX(pr2.id) FROM progress_reports pr2 '
+                          . 'WHERE pr2.service_request_id = progress_reports.service_request_id'
+                          . ')'
+                      );
                   })
                   ->orWhereHas('compensationAmendments', function ($ca) {
                       $ca->where('status', 'pending');
@@ -464,10 +475,16 @@ class ServiceRequest extends Model
         if ($this->status === self::STATUS_PAYMENT_PENDING_APPROVAL) {
             $reasons[] = 'Verify client payment';
         }
-        if ($this->relationLoaded('progressReports')
-            && $this->progressReports->contains(fn ($r) => !$r->is_validated)
-        ) {
-            $reasons[] = 'Progress report to validate';
+        // Only trigger on the LATEST report (by id, i.e. last submitted).
+        // Matches how ops actually work — old stale rows are irrelevant
+        // once a newer report has been submitted or validated. Fixes the
+        // REQ-ZLS3TR false positive where a stale unvalidated row was
+        // firing the chip after ops had validated a newer one.
+        if ($this->relationLoaded('progressReports') && $this->progressReports->isNotEmpty()) {
+            $latest = $this->progressReports->sortByDesc('id')->first();
+            if ($latest && !$latest->is_validated) {
+                $reasons[] = 'Progress report to validate';
+            }
         }
         if ($this->relationLoaded('compensationAmendments')
             && $this->compensationAmendments->contains(fn ($a) => $a->status === 'pending')
