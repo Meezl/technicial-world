@@ -7,6 +7,7 @@ use App\Models\Payment;
 use App\Models\PaymentRequest;
 use App\Models\ServiceRequest;
 use App\Models\MpesaTransaction;
+use App\Notifications\PaymentRejectedNotification;
 use App\Services\MpesaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -508,6 +509,10 @@ class PaymentController extends Controller
             ], 422);
         }
 
+        // Snapshot BEFORE the transaction so we can decide which email to
+        // send after commit — the transaction body mutates the status.
+        $wasApproved = $paymentRequest->isPaid();
+
         try {
             DB::transaction(function () use ($paymentRequest, $reason, $priorStatus) {
                 $serviceRequest = $paymentRequest->serviceRequest;
@@ -562,11 +567,33 @@ class PaymentController extends Controller
             ], 500);
         }
 
+        // Notify the client — outside the transaction so a mail failure
+        // never rolls back the DB state. Notification is Queued via
+        // ShouldQueue, so this returns quickly even if mail is slow.
+        try {
+            $client = $paymentRequest->user()->first();
+            if ($client) {
+                $client->notify(new PaymentRejectedNotification(
+                    $paymentRequest->fresh(),
+                    $reason,
+                    $wasApproved
+                ));
+            }
+        } catch (\Throwable $mailError) {
+            // Never let a mail hiccup block ops from seeing the reject
+            // succeeded — the state change is what matters. Log for
+            // diagnostics; the reason is already in the audit log.
+            Log::warning('rejectOfflinePayment notification failed', [
+                'payment_request_id' => $paymentRequest->id,
+                'error'              => $mailError->getMessage(),
+            ]);
+        }
+
         return response()->json([
             'success' => true,
-            'message' => $priorStatus === PaymentRequest::STATUS_PAID
-                ? 'Approval reversed. The service request has been rolled back to Payment Pending Approval so you can act on it again.'
-                : 'Payment rejected. The client can submit a fresh proof of payment.',
+            'message' => $wasApproved
+                ? 'Approval reversed. The service request has been rolled back to Payment Pending Approval, and the client has been notified.'
+                : 'Payment rejected. The client has been notified and can submit a fresh proof of payment.',
         ]);
     }
 
