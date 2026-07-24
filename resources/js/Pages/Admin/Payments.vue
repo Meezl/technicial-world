@@ -266,6 +266,70 @@
                     </div>
 
                     <div v-if="activeTab === 'client'" class="tab-panel">
+                        <!-- Pending offline verifications: cards, always visible,
+                             View Proof + Approve inline. Buried before this
+                             because the Actions column on the wide table got
+                             clipped on mobile (table-shell overflow: hidden)
+                             — ops had no way to reach the button on a phone. -->
+                        <section v-if="pendingOfflineVerifications.length" class="pending-verifications-panel">
+                            <div class="pending-verifications-header">
+                                <div>
+                                    <h3><i class="fas fa-triangle-exclamation"></i> Payments Awaiting Verification</h3>
+                                    <p>Clients have submitted proof of payment. Review the POP and approve to move the job to the next stage.</p>
+                                </div>
+                                <span class="pending-verifications-count">{{ pendingOfflineVerifications.length }}</span>
+                            </div>
+                            <ul class="pending-verifications-list">
+                                <li v-for="p in pendingOfflineVerifications" :key="p.id" class="pending-verifications-item">
+                                    <div class="pv-item-copy">
+                                        <div class="pv-item-title">
+                                            <strong>{{ p.user?.name || 'Unknown client' }}</strong>
+                                            <span class="pv-item-meta">
+                                                {{ p.service_request?.request_id || '—' }}
+                                                · {{ formatPaymentMethod(p.payment_method) }}
+                                                · Submitted {{ formatDate(p.updated_at || p.created_at) }}
+                                            </span>
+                                        </div>
+                                        <div class="pv-item-amount">KSH {{ formatCurrency(p.amount) }}</div>
+                                        <div v-if="p.cheque_number || p.bank_reference" class="pv-item-ref">
+                                            <span v-if="p.cheque_number"><strong>Cheque:</strong> {{ p.cheque_number }}</span>
+                                            <span v-if="p.bank_reference"><strong>Bank ref:</strong> {{ p.bank_reference }}</span>
+                                        </div>
+                                        <div v-if="p.notes" class="pv-item-notes">"{{ p.notes }}"</div>
+                                    </div>
+                                    <div class="pv-item-actions">
+                                        <a
+                                            v-if="p.evidence_path"
+                                            :href="'/storage/' + p.evidence_path"
+                                            target="_blank"
+                                            rel="noopener"
+                                            class="btn btn-primary pv-action"
+                                        >
+                                            <i class="fas fa-file-image"></i> View POP
+                                        </a>
+                                        <span v-else class="pv-no-proof" title="Client didn't attach a proof of payment file">
+                                            <i class="fas fa-file-circle-question"></i> No POP attached
+                                        </span>
+                                        <button
+                                            type="button"
+                                            class="btn btn-success pv-action"
+                                            @click="approveOfflinePayment(p)"
+                                        >
+                                            <i class="fas fa-check"></i> Approve
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="btn btn-secondary pv-action"
+                                            @click="rejectOfflinePayment(p)"
+                                            title="Reject payment (e.g. wrong amount / fake POP)"
+                                        >
+                                            <i class="fas fa-times"></i> Reject
+                                        </button>
+                                    </div>
+                                </li>
+                            </ul>
+                        </section>
+
                         <div class="table-shell" v-if="allClientPayments.length">
                             <table class="data-table">
                                 <thead>
@@ -798,6 +862,18 @@ const pendingOfflineApprovals = computed(() =>
     ).length
 )
 
+// Same predicate but returns the FULL rows so the top-of-page verification
+// panel can render each one with a View POP + Approve + Reject action.
+// Sorted with the oldest first so the queue processes FIFO.
+const pendingOfflineVerifications = computed(() =>
+    props.paymentRequests
+        .filter(pr =>
+            pr.status === 'pending' &&
+            ['cash', 'cheque', 'bank_deposit'].includes(pr.payment_method)
+        )
+        .sort((a, b) => new Date(a.updated_at || a.created_at) - new Date(b.updated_at || b.created_at))
+)
+
 const selectedServiceRequestLabel = computed(() => {
     if (!selectedSR.value) return 'All service requests'
 
@@ -998,6 +1074,28 @@ const approveOfflinePayment = (payment) => {
     confirmEvidenceFile.value = null
     confirmNotes.value = ''
     showConfirmModal.value = true
+}
+
+// The reject action was referenced in the template but had no handler —
+// clicking it would silently no-op. Now posts to the existing
+// admin.payments.reject route with a mandatory reason so ops leaves an
+// audit trail of why the payment wasn't accepted.
+const rejectOfflinePayment = async (payment) => {
+    const reason = prompt(
+        `Reject payment of KSH ${Number(payment.amount).toLocaleString()} from ${payment.user?.name || 'this client'}?\n\nEnter a reason (visible in the audit log):`
+    )
+    if (reason === null) return          // user cancelled
+    if (!reason.trim()) {
+        alert('A reason is required so ops can trace why this payment was rejected.')
+        return
+    }
+    try {
+        await axios.post(`/admin/payments/${payment.id}/reject`, { reason })
+        alert('Payment rejected. The client has been notified.')
+        router.reload({ only: ['payments', 'paymentRequests', 'stats'] })
+    } catch (error) {
+        alert(error.response?.data?.error || 'Failed to reject payment.')
+    }
 }
 
 const onConfirmEvidenceChange = (e) => {
@@ -1495,10 +1593,145 @@ const getTabCount = (tabKey) => {
 }
 
 .table-shell {
-    overflow: hidden;
+    /* Was overflow: hidden — which silently clipped the Actions column
+       on mobile so ops literally couldn't reach the Approve button.
+       Auto-scroll horizontally instead; the border-radius stays via
+       the wrapper's own rounding. */
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
     border-radius: 20px;
     border: 1px solid #e2e8f0;
     background: #ffffff;
+}
+
+/* Pending verifications panel — top-of-tab card list surfacing offline
+   payments that need approval. Amber tone so it reads as attention-
+   worthy without being alarming. Renders in card layout on any width
+   so the View POP + Approve buttons are always reachable. */
+.pending-verifications-panel {
+    background: linear-gradient(135deg, #fffbeb, #fef3c7);
+    border: 1px solid #fbbf24;
+    border-radius: 16px;
+    padding: 1.15rem 1.25rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 10px 22px -16px rgba(217, 119, 6, 0.35);
+}
+.pending-verifications-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+.pending-verifications-header h3 {
+    margin: 0 0 0.25rem;
+    color: #78350f;
+    font-size: 1.05rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.pending-verifications-header p {
+    margin: 0;
+    color: #92400e;
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+.pending-verifications-count {
+    background: #dc2626;
+    color: #fff;
+    font-weight: 700;
+    padding: 0.35rem 0.7rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    min-width: 32px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.pending-verifications-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+.pending-verifications-item {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 0.85rem 1rem;
+    background: #ffffff;
+    border: 1px solid #fde68a;
+    border-radius: 12px;
+    flex-wrap: wrap;
+}
+.pv-item-copy { flex: 1 1 260px; min-width: 0; }
+.pv-item-title strong {
+    color: #0f172a;
+    display: block;
+    font-size: 0.95rem;
+}
+.pv-item-meta {
+    display: block;
+    color: #6b7280;
+    font-size: 0.78rem;
+    margin-top: 0.2rem;
+}
+.pv-item-amount {
+    margin-top: 0.4rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #065f46;
+}
+.pv-item-ref {
+    margin-top: 0.35rem;
+    font-size: 0.8rem;
+    color: #374151;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+.pv-item-notes {
+    margin-top: 0.35rem;
+    padding: 0.35rem 0.55rem;
+    background: #f8fafc;
+    border-left: 3px solid #cbd5e1;
+    border-radius: 4px;
+    color: #374151;
+    font-size: 0.82rem;
+    font-style: italic;
+}
+.pv-item-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+}
+.pv-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.55rem 0.9rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+.pv-no-proof {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.55rem 0.75rem;
+    background: #fee2e2;
+    color: #991b1b;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+@media (max-width: 520px) {
+    .pv-item-actions { width: 100%; }
+    .pv-action, .pv-no-proof { flex: 1 1 auto; justify-content: center; }
 }
 
 .data-table {
