@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\Payment;
 use App\Models\PaymentRequest;
 use App\Models\ServiceRequest;
 use App\Models\MpesaTransaction;
 use App\Services\MpesaService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class PaymentController extends Controller
@@ -451,6 +453,121 @@ class PaymentController extends Controller
                 'error' => 'Failed to approve payment: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Alias for confirmOfflinePayment. The admin.payments.approve route in
+     * routes/web.php pointed here but the method never existed — hitting it
+     * would 500. Kept separate from confirmOfflinePayment so the two routes
+     * stay wire-compatible with existing UI code paths.
+     */
+    public function approveOfflinePayment(Request $request, PaymentRequest $paymentRequest)
+    {
+        return $this->confirmOfflinePayment($request, $paymentRequest);
+    }
+
+    /**
+     * Admin: reject an offline payment. Handles two cases in one flow:
+     *
+     *   1. status=pending → mark cancelled. Client submitted a POP that
+     *      admin doesn't accept (fake / wrong amount / duplicate). The
+     *      ServiceRequest stays in payment_pending_approval so the client
+     *      can retry.
+     *
+     *   2. status=paid   → reverse the earlier approval. Ops realised
+     *      after the fact that the cheque bounced, the deposit slip was
+     *      fabricated, etc. Voids the Payment row, sets the PaymentRequest
+     *      back to pending, rolls the ServiceRequest status back to
+     *      payment_pending_approval so it's actionable again.
+     *
+     * A reason is mandatory in both cases so the audit trail always names
+     * why the reversal happened. Wrapped in a DB transaction so a partial
+     * failure never leaves the SR out of sync with the payment record.
+     */
+    public function rejectOfflinePayment(Request $request, PaymentRequest $paymentRequest)
+    {
+        if (auth()->user()->role !== 'admin') {
+            return response()->json([
+                'error' => 'Only administrators can reject offline payments.',
+            ], 403);
+        }
+
+        $request->validate([
+            'reason' => 'required|string|min:3|max:500',
+        ]);
+
+        $reason = $request->input('reason');
+        $priorStatus = $paymentRequest->status;
+
+        // Guard against method mismatch — this is the offline-payment path,
+        // not a Safaricom callback. Refuse to touch M-Pesa records here so
+        // we don't accidentally void a legitimate STK-confirmed payment.
+        if ($paymentRequest->payment_method === PaymentRequest::METHOD_MPESA) {
+            return response()->json([
+                'error' => 'M-Pesa payments cannot be reversed from this action. Contact support to raise an M-Pesa dispute.',
+            ], 422);
+        }
+
+        try {
+            DB::transaction(function () use ($paymentRequest, $reason, $priorStatus) {
+                $serviceRequest = $paymentRequest->serviceRequest;
+                $wasPaid = $paymentRequest->isPaid();
+
+                if ($wasPaid) {
+                    // Void any Payment row created when we approved. Keep
+                    // the row for audit — mark it cancelled + notes rather
+                    // than delete so we don't lose the paper trail.
+                    Payment::where('payment_request_id', $paymentRequest->id)
+                        ->where('status', 'completed')
+                        ->update([
+                            'status' => 'cancelled',
+                            'notes'  => trim(($paymentRequest->notes ?? '') . "\n[REVERSED " . now()->toDateTimeString() . '] ' . $reason),
+                        ]);
+
+                    // Roll the SR back so ops can act on the payment again.
+                    if ($serviceRequest && $serviceRequest->status === ServiceRequest::STATUS_READY_FOR_ASSIGNMENT) {
+                        $serviceRequest->update(['status' => ServiceRequest::STATUS_PAYMENT_PENDING_APPROVAL]);
+                    }
+
+                    // Set PaymentRequest back to pending so it re-appears
+                    // in the Awaiting Verification list; ops can re-approve
+                    // if the reversal itself was a mistake.
+                    $paymentRequest->update([
+                        'status'  => PaymentRequest::STATUS_PENDING,
+                        'paid_at' => null,
+                    ]);
+                } else {
+                    // Pending → cancel outright. Client's POP was seen and
+                    // refused; they'll need to submit again.
+                    $paymentRequest->update([
+                        'status' => PaymentRequest::STATUS_CANCELLED,
+                    ]);
+                }
+
+                AuditLog::log(AuditLog::ACTION_STATE_CHANGED, $paymentRequest, null, [
+                    'action'        => $wasPaid ? 'reverse_approval' : 'reject_pending',
+                    'prior_status'  => $priorStatus,
+                    'reason'        => $reason,
+                    'rejected_by'   => auth()->id(),
+                ]);
+            });
+        } catch (\Throwable $e) {
+            Log::error('rejectOfflinePayment failed', [
+                'payment_request_id' => $paymentRequest->id,
+                'prior_status'       => $priorStatus,
+                'error'              => $e->getMessage(),
+            ]);
+            return response()->json([
+                'error' => 'Could not reject the payment right now. The team has been notified — please retry or contact support.',
+            ], 500);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $priorStatus === PaymentRequest::STATUS_PAID
+                ? 'Approval reversed. The service request has been rolled back to Payment Pending Approval so you can act on it again.'
+                : 'Payment rejected. The client can submit a fresh proof of payment.',
+        ]);
     }
 
     /**

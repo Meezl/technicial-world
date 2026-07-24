@@ -330,6 +330,68 @@
                             </ul>
                         </section>
 
+                        <!-- Recently-approved offline payments (last 30 days).
+                             Kept visible in a green sibling panel so ops can
+                             reverse an approval that later turns out to be
+                             wrong (bounced cheque, faked POP, wrong amount).
+                             Empty-state renders a helpful note so the ops
+                             team knows the section exists even when there's
+                             nothing to reverse — solves the 'desktop is not
+                             visible' feedback where the amber panel hid
+                             entirely once no pending items remained. -->
+                        <section class="recently-approved-panel">
+                            <div class="recently-approved-header">
+                                <div>
+                                    <h3><i class="fas fa-clock-rotate-left"></i> Recently Approved Offline Payments</h3>
+                                    <p>Last 30 days. Reverse an approval here if a cheque bounced or a POP turned out to be wrong.</p>
+                                </div>
+                                <span v-if="recentlyApprovedOfflinePayments.length" class="recently-approved-count">
+                                    {{ recentlyApprovedOfflinePayments.length }}
+                                </span>
+                            </div>
+                            <ul v-if="recentlyApprovedOfflinePayments.length" class="pending-verifications-list">
+                                <li v-for="p in recentlyApprovedOfflinePayments" :key="p.id" class="pending-verifications-item ra-item">
+                                    <div class="pv-item-copy">
+                                        <div class="pv-item-title">
+                                            <strong>{{ p.user?.name || 'Unknown client' }}</strong>
+                                            <span class="pv-item-meta">
+                                                {{ p.service_request?.request_id || '—' }}
+                                                · {{ formatPaymentMethod(p.payment_method) }}
+                                                · Approved {{ formatDate(p.paid_at || p.updated_at) }}
+                                            </span>
+                                        </div>
+                                        <div class="pv-item-amount">KSH {{ formatCurrency(p.amount) }}</div>
+                                        <div v-if="p.cheque_number || p.bank_reference" class="pv-item-ref">
+                                            <span v-if="p.cheque_number"><strong>Cheque:</strong> {{ p.cheque_number }}</span>
+                                            <span v-if="p.bank_reference"><strong>Bank ref:</strong> {{ p.bank_reference }}</span>
+                                        </div>
+                                    </div>
+                                    <div class="pv-item-actions">
+                                        <a
+                                            v-if="p.evidence_path"
+                                            :href="'/storage/' + p.evidence_path"
+                                            target="_blank"
+                                            rel="noopener"
+                                            class="btn btn-primary pv-action"
+                                        >
+                                            <i class="fas fa-file-image"></i> View POP
+                                        </a>
+                                        <button
+                                            type="button"
+                                            class="btn btn-danger pv-action"
+                                            @click="rejectOfflinePayment(p)"
+                                            title="Reverse this approval (audit-logged). Use for bounced cheques, wrong amount, or fake POP."
+                                        >
+                                            <i class="fas fa-rotate-left"></i> Reverse Approval
+                                        </button>
+                                    </div>
+                                </li>
+                            </ul>
+                            <p v-else class="recently-approved-empty">
+                                No offline payments approved in the last 30 days.
+                            </p>
+                        </section>
+
                         <div class="table-shell" v-if="allClientPayments.length">
                             <table class="data-table">
                                 <thead>
@@ -874,6 +936,23 @@ const pendingOfflineVerifications = computed(() =>
         .sort((a, b) => new Date(a.updated_at || a.created_at) - new Date(b.updated_at || b.created_at))
 )
 
+// Recently-approved offline payments — kept visible in the panel for 30
+// days after approval so ops can reverse a mistaken approval (e.g. cheque
+// bounced, POP turned out to be fake) without hunting through the merged
+// payments table. Newest first — reversals almost always target the most
+// recent one.
+const recentlyApprovedOfflinePayments = computed(() => {
+    const thirtyDaysAgo = new Date()
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+    return props.paymentRequests
+        .filter(pr =>
+            pr.status === 'paid' &&
+            ['cash', 'cheque', 'bank_deposit'].includes(pr.payment_method) &&
+            new Date(pr.paid_at || pr.updated_at || pr.created_at) >= thirtyDaysAgo
+        )
+        .sort((a, b) => new Date(b.paid_at || b.updated_at || b.created_at) - new Date(a.paid_at || a.updated_at || a.created_at))
+})
+
 const selectedServiceRequestLabel = computed(() => {
     if (!selectedSR.value) return 'All service requests'
 
@@ -1076,25 +1155,28 @@ const approveOfflinePayment = (payment) => {
     showConfirmModal.value = true
 }
 
-// The reject action was referenced in the template but had no handler —
-// clicking it would silently no-op. Now posts to the existing
-// admin.payments.reject route with a mandatory reason so ops leaves an
-// audit trail of why the payment wasn't accepted.
+// Rejects a pending payment OR reverses an already-approved one — the
+// backend picks the right transition based on current status. Uses two
+// slightly different wordings so ops sees what they're about to do
+// (irreversible reject vs recoverable reversal). Both require a reason
+// that lands in the audit log.
 const rejectOfflinePayment = async (payment) => {
-    const reason = prompt(
-        `Reject payment of KSH ${Number(payment.amount).toLocaleString()} from ${payment.user?.name || 'this client'}?\n\nEnter a reason (visible in the audit log):`
-    )
-    if (reason === null) return          // user cancelled
+    const isPaid = payment.status === 'paid'
+    const heading = isPaid
+        ? `Reverse the approval of KSH ${Number(payment.amount).toLocaleString()} from ${payment.user?.name || 'this client'}?\n\nThis rolls the service request back to Payment Pending Approval so you can act on it again.`
+        : `Reject the payment of KSH ${Number(payment.amount).toLocaleString()} from ${payment.user?.name || 'this client'}?\n\nThe client will need to submit a fresh proof of payment.`
+    const reason = prompt(heading + '\n\nEnter a reason (visible in the audit log):')
+    if (reason === null) return
     if (!reason.trim()) {
-        alert('A reason is required so ops can trace why this payment was rejected.')
+        alert('A reason is required so ops can trace why this payment was ' + (isPaid ? 'reversed.' : 'rejected.'))
         return
     }
     try {
-        await axios.post(`/admin/payments/${payment.id}/reject`, { reason })
-        alert('Payment rejected. The client has been notified.')
+        const res = await axios.post(`/admin/payments/${payment.id}/reject`, { reason })
+        alert(res.data?.message || (isPaid ? 'Approval reversed.' : 'Payment rejected.'))
         router.reload({ only: ['payments', 'paymentRequests', 'stats'] })
     } catch (error) {
-        alert(error.response?.data?.error || 'Failed to reject payment.')
+        alert(error.response?.data?.error || 'Failed to process the rejection.')
     }
 }
 
@@ -1733,6 +1815,64 @@ const getTabCount = (tabKey) => {
     .pv-item-actions { width: 100%; }
     .pv-action, .pv-no-proof { flex: 1 1 auto; justify-content: center; }
 }
+
+/* Recently approved panel — sibling to the amber pending panel but green
+   so it reads as "already handled, but here if you need to reverse".
+   Always renders (with an empty-state note) so ops sees the section
+   exists even when there's nothing to act on. */
+.recently-approved-panel {
+    background: linear-gradient(135deg, #ecfdf5, #d1fae5);
+    border: 1px solid #6ee7b7;
+    border-radius: 16px;
+    padding: 1.15rem 1.25rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 10px 22px -16px rgba(5, 150, 105, 0.25);
+}
+.recently-approved-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+.recently-approved-header h3 {
+    margin: 0 0 0.25rem;
+    color: #065f46;
+    font-size: 1.05rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.recently-approved-header p {
+    margin: 0;
+    color: #047857;
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+.recently-approved-count {
+    background: #059669;
+    color: #fff;
+    font-weight: 700;
+    padding: 0.35rem 0.7rem;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    min-width: 32px;
+    text-align: center;
+    flex-shrink: 0;
+}
+.recently-approved-empty {
+    margin: 0;
+    padding: 0.85rem 1rem;
+    background: #ffffff;
+    border: 1px dashed #6ee7b7;
+    border-radius: 12px;
+    color: #047857;
+    font-size: 0.88rem;
+    text-align: center;
+    font-style: italic;
+}
+/* Nudge the approved-panel rows so they read as green not amber. */
+.ra-item { border-color: #a7f3d0 !important; }
 
 .data-table {
     width: 100%;
