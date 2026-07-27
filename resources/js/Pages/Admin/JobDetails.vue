@@ -1150,6 +1150,28 @@
                         </p>
                     </div>
 
+                    <!-- Bonus UX: show the current active assignment so the admin
+                         can see whether they're editing an existing assignment
+                         (same tech picked) or reassigning to a new one. Removes
+                         the "did that save?" ambiguity that caused the ghost-row
+                         retries in the first place. -->
+                    <div v-if="currentPrimaryAssignmentInfo" class="current-assignment-panel">
+                        <div class="cap-heading">
+                            <i class="fas fa-user-check"></i>
+                            <span>Currently assigned</span>
+                        </div>
+                        <div class="cap-body">
+                            <strong>{{ currentPrimaryAssignmentInfo.name }}</strong>
+                            <span>at KSH {{ formatCurrency(currentPrimaryAssignmentInfo.fee) }}</span>
+                        </div>
+                        <p v-if="showReassignmentDuesWarning" class="cap-warning">
+                            <i class="fas fa-triangle-exclamation"></i>
+                            <strong>{{ currentPrimaryAssignmentInfo.name }}</strong> has validated work on this job
+                            ({{ currentPrimaryAssignmentInfo.validatedPct }}% complete).
+                            Reassigning will <em>not</em> reverse any payments already made to them and any earned-but-unpaid dues remain owed.
+                        </p>
+                    </div>
+
                     <div class="tech-picker-filters">
                         <input
                             v-model="techFilterSearch"
@@ -1249,9 +1271,9 @@
                     <button
                         @click="assignSingleTechnician"
                         :disabled="!canSubmitAssignment"
-                        class="btn btn-primary"
+                        :class="['btn', assignmentIntent === 'reassign' ? 'btn-warning' : 'btn-primary']"
                     >
-                        Assign Technician
+                        {{ assignmentSubmitLabel }}
                     </button>
                 </div>
             </div>
@@ -1619,6 +1641,26 @@
                         </p>
                     </div>
 
+                    <!-- Bonus UX: same panel as the single-tech modal — shows
+                         who's currently on the slot so edit vs reassign is
+                         unambiguous. -->
+                    <div v-if="currentPrimaryAssignmentInfo" class="current-assignment-panel">
+                        <div class="cap-heading">
+                            <i class="fas fa-user-check"></i>
+                            <span>Currently assigned</span>
+                        </div>
+                        <div class="cap-body">
+                            <strong>{{ currentPrimaryAssignmentInfo.name }}</strong>
+                            <span>at KSH {{ formatCurrency(currentPrimaryAssignmentInfo.fee) }}</span>
+                        </div>
+                        <p v-if="showReassignmentDuesWarning" class="cap-warning">
+                            <i class="fas fa-triangle-exclamation"></i>
+                            <strong>{{ currentPrimaryAssignmentInfo.name }}</strong> has validated work on this job
+                            ({{ currentPrimaryAssignmentInfo.validatedPct }}% complete).
+                            Reassigning will <em>not</em> reverse any payments already made to them and any earned-but-unpaid dues remain owed.
+                        </p>
+                    </div>
+
                     <div class="tech-picker-filters">
                         <input
                             v-model="techFilterSearch"
@@ -1700,9 +1742,9 @@
                     <button
                         @click="assignLeadTechnician"
                         :disabled="!canSubmitAssignment"
-                        class="btn btn-primary"
+                        :class="['btn', assignmentIntent === 'reassign' ? 'btn-warning' : 'btn-primary']"
                     >
-                        {{ job.lead_technician ? 'Change' : 'Assign' }} Lead Technician
+                        {{ assignmentSubmitLabel }}
                     </button>
                 </div>
             </div>
@@ -2088,6 +2130,67 @@ const currentLeadAssignment = computed(() => {
         .reverse()
         .find((assignment) => Number(assignment.technician_id) === Number(props.job.lead_technician_id)) || null
 })
+
+// Bonus UX — surface who's on the primary slot right now so the assign
+// modal can display "Currently assigned: X at KSH Y" instead of leaving
+// the admin to guess. Picks the appropriate current assignment based on
+// which modal opened (lead vs single).
+const currentPrimaryAssignmentInfo = computed(() => {
+    const active = assignmentContext.value === 'lead'
+        ? currentLeadAssignment.value
+        : currentSingleAssignment.value
+    if (!active) return null
+    const tech = active.technician
+    if (!tech) return null
+
+    // Rough validated-progress % for this tech on this SR — used in the
+    // reassignment warning. We take the max validated_percent (or the
+    // reported percent_complete when unvalidated as a soft fallback).
+    // Not the exact milestone-cap-aware earned amount, but enough for
+    // ops to know "this tech has been doing real work — reassigning
+    // doesn't wipe their earned dues".
+    const reports = (props.job.progress_reports || [])
+        .filter((r) => Number(r.technician_id) === Number(tech.id))
+    const latestValidated = reports
+        .filter((r) => r.is_validated)
+        .reduce((max, r) => Math.max(max, Number(r.validated_percent ?? r.percent_complete ?? 0)), 0)
+
+    return {
+        techId: Number(tech.id),
+        name: tech.user?.name || 'Assigned technician',
+        fee: Number(active.agreed_compensation) || 0,
+        validatedPct: latestValidated,
+        hasValidatedWork: latestValidated > 0,
+    }
+})
+
+// Intent inferred from the picked tech: 'edit' when the same tech is
+// selected (fee change only), 'reassign' when a different tech is picked,
+// 'create' when no current assignment exists. Drives the submit button's
+// label and colour so the admin never wonders which one they're doing.
+const assignmentIntent = computed(() => {
+    if (!currentPrimaryAssignmentInfo.value) return 'create'
+    const picked = Number(selectedTechnician.value?.id ?? 0)
+    if (!picked) return currentPrimaryAssignmentInfo.value ? 'edit' : 'create'
+    return picked === currentPrimaryAssignmentInfo.value.techId ? 'edit' : 'reassign'
+})
+
+const assignmentSubmitLabel = computed(() => {
+    if (assignmentIntent.value === 'reassign') {
+        const newName = selectedTechnician.value?.user?.name || 'selected technician'
+        return `Reassign to ${newName}`
+    }
+    if (assignmentIntent.value === 'edit') return 'Save changes'
+    // Fall back to the pre-Bonus wording for the plain create path.
+    return assignmentContext.value === 'lead'
+        ? (props.job.lead_technician ? 'Change Lead Technician' : 'Assign Lead Technician')
+        : 'Assign Technician'
+})
+
+const showReassignmentDuesWarning = computed(() =>
+    assignmentIntent.value === 'reassign'
+    && currentPrimaryAssignmentInfo.value?.hasValidatedWork
+)
 const laborBudgetTotal = computed(() => Number(props.job.budget?.labor_budget || 0))
 const totalLaborAllocated = computed(() => {
     const directAllocated = activePrimaryAssignments.value.reduce((sum, assignment) => {
@@ -4487,6 +4590,66 @@ defineOptions({
     border-radius: 18px;
     border: 1px solid #dbe4ee;
     background: linear-gradient(135deg, #f8fbff 0%, #f8fafc 100%);
+}
+
+/* Bonus UX — "Currently assigned: X at KSH Y" info panel on the
+   assignment modals. Sits between the budget stats and the tech picker
+   so admins see what state the slot is in BEFORE picking, removing the
+   "did that save?" ambiguity that caused the ghost-row retries. */
+.current-assignment-panel {
+    margin-bottom: 1rem;
+    padding: 0.85rem 1rem;
+    border-radius: 12px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+}
+.cap-heading {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #1e3a8a;
+    margin-bottom: 0.35rem;
+}
+.cap-body {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    color: #0f172a;
+}
+.cap-body strong { font-size: 1rem; }
+.cap-body span { color: #475569; font-weight: 600; }
+.cap-warning {
+    margin: 0.75rem 0 0;
+    padding: 0.6rem 0.75rem;
+    background: #fffbeb;
+    border-left: 3px solid #f59e0b;
+    border-radius: 4px;
+    color: #78350f;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+}
+.cap-warning i { flex-shrink: 0; margin-top: 0.15rem; }
+.cap-warning strong { color: #92400e; }
+.cap-warning em { font-style: normal; text-decoration: underline; }
+
+/* Amber submit button when the intent is 'reassign' — visual signal
+   that this action isn't a simple edit. */
+.btn.btn-warning {
+    background: #f59e0b;
+    color: #78350f;
+    border-color: #d97706;
+}
+.btn.btn-warning:hover:not(:disabled) {
+    background: #d97706;
+    color: #ffffff;
 }
 
 .assignment-budget-grid {
