@@ -279,6 +279,8 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::post('/rfq/quote', [AdminDashboardController::class, 'submitQuote'])->name('admin.rfq.quote');
     Route::post('/rfq/{serviceRequest}/approve-on-behalf', [AdminDashboardController::class, 'approveRfqOnBehalf'])->name('admin.rfq.approve-on-behalf');
     Route::post('/rfq/{serviceRequest}/reject', [AdminDashboardController::class, 'rejectRFQ'])->name('admin.rfq.reject');
+    // Item 4 — download the same quotation PDF the client received on email.
+    Route::get('/rfq/{serviceRequest}/quotation-pdf', [AdminDashboardController::class, 'downloadQuotationPdf'])->name('admin.rfq.quotation-pdf');
     Route::post('/rfq/{serviceRequest}/cancel', [AdminDashboardController::class, 'cancelRfq'])->name('admin.rfq.cancel');
     Route::post('/rfq/{serviceRequest}/assign-pm', [AdminDashboardController::class, 'assignPm'])->name('admin.rfq.assign-pm');
     Route::post('/rfq/{serviceRequest}/request-payment', [AdminDashboardController::class, 'requestPayment'])->name('admin.rfq.request-payment');

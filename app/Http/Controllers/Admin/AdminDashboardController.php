@@ -2331,6 +2331,44 @@ class AdminDashboardController extends Controller
         return redirect()->route('admin.rfq')->with('success', $message);
     }
 
+    /**
+     * Item 4: Download the quotation PDF for an RFQ. Mirrors the exact
+     * template + payload the QuotationSent mailer attaches so what admin
+     * downloads is byte-identical to what the client received. Only works
+     * for RFQs that have been quoted (or approved) — nothing to render
+     * before a quote exists.
+     */
+    public function downloadQuotationPdf(ServiceRequest $serviceRequest)
+    {
+        if (!in_array($serviceRequest->rfq_status, [
+            ServiceRequest::RFQ_STATUS_QUOTED,
+            ServiceRequest::RFQ_STATUS_APPROVED,
+        ], true)) {
+            return redirect()->route('admin.rfq')
+                ->with('error', 'No quotation to download — this RFQ has not been quoted yet.');
+        }
+
+        $milestones = $serviceRequest->milestones()
+            ->orderBy('progress_step')
+            ->get(['progress_step', 'amount', 'notes', 'status']);
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.quotation', [
+            'serviceRequest' => $serviceRequest,
+            'materials'      => $serviceRequest->quote_materials ?? [],
+            'laborCost'      => $serviceRequest->quote_labor_cost ?? 0,
+            'transportCost'  => $serviceRequest->quote_transport_cost ?? 0,
+            'downPayment'    => $serviceRequest->quote_down_payment ?? 0,
+            'totalAmount'    => $serviceRequest->quote_amount ?? 0,
+            'notes'          => $serviceRequest->quote_notes,
+            'milestones'     => $milestones,
+            'mpesaPaybill'   => config('services.mpesa.shortcode'),
+            'bank'           => config('services.bank'),
+        ]);
+
+        $filename = 'Quotation-' . ($serviceRequest->request_id ?? $serviceRequest->id) . '.pdf';
+        return $pdf->download($filename);
+    }
+
     public function rejectRFQ(Request $request, ServiceRequest $serviceRequest)
     {
         $request->validate([

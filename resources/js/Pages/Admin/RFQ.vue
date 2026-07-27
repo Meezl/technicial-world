@@ -321,6 +321,17 @@
                                             <button v-if="rfq.rfq_status === 'quoted'" @click="viewRFQ(rfq)" class="btn btn-sm btn-success" title="View Quote">
                                                 <i class="fas fa-receipt"></i>
                                             </button>
+                                            <!-- Item 4 — same PDF the client got on email. Available
+                                                 once the RFQ has been quoted (quoted OR approved). -->
+                                            <a
+                                                v-if="['quoted', 'approved'].includes(rfq.rfq_status)"
+                                                :href="`/admin/rfq/${rfq.id}/quotation-pdf`"
+                                                @click.stop
+                                                class="btn btn-sm btn-info"
+                                                title="Download the quotation PDF (same file the client received)"
+                                            >
+                                                <i class="fas fa-file-pdf"></i>
+                                            </a>
                                             <button
                                                 v-if="rfq.rfq_status === 'quoted' && rfq.submission_mode === 'admin_proxy'"
                                                 @click="openApproveOnBehalfModal(rfq)"
