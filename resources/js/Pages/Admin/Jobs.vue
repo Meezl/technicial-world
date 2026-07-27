@@ -3,33 +3,41 @@
         <AdminSidebar current-page="jobs" />
 
         <main class="main-content">
-            <header class="main-header">
-                <h1>Jobs Monitoring</h1>
-                <div class="header-actions">
-                    <select v-model="statusFilter" @change="filterJobs" class="btn btn-secondary">
-                        <option value="">All Status</option>
-                        <option value="pending">Pending</option>
-                        <option value="assigned">Assigned</option>
-                        <option value="in_progress">In Progress</option>
-                        <option value="completed">Completed</option>
-                        <option value="cancelled">Cancelled</option>
-                    </select>
+            <header class="main-header jobs-page-header">
+                <div class="jobs-page-header-copy">
+                    <h1>Jobs Monitoring</h1>
+                    <p>Track service requests through creation, quoting, assignment, and completion.</p>
                 </div>
             </header>
 
             <section class="main-panel">
                 <div class="panel-card full-width">
-                    <div class="card-header">
-                        <h3>All Service Requests & Jobs</h3>
-                        <div class="filter-controls">
+                    <!-- Item 2 fix: toolbar with search + status side-by-side.
+                         Previously the status filter lived in the page header
+                         (functional but visually detached) and the search input
+                         had no width so it collapsed on desktop. Now they share
+                         the panel toolbar in a consistent layout. -->
+                    <div class="jobs-toolbar">
+                        <label class="jobs-search-shell">
+                            <i class="fas fa-search"></i>
                             <input
                                 type="text"
                                 v-model="searchQuery"
                                 @input="filterJobs"
-                                placeholder="Search by Job ID or Client..."
-                                style="margin-right: 1rem; padding: 0.5rem; border: 1px solid var(--border-color); border-radius: 4px;"
+                                placeholder="Search by Job ID, client name, email…"
                             >
-                        </div>
+                        </label>
+                        <label class="jobs-status-shell">
+                            <span>Status</span>
+                            <select v-model="statusFilter" @change="filterJobs">
+                                <option value="">All statuses</option>
+                                <option value="pending">Pending</option>
+                                <option value="assigned">Assigned</option>
+                                <option value="in_progress">In Progress</option>
+                                <option value="completed">Completed</option>
+                                <option value="cancelled">Cancelled</option>
+                            </select>
+                        </label>
                     </div>
                     <div class="table-scroll">
                     <table class="data-table">
@@ -487,6 +495,84 @@ defineOptions({
 </script>
 
 <style>
+
+/* Item 2 — Jobs page header simplification. The redundant h3 that
+   duplicated the h1 has been removed; the h1 gets a subtitle instead. */
+.jobs-page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+}
+.jobs-page-header-copy h1 { margin: 0 0 0.35rem; }
+.jobs-page-header-copy p { margin: 0; color: var(--text-muted, #64748b); font-size: 0.92rem; }
+
+/* Jobs toolbar — search + status filter side-by-side in the panel,
+   consistent with the RFQ page. Search input previously had no width
+   and would collapse on desktop; status filter was buried in the
+   header. Both now flow inside a flex-wrap toolbar so they're
+   reachable on any viewport. */
+.jobs-toolbar {
+    display: flex;
+    align-items: end;
+    flex-wrap: wrap;
+    gap: 1rem;
+    padding: 1.15rem 1.25rem 0;
+}
+.jobs-search-shell,
+.jobs-status-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-weight: 700;
+    color: #334155;
+}
+.jobs-search-shell {
+    flex: 1 1 340px;
+    min-width: 260px;
+    position: relative;
+}
+.jobs-search-shell > i {
+    position: absolute;
+    left: 0.9rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #94a3b8;
+    pointer-events: none;
+}
+.jobs-search-shell > input {
+    padding: 0.75rem 0.9rem 0.75rem 2.25rem;
+    border: 1px solid #d7dee7;
+    border-radius: 12px;
+    background: #f8fafc;
+    color: #0f172a;
+    font: inherit;
+    width: 100%;
+}
+.jobs-search-shell > input:focus {
+    border-color: rgba(14, 116, 144, 0.45);
+    box-shadow: 0 0 0 4px rgba(14, 116, 144, 0.12);
+    background: #ffffff;
+    outline: none;
+}
+.jobs-status-shell {
+    flex: 0 1 200px;
+    min-width: 180px;
+}
+.jobs-status-shell > span {
+    font-size: 0.82rem;
+    color: #475569;
+}
+.jobs-status-shell > select {
+    padding: 0.75rem 0.9rem;
+    border: 1px solid #d7dee7;
+    border-radius: 12px;
+    background: #f8fafc;
+    color: #0f172a;
+    font: inherit;
+    width: 100%;
+}
 
 .modal-overlay {
     position: fixed;
