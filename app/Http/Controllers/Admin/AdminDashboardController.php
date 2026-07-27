@@ -1085,22 +1085,47 @@ class AdminDashboardController extends Controller
         );
     }
 
+    /**
+     * Find the active (non-reassigned, non-declined) direct/lead assignment
+     * for this SR's primary slot — regardless of which technician it points
+     * at. Mirrors the correct slot-scoped semantics of
+     * findActiveSubTaskAssignment. Was previously tech-scoped and had an
+     * early return when technicianId was null, which meant a fresh assign
+     * against a slot with an existing active row silently created a second
+     * one → the ghost-row cascade that overspent labour budgets.
+     *
+     * The technicianId parameter is retained for backward compatibility
+     * with existing callers but is deliberately ignored so we ALWAYS find
+     * any active row on the slot, not just one for a specific tech. If
+     * more than one active row exists (should never happen post-cleanup,
+     * DB constraint coming in Layer 3), we log a warning and use the
+     * latest — better than silently ignoring the older ones.
+     */
     protected function findActivePrimaryAssignment(ServiceRequest $serviceRequest, ?int $technicianId = null): ?JobAssignment
     {
-        if (!$technicianId) {
-            return null;
-        }
-
-        return $serviceRequest->jobAssignments()
+        $query = $serviceRequest->jobAssignments()
             ->whereNull('service_sub_task_id')
-            ->where('technician_id', $technicianId)
             ->whereIn('status', [
                 JobAssignment::STATUS_PENDING,
                 JobAssignment::STATUS_ACCEPTED,
                 JobAssignment::STATUS_COMPLETED,
-            ])
-            ->latest('id')
-            ->first();
+            ]);
+
+        $activeAssignments = $query->orderByDesc('id')->get();
+
+        // Belt-and-braces diagnostic: if the slot has multiple active rows,
+        // something snuck in that our sync methods should have caught. Log
+        // it so we can spot recurrences before Layer 3 (DB uniqueness) is
+        // in place, then return the latest so downstream logic still works.
+        if ($activeAssignments->count() > 1) {
+            \Illuminate\Support\Facades\Log::warning('Multiple active primary JobAssignments detected on slot', [
+                'service_request_id' => $serviceRequest->id,
+                'request_id'         => $serviceRequest->request_id,
+                'assignment_ids'     => $activeAssignments->pluck('id')->all(),
+            ]);
+        }
+
+        return $activeAssignments->first();
     }
 
     protected function findActiveSubTaskAssignment(ServiceSubTask $serviceSubTask): ?JobAssignment
