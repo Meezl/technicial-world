@@ -317,11 +317,21 @@ class AdminDashboardController extends Controller
             $otherSpentExpenditures = $job->expenditures
                 ->where('category', 'other')->sum('amount');
 
+            // Item 3a — labour "remaining" needs to reflect COMMITTED fees
+            // (agreed assignments + sub-task fees), not just paid dues. Ops's
+            // mental model: 'how much can I still commit to a new
+            // technician?' — matches the getLaborAllocationSummary logic
+            // used by ensureLaborBudgetCapacity so the cap on new
+            // assignments and the number on this card can't diverge.
+            $laborAllocation = $this->getLaborAllocationSummary($job);
+            $laborCommitted = (float) $laborAllocation['allocated'];
+
             $budgetSummary = [
                 'labor' => [
                     'budgeted' => (float) $job->budget->labor_budget,
-                    'actual' => (float) $laborSpent,
-                    'remaining' => (float) $job->budget->labor_budget - (float) $laborSpent,
+                    'committed' => $laborCommitted,   // sum of agreed fees on all assignments + sub-tasks
+                    'actual' => (float) $laborSpent,  // what's actually left our hands
+                    'remaining' => (float) $job->budget->labor_budget - $laborCommitted,
                 ],
                 'materials' => [
                     'budgeted' => (float) $job->budget->materials_budget,
@@ -1157,10 +1167,18 @@ class AdminDashboardController extends Controller
         }
 
         if ($agreedCompensation > ($allocation['remaining'] + 0.0001)) {
+            // Item 3b — verbose breakdown so ops sees WHY they're capped
+            // and where the ceiling came from (was previously just "up to
+            // KSH X" with no context). Names each existing commitment so
+            // stale/orphan assignments are visible instead of mysterious.
             throw ValidationException::withMessages([
-                'agreed_compensation' => 'This assignment exceeds the remaining labor budget. Up to KSH '
-                    . number_format(max($allocation['remaining'], 0), 2)
-                    . ' is still available for technician dues on this job.',
+                'agreed_compensation' => sprintf(
+                    'This assignment (KSH %s) exceeds the remaining labor budget. Labor budget is KSH %s; already committed to other technicians on this job: KSH %s; remaining for a new commitment: KSH %s. Either lower this fee, raise the labor budget, or free up capacity by removing/reducing an existing assignment.',
+                    number_format($agreedCompensation, 2),
+                    number_format($allocation['budgeted'], 2),
+                    number_format($allocation['allocated'], 2),
+                    number_format(max($allocation['remaining'], 0), 2),
+                ),
             ]);
         }
     }

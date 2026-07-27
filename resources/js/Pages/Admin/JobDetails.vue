@@ -427,6 +427,18 @@
                                             v-if="job.lead_technician_id === subTask.technician.id"
                                             class="lead-badge"
                                         >Lead</span>
+                                        <!-- Item 3c — technician fee inline on the
+                                             sub-task card. Was persisted but never
+                                             displayed; client called out that the
+                                             fee "disappears after assignment". -->
+                                        <span
+                                            v-if="Number(subTask.agreed_compensation) > 0"
+                                            class="subtask-fee-pill"
+                                            title="Agreed technician fee for this sub-task"
+                                        >
+                                            <i class="fas fa-hand-holding-usd"></i>
+                                            KSH {{ formatCurrency(subTask.agreed_compensation) }}
+                                        </span>
                                     </div>
                                     <div v-else class="unassigned">
                                         <span class="text-muted"><i class="fas fa-user-slash"></i> Unassigned</span>
@@ -763,12 +775,21 @@
                                         <span>Budgeted</span>
                                         <strong>KSH {{ formatCurrency(budgetSummary[cat].budgeted) }}</strong>
                                     </div>
+                                    <!-- Item 3a — labour cards show 'Committed'
+                                         (agreed fees on all assignments + sub-tasks)
+                                         separately from 'Spent' (money actually paid
+                                         out). Non-labour categories don't have a
+                                         commit-vs-pay distinction, so the row hides. -->
+                                    <div v-if="cat === 'labor'" class="budget-row">
+                                        <span>Committed <small style="color: var(--text-muted);">(agreed with technicians)</small></span>
+                                        <strong>KSH {{ formatCurrency(budgetSummary[cat].committed || 0) }}</strong>
+                                    </div>
                                     <div class="budget-row">
-                                        <span>Spent</span>
+                                        <span>Spent {{ cat === 'labor' ? '(paid out)' : '' }}</span>
                                         <strong>KSH {{ formatCurrency(budgetSummary[cat].actual) }}</strong>
                                     </div>
                                     <div class="budget-row">
-                                        <span>Remaining</span>
+                                        <span>Remaining {{ cat === 'labor' ? '(to commit)' : '' }}</span>
                                         <strong :class="{ negative: budgetSummary[cat].remaining < 0, positive: budgetSummary[cat].remaining >= 0 }">
                                             KSH {{ formatCurrency(budgetSummary[cat].remaining) }}
                                         </strong>
@@ -835,6 +856,31 @@
                                     </li>
                                 </ul>
                             </div>
+                        </div>
+
+                        <!-- Item 3c — labour committed breakdown. Lists the lead's
+                             direct assignment fee + each sub-task fee so admins can
+                             see what makes up the "Committed" number on the labour
+                             card and answer the client's ask: "see the technician
+                             fees for each task and subtask". -->
+                        <div v-if="labourFeeBreakdown.length" class="labour-breakdown">
+                            <div class="labour-breakdown-header">
+                                <h4><i class="fas fa-users-cog"></i> Labour committed breakdown</h4>
+                                <span>{{ labourFeeBreakdown.length }} technician{{ labourFeeBreakdown.length === 1 ? '' : 's' }}</span>
+                            </div>
+                            <ul class="labour-breakdown-list">
+                                <li v-for="row in labourFeeBreakdown" :key="row.key" class="labour-breakdown-row">
+                                    <div class="lb-copy">
+                                        <strong>{{ row.name }}</strong>
+                                        <span class="lb-role">{{ row.role }}</span>
+                                    </div>
+                                    <strong class="lb-amount">KSH {{ formatCurrency(row.amount) }}</strong>
+                                </li>
+                                <li class="labour-breakdown-row lb-total">
+                                    <div class="lb-copy"><strong>Total committed</strong></div>
+                                    <strong class="lb-amount">KSH {{ formatCurrency(labourCommittedTotal) }}</strong>
+                                </li>
+                            </ul>
                         </div>
 
                         <div v-if="displayQuoteAmount || displayFinalAmount" class="pricing-strip">
@@ -1778,6 +1824,56 @@ function expendituresByCategory(category) {
         .sort((a, b) => new Date(b.expense_date || b.created_at) - new Date(a.expense_date || a.created_at))
 }
 
+// Item 3c — flat list of every commitment against the labour budget:
+// the lead technician's direct assignment fee (if any) + one row per
+// sub-task with a technician assigned. Feeds the breakdown panel in
+// the Finance section so admins can trace what makes up the "Committed"
+// number and answer "who's owed what on this job?".
+const labourFeeBreakdown = computed(() => {
+    const rows = []
+
+    // Direct (non-sub-task) assignments — usually the lead's fee on jobs
+    // that aren't split into sub-tasks, or the lead's share when they are.
+    // Uses job_assignments (Laravel serializes jobAssignments as snake_case).
+    const primary = props.job.job_assignments?.find?.((a) => !a.service_sub_task_id
+        && ['pending', 'accepted', 'completed'].includes(a.status))
+    if (primary && Number(primary.agreed_compensation) > 0) {
+        rows.push({
+            key: 'primary-' + primary.id,
+            name: primary.technician?.user?.name || 'Assigned technician',
+            role: props.job.has_sub_tasks ? 'Lead technician' : 'Technician',
+            amount: Number(primary.agreed_compensation),
+        })
+    } else if (props.job.technician && Number(currentSingleAssignment.value?.agreed_compensation || 0) > 0) {
+        // Fallback for the single-tech path where assignment data comes
+        // through currentSingleAssignment rather than a top-level relation.
+        rows.push({
+            key: 'primary-single',
+            name: props.job.technician?.user?.name || 'Assigned technician',
+            role: 'Technician',
+            amount: Number(currentSingleAssignment.value.agreed_compensation),
+        })
+    }
+
+    // Sub-tasks with a technician + fee attached.
+    for (const st of props.job.sub_tasks || []) {
+        if (st.technician && Number(st.agreed_compensation) > 0) {
+            rows.push({
+                key: 'subtask-' + st.id,
+                name: st.technician?.user?.name || 'Sub-task technician',
+                role: 'Sub-task: ' + (st.title || `#${st.order}`),
+                amount: Number(st.agreed_compensation),
+            })
+        }
+    }
+
+    return rows
+})
+
+const labourCommittedTotal = computed(() =>
+    labourFeeBreakdown.value.reduce((sum, r) => sum + (Number(r.amount) || 0), 0)
+)
+
 // crypto.randomUUID is present in every modern browser + Safari 15.4+.
 // Fall back to a simple RFC-4122 shim on the off-chance it isn't.
 function makeDedupKey() {
@@ -2640,9 +2736,15 @@ const formatCurrency = (val) => {
     return num.toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+// Percent-used uses COMMITTED for labor (matches the mental model of
+// "how much of the budget is spoken for") and ACTUAL for materials/other
+// (where every expenditure is a hard spend). Fixes the client's confusion
+// where the labor bar showed 0% used after committing KSH 15k to techs.
 const getPercentUsed = (cat) => {
-    if (!cat.budgeted || cat.budgeted === 0) return cat.actual > 0 ? 100 : 0
-    return (cat.actual / cat.budgeted) * 100
+    const denom = cat.budgeted || 0
+    if (denom === 0) return cat.actual > 0 || (cat.committed ?? 0) > 0 ? 100 : 0
+    const numerator = cat.committed !== undefined ? cat.committed : cat.actual
+    return (numerator / denom) * 100
 }
 
 const getProgressColor = (pct) => {
@@ -3429,6 +3531,78 @@ defineOptions({
     color: #1e40af;
     font-weight: 700;
 }
+
+/* Item 3c — sub-task technician fee pill. Green so it reads as
+   money-owed context rather than a warning; distinct from the blue
+   lead badge so both can sit side by side. */
+.subtask-fee-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.55rem;
+    border-radius: 999px;
+    background: #dcfce7;
+    color: #065f46;
+    font-weight: 700;
+    font-size: 0.78rem;
+}
+
+/* Labour committed breakdown panel — sits under the finance grid,
+   lists every technician commitment on this job so ops can see what
+   the "Committed" number is made of. */
+.labour-breakdown {
+    margin-top: 1.25rem;
+    padding: 1rem 1.15rem;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+}
+.labour-breakdown-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 0.75rem;
+}
+.labour-breakdown-header h4 {
+    margin: 0;
+    color: #0f172a;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+.labour-breakdown-header > span {
+    font-size: 0.8rem;
+    color: #64748b;
+}
+.labour-breakdown-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+.labour-breakdown-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.7rem;
+    background: #ffffff;
+    border: 1px solid #eef2f7;
+    border-radius: 8px;
+}
+.lb-copy { min-width: 0; }
+.lb-copy strong { display: block; color: #0f172a; font-size: 0.9rem; }
+.lb-role { font-size: 0.76rem; color: #64748b; }
+.lb-amount { color: #065f46; white-space: nowrap; }
+.labour-breakdown-row.lb-total {
+    background: #ecfdf5;
+    border-color: #a7f3d0;
+    margin-top: 0.25rem;
+}
+.labour-breakdown-row.lb-total .lb-amount { color: #065f46; font-size: 1.05rem; }
 
 .subtask-technician {
     padding: 0.8rem 0.9rem;
