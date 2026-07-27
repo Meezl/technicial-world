@@ -15,6 +15,7 @@ class Expenditure extends Model
         'vendor',
         'receipt_reference',
         'recorded_by',
+        'dedup_key',
         'expense_date',
         'notes',
     ];

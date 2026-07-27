@@ -796,6 +796,44 @@
                                 >
                                     <i class="fas fa-receipt"></i> Record {{ cat }} expense
                                 </button>
+
+                                <!-- Item 1b — inline list of recorded expenditures
+                                     for this category so the admin can edit or
+                                     delete a mistake without leaving the job. -->
+                                <ul v-if="cat !== 'labor' && expendituresByCategory(cat).length" class="budget-expenditures-list">
+                                    <li
+                                        v-for="exp in expendituresByCategory(cat)"
+                                        :key="exp.id"
+                                        class="budget-expenditure-row"
+                                    >
+                                        <div class="be-copy">
+                                            <strong>{{ exp.description }}</strong>
+                                            <span class="be-meta">
+                                                KSH {{ formatCurrency(exp.amount) }}
+                                                <template v-if="exp.expense_date"> · {{ formatDateOnly(exp.expense_date) }}</template>
+                                                <template v-if="exp.vendor"> · {{ exp.vendor }}</template>
+                                            </span>
+                                        </div>
+                                        <div class="be-actions">
+                                            <button
+                                                type="button"
+                                                class="be-icon-btn"
+                                                @click="openEditExpenseModal(exp)"
+                                                title="Edit this expenditure"
+                                            >
+                                                <i class="fas fa-pen"></i>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="be-icon-btn be-danger"
+                                                @click="deleteExpenditureRow(exp)"
+                                                title="Delete this expenditure"
+                                            >
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                    </li>
+                                </ul>
                             </div>
                         </div>
 
@@ -1215,12 +1253,12 @@
             </div>
         </div>
 
-        <!-- Record Expense Modal (#11) -->
+        <!-- Record / Edit Expense Modal (Item 1a + 1b) -->
         <div v-if="showExpenseModal" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
-                    <h3>Record {{ expenseForm.category }} expense</h3>
-                    <button @click="showExpenseModal = false" class="close-btn">&times;</button>
+                    <h3>{{ editingExpenditureId ? 'Edit' : 'Record' }} {{ expenseForm.category }} expense</h3>
+                    <button @click="closeExpenseModal" class="close-btn">&times;</button>
                 </div>
                 <div class="modal-body">
                     <form @submit.prevent="saveExpenseFromBudget">
@@ -1252,12 +1290,16 @@
                             <label>Notes</label>
                             <textarea v-model="expenseForm.notes" rows="2" class="form-control" placeholder="Optional — e.g. allocation, delivery instructions"></textarea>
                         </div>
+                        <p v-if="expenseError" class="expense-error">
+                            <i class="fas fa-triangle-exclamation"></i> {{ expenseError }}
+                        </p>
                     </form>
                 </div>
                 <div class="modal-footer">
-                    <button @click="showExpenseModal = false" class="btn btn-secondary">Cancel</button>
-                    <button @click="saveExpenseFromBudget" class="btn btn-primary" :disabled="!canSaveExpense">
-                        Save expense
+                    <button @click="closeExpenseModal" class="btn btn-secondary">Cancel</button>
+                    <button @click="saveExpenseFromBudget" class="btn btn-primary" :disabled="!canSaveExpense || savingExpense">
+                        <i v-if="savingExpense" class="fas fa-spinner fa-spin"></i>
+                        {{ savingExpense ? 'Saving…' : (editingExpenditureId ? 'Save changes' : 'Save expense') }}
                     </button>
                 </div>
             </div>
@@ -1705,6 +1747,13 @@ const editSubTaskForm = reactive({
 // Budget state
 const showBudgetModal = ref(false)
 const showExpenseModal = ref(false)
+// Item 1a — in-flight guard so rage-clicks don't fire multiple POSTs.
+const savingExpense = ref(false)
+// Item 1b — non-null when editing an existing expenditure.
+const editingExpenditureId = ref(null)
+// Inline error shown in the modal when the server rejects (typically the
+// hard-cap message from Item 1c).
+const expenseError = ref('')
 const expenseForm = ref({
     category: 'materials',
     description: '',
@@ -1713,8 +1762,33 @@ const expenseForm = ref({
     vendor: '',
     receipt_reference: '',
     notes: '',
+    // Item 1a — per-modal-open UUID. Second/third POST with the same key
+    // is folded to a no-op server-side even if the Vue guard slips.
+    dedup_key: null,
 })
 const canSaveExpense = computed(() => !!expenseForm.value.description && Number(expenseForm.value.amount) > 0)
+
+// Recent expenditures for a given category, newest first. Rendered under
+// each budget card so ops can edit/delete without leaving the job page.
+function expendituresByCategory(category) {
+    const rows = props.job.expenditures || []
+    return rows
+        .filter((e) => e.category === category)
+        .slice()
+        .sort((a, b) => new Date(b.expense_date || b.created_at) - new Date(a.expense_date || a.created_at))
+}
+
+// crypto.randomUUID is present in every modern browser + Safari 15.4+.
+// Fall back to a simple RFC-4122 shim on the off-chance it isn't.
+function makeDedupKey() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID()
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0
+        return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16)
+    })
+}
 
 function openExpenseModal(category) {
     expenseForm.value = {
@@ -1725,18 +1799,73 @@ function openExpenseModal(category) {
         vendor: '',
         receipt_reference: '',
         notes: '',
+        dedup_key: makeDedupKey(),
     }
+    editingExpenditureId.value = null
+    expenseError.value = ''
     showExpenseModal.value = true
 }
 
+function openEditExpenseModal(expenditure) {
+    expenseForm.value = {
+        category: expenditure.category,
+        description: expenditure.description,
+        amount: Number(expenditure.amount),
+        expense_date: expenditure.expense_date ? String(expenditure.expense_date).slice(0, 10) : new Date().toISOString().slice(0, 10),
+        vendor: expenditure.vendor || '',
+        receipt_reference: expenditure.receipt_reference || '',
+        notes: expenditure.notes || '',
+        dedup_key: null, // edits don't need dedup — PUT is naturally idempotent
+    }
+    editingExpenditureId.value = expenditure.id
+    expenseError.value = ''
+    showExpenseModal.value = true
+}
+
+function closeExpenseModal() {
+    showExpenseModal.value = false
+    savingExpense.value = false
+    editingExpenditureId.value = null
+    expenseError.value = ''
+}
+
+function deleteExpenditureRow(expenditure) {
+    if (!confirm(`Delete expenditure "${expenditure.description}" (KSH ${Number(expenditure.amount).toLocaleString()})? This cannot be undone.`)) return
+    router.delete(`/admin/expenditures/${expenditure.id}`, {
+        preserveScroll: true,
+    })
+}
+
 function saveExpenseFromBudget() {
-    if (!canSaveExpense.value) return
-    router.post('/admin/expenditures', {
+    if (!canSaveExpense.value || savingExpense.value) return
+    savingExpense.value = true
+    expenseError.value = ''
+
+    const url = editingExpenditureId.value
+        ? `/admin/expenditures/${editingExpenditureId.value}`
+        : '/admin/expenditures'
+    const method = editingExpenditureId.value ? 'put' : 'post'
+
+    router[method](url, {
         service_request_id: props.job.id,
         ...expenseForm.value,
     }, {
         preserveScroll: true,
-        onSuccess: () => { showExpenseModal.value = false },
+        onSuccess: () => {
+            closeExpenseModal()
+        },
+        onError: (errors) => {
+            // Surface the hard-cap message (Item 1c) inline so the admin
+            // sees exactly why and what to do about it, instead of a
+            // generic form error.
+            expenseError.value = errors?.amount || errors?.category || errors?.description
+                || 'Could not save the expense. Please check the fields and try again.'
+            savingExpense.value = false
+        },
+        onFinish: () => {
+            // Belt-and-braces — always release the button.
+            savingExpense.value = false
+        },
     })
 }
 const budgetForm = reactive({
@@ -3640,6 +3769,83 @@ defineOptions({
     color: #0f172a;
     text-transform: capitalize;
 }
+
+/* Item 1b — inline expenditures list under each budget category card. */
+.budget-expenditures-list {
+    list-style: none;
+    margin: 0.75rem 0 0;
+    padding: 0.5rem 0 0;
+    border-top: 1px dashed #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    max-height: 200px;
+    overflow-y: auto;
+}
+.budget-expenditure-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.4rem 0.5rem;
+    background: #f8fafc;
+    border-radius: 6px;
+    border: 1px solid #eef2f7;
+}
+.be-copy { min-width: 0; flex: 1; }
+.be-copy strong {
+    display: block;
+    color: #0f172a;
+    font-size: 0.85rem;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.be-meta {
+    display: block;
+    font-size: 0.72rem;
+    color: #64748b;
+    margin-top: 0.15rem;
+}
+.be-actions {
+    display: flex;
+    gap: 0.3rem;
+    flex-shrink: 0;
+}
+.be-icon-btn {
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #e5e7eb;
+    background: #ffffff;
+    color: #475569;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.be-icon-btn:hover { background: #f1f5f9; border-color: #cbd5e1; }
+.be-icon-btn.be-danger:hover { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
+
+/* Inline error on the expense modal — surfaces the hard-cap message
+   from Item 1c so admins see exactly why and what to do. */
+.expense-error {
+    margin: 0.85rem 0 0;
+    padding: 0.65rem 0.8rem;
+    background: #fef2f2;
+    border-left: 3px solid #dc2626;
+    border-radius: 6px;
+    color: #7f1d1d;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+}
+.expense-error i { flex-shrink: 0; margin-top: 0.15rem; }
 
 .budget-amounts {
     display: flex;

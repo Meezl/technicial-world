@@ -10,7 +10,9 @@ use App\Models\ServiceRequestBudget;
 use App\Models\TechnicianPayment;
 use App\Services\TechnicianPaymentService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 
 class AdminPaymentController extends Controller
 {
@@ -291,6 +293,15 @@ class AdminPaymentController extends Controller
 
     /**
      * Record an expenditure (materials or other).
+     *
+     * Item 1 fixes stacked:
+     *  - dedup_key handling makes rage-clicks a no-op instead of duplicate
+     *    rows. Client sends a fresh UUID per modal open; second POST with
+     *    the same (recorded_by, dedup_key) returns the existing row.
+     *  - Hard cap enforced BEFORE insert. If the amount would push
+     *    total category spend past the budgeted category amount, the
+     *    request is rejected with a friendly message naming the shortfall.
+     *    Ops must amend the budget upward before the expense can land.
      */
     public function storeExpenditure(Request $request)
     {
@@ -303,26 +314,68 @@ class AdminPaymentController extends Controller
             'receipt_reference' => 'nullable|string|max:255',
             'expense_date' => 'nullable|date',
             'notes' => 'nullable|string|max:500',
+            'dedup_key' => 'nullable|string|size:36',
         ]);
 
-        Expenditure::create([
-            'expenditure_id' => Expenditure::generateExpenditureId(),
-            'service_request_id' => $request->service_request_id,
-            'category' => $request->category,
-            'description' => $request->description,
-            'amount' => $request->amount,
-            'vendor' => $request->vendor,
-            'receipt_reference' => $request->receipt_reference,
-            'recorded_by' => auth()->id(),
-            'expense_date' => $request->expense_date,
-            'notes' => $request->notes,
-        ]);
+        $userId = auth()->id();
+        $dedupKey = $request->input('dedup_key');
+
+        // Idempotency: if we've already handled this dedup_key from this
+        // user, return the existing row without inserting again. Handles
+        // the client's rage-click case where the form fires 3 POSTs before
+        // the first response comes back.
+        if ($dedupKey) {
+            $existing = Expenditure::where('recorded_by', $userId)
+                ->where('dedup_key', $dedupKey)
+                ->first();
+            if ($existing) {
+                return back()->with('success', 'Expenditure recorded.');
+            }
+        }
+
+        // Hard cap: block the create if it would push category spend past
+        // the budgeted amount. Ops must amend the budget first.
+        $this->ensureExpenditureFitsBudget(
+            (int) $request->service_request_id,
+            $request->category,
+            (float) $request->amount,
+            excludeExpenditureId: null,
+        );
+
+        try {
+            Expenditure::create([
+                'expenditure_id' => Expenditure::generateExpenditureId(),
+                'service_request_id' => $request->service_request_id,
+                'category' => $request->category,
+                'description' => $request->description,
+                'amount' => $request->amount,
+                'vendor' => $request->vendor,
+                'receipt_reference' => $request->receipt_reference,
+                'recorded_by' => $userId,
+                'dedup_key' => $dedupKey,
+                'expense_date' => $request->expense_date,
+                'notes' => $request->notes,
+            ]);
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Second-line dedup guard: if the client Vue check missed
+            // (page refresh, tab restore) but the unique index catches it,
+            // fold the duplicate-key error into a success so ops doesn't
+            // see a confusing 500.
+            if ($dedupKey && str_contains(strtolower($e->getMessage()), 'duplicate')) {
+                return back()->with('success', 'Expenditure recorded.');
+            }
+            throw $e;
+        }
 
         return back()->with('success', 'Expenditure recorded.');
     }
 
     /**
-     * Update an expenditure.
+     * Update an expenditure. Hard-caps on update follow the rule agreed
+     * with the client: an update that KEEPS or REDUCES the amount is
+     * always allowed (lets ops fix typos even if the budget is already
+     * overspent); an update that RAISES the amount is checked against
+     * the remaining budget the same way a create is.
      */
     public function updateExpenditure(Request $request, Expenditure $expenditure)
     {
@@ -336,6 +389,24 @@ class AdminPaymentController extends Controller
             'notes' => 'nullable|string|max:500',
         ]);
 
+        $newAmount = (float) $request->amount;
+        $priorAmount = (float) $expenditure->amount;
+        $newCategory = $request->category;
+        $priorCategory = $expenditure->category;
+
+        // Only re-check the cap when the category or amount would push
+        // more money into the budget than before. Reductions and same-
+        // amount edits are always allowed.
+        $needsCapCheck = ($newCategory !== $priorCategory) || ($newAmount > $priorAmount);
+        if ($needsCapCheck) {
+            $this->ensureExpenditureFitsBudget(
+                serviceRequestId: (int) $expenditure->service_request_id,
+                category: $newCategory,
+                incomingAmount: $newAmount,
+                excludeExpenditureId: $expenditure->id,
+            );
+        }
+
         $expenditure->update($request->only([
             'category',
             'description',
@@ -347,6 +418,59 @@ class AdminPaymentController extends Controller
         ]));
 
         return back()->with('success', 'Expenditure updated.');
+    }
+
+    /**
+     * Central cap enforcement. Throws a ValidationException whose message
+     * both names the overshoot amount and tells ops how to unblock (amend
+     * the budget), matching the wording the client asked for.
+     */
+    protected function ensureExpenditureFitsBudget(
+        int $serviceRequestId,
+        string $category,
+        float $incomingAmount,
+        ?int $excludeExpenditureId = null,
+    ): void {
+        $sr = ServiceRequest::with('budget')->find($serviceRequestId);
+        if (!$sr || !$sr->budget) {
+            throw ValidationException::withMessages([
+                'amount' => 'Set a budget for this job before recording expenses.',
+            ]);
+        }
+
+        $budgetField = $category . '_budget'; // materials_budget / other_budget
+        $categoryBudget = (float) ($sr->budget->{$budgetField} ?? 0);
+
+        // Existing expenditures on this SR under the same category, minus
+        // the one being edited (so an unchanged amount doesn't count twice).
+        $alreadyRecorded = (float) Expenditure::where('service_request_id', $serviceRequestId)
+            ->where('category', $category)
+            ->when($excludeExpenditureId, fn ($q) => $q->where('id', '!=', $excludeExpenditureId))
+            ->sum('amount');
+
+        // Include labour-paid materials from technician_payments so we
+        // don't have two systems double-crediting the same category cap.
+        $paidViaTechnicianPayments = (float) TechnicianPayment::where('service_request_id', $serviceRequestId)
+            ->where('category', $category)
+            ->where('status', 'completed')
+            ->sum('amount');
+
+        $totalIfRecorded = $alreadyRecorded + $paidViaTechnicianPayments + $incomingAmount;
+
+        if ($totalIfRecorded > $categoryBudget + 0.001) {
+            $overshoot = $totalIfRecorded - $categoryBudget;
+            throw ValidationException::withMessages([
+                'amount' => sprintf(
+                    'This expense would push the %s budget over by KSH %s (budgeted KSH %s, already committed KSH %s, this expense KSH %s). Amend the %s budget upward first, then record the expense.',
+                    $category,
+                    number_format($overshoot, 2),
+                    number_format($categoryBudget, 2),
+                    number_format($alreadyRecorded + $paidViaTechnicianPayments, 2),
+                    number_format($incomingAmount, 2),
+                    $category,
+                ),
+            ]);
+        }
     }
 
     /**
