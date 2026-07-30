@@ -117,20 +117,37 @@
                 </article>
             </section>
 
-            <!-- Toolbar / Filters -->
-            <section class="rfq-toolbar-section">
+            <!-- Toolbar / Filters — sticky on scroll so the search + pill stay
+                 reachable as ops walks the table. Advanced filters collapse
+                 behind a toggle on narrow screens so the phone header stays
+                 tight; on desktop they're always visible. -->
+            <section class="rfq-toolbar-section rfq-toolbar-sticky">
                 <div class="panel-card toolbar-shell">
-                    <div class="toolbar-header">
-                        <div>
-                            <span class="section-kicker">Filters</span>
-                            <h3>Find the right request faster</h3>
-                            <p>Search by client, request ID, service, description, or location, then refine the list with filters and page size.</p>
-                        </div>
-                    </div>
+                    <!-- Primary row: search + Needs Action + advanced toggle.
+                         Always visible on every viewport. -->
+                    <div class="toolbar-primary">
+                        <label class="search-shell">
+                            <i class="fas fa-search search-shell-icon"></i>
+                            <input
+                                ref="searchInput"
+                                v-model="localSearch"
+                                type="text"
+                                placeholder="Search request ID, client, service, location…"
+                                @input="onSearchInput"
+                                @keyup.enter="applyFilters"
+                            >
+                            <button
+                                v-if="localSearch"
+                                type="button"
+                                class="search-clear-btn"
+                                @click="clearSearch"
+                                aria-label="Clear search"
+                                title="Clear search"
+                            >
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </label>
 
-                    <div class="toolbar-grid">
-                        <!-- Needs-Action toggle: single-click way to jump to the
-                             REQs waiting on ops instead of scrolling every row. -->
                         <button
                             type="button"
                             class="needs-action-pill"
@@ -139,20 +156,29 @@
                             :title="localNeedsAction ? 'Showing only REQs that need action — click to show all' : 'Show only REQs that need action'"
                         >
                             <i class="fas fa-bell"></i>
-                            <span>Needs Action</span>
+                            <span class="needs-action-label">Needs Action</span>
                             <span v-if="stats?.needsAction" class="needs-action-count">{{ stats.needsAction }}</span>
                         </button>
 
-                        <label class="search-shell toolbar-field toolbar-field-wide">
-                            <i class="fas fa-search"></i>
-                            <input
-                                v-model="localSearch"
-                                type="text"
-                                placeholder="Search by client, request ID, service, location..."
-                                @keyup.enter="applyFilters"
-                            >
-                        </label>
+                        <!-- Mobile-only: reveal/hide the advanced filters.
+                             On desktop the advanced filters are always shown
+                             (this button is display:none via media query). -->
+                        <button
+                            type="button"
+                            class="advanced-toggle-btn"
+                            :class="{ 'advanced-toggle-active': showAdvancedFilters }"
+                            @click="showAdvancedFilters = !showAdvancedFilters"
+                            :aria-expanded="showAdvancedFilters"
+                        >
+                            <i class="fas fa-sliders-h"></i>
+                            <span>Filters</span>
+                            <span v-if="advancedFilterCount" class="advanced-filter-badge">{{ advancedFilterCount }}</span>
+                            <i :class="['fas', 'chevron', showAdvancedFilters ? 'fa-chevron-up' : 'fa-chevron-down']"></i>
+                        </button>
+                    </div>
 
+                    <!-- Advanced filters row. Always visible on desktop, toggled on mobile. -->
+                    <div class="toolbar-advanced" :class="{ 'toolbar-advanced-open': showAdvancedFilters }">
                         <label class="toolbar-field">
                             <span>Status</span>
                             <select v-model="localStatus" @change="applyFilters" class="status-filter">
@@ -198,7 +224,7 @@
 
                     <div v-if="activeFilterChips.length" class="filter-chip-row">
                         <span v-for="chip in activeFilterChips" :key="chip" class="filter-chip">{{ chip }}</span>
-                        <button @click="clearFilters" class="clear-chip-btn">Clear filters</button>
+                        <button @click="clearFilters" class="clear-chip-btn">Clear all</button>
                     </div>
                 </div>
             </section>
@@ -1359,6 +1385,37 @@ const localSort = ref(props.filters.sort || 'newest')
 const localPerPage = ref(props.filters.per_page || 15)
 const localNeedsAction = ref(Boolean(props.filters.needs_action))
 
+// Advanced filters (status/origin/sort/per_page) are collapsed on mobile by
+// default so the primary bar (search + Needs Action) stays quiet. Expanded
+// by default when any advanced filter is already active — no point hiding
+// the current state from the admin.
+const advancedFilterCount = computed(() => {
+    let n = 0
+    if (localStatus.value && localStatus.value !== 'all') n++
+    if (localOrigin.value && localOrigin.value !== 'all') n++
+    if (localSort.value && localSort.value !== 'newest') n++
+    if (localPerPage.value && Number(localPerPage.value) !== 15) n++
+    return n
+})
+const showAdvancedFilters = ref(advancedFilterCount.value > 0)
+
+// Debounce timer id for live-search. Server round-trip fires 400ms after
+// the last keystroke; also on Enter for admins who prefer to submit
+// deliberately. Cancelled if a new keystroke arrives before the timer fires.
+let searchDebounce = null
+function onSearchInput() {
+    if (searchDebounce) clearTimeout(searchDebounce)
+    searchDebounce = setTimeout(() => {
+        searchDebounce = null
+        applyFilters()
+    }, 400)
+}
+function clearSearch() {
+    if (searchDebounce) { clearTimeout(searchDebounce); searchDebounce = null }
+    localSearch.value = ''
+    applyFilters()
+}
+
 // Modal state
 const showViewModal = ref(false)
 const showReviewModal = ref(false)
@@ -2082,27 +2139,165 @@ defineOptions({ layout: null })
 .stat-icon.value { background: #9333EA; }
 
 .rfq-toolbar-section { margin-bottom: 1.5rem; }
-.toolbar-grid {
-    /* Was a fixed 4-column grid; switched to flex-wrap so the new Needs
-       Action pill and any future filters flow naturally onto the next line
-       on narrow viewports instead of breaking the row. */
-    display: flex !important;
+
+/* Sticky toolbar so the search + Needs Action pill stay reachable when
+   ops walks a long RFQ list. `top: 0` sits under the (fixed) admin
+   sidebar header; z-index above the table so scroll shadows don't win. */
+.rfq-toolbar-sticky {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: transparent; /* let the panel-card inside provide the fill */
+}
+.rfq-toolbar-sticky > .toolbar-shell {
+    box-shadow: 0 8px 24px -20px rgba(15, 23, 42, 0.35);
+}
+
+/* Primary bar: search + Needs Action pill + Filters toggle. Always visible
+   on every viewport. On mobile the Filters button reveals the advanced
+   filters; on desktop it's hidden and advanced filters are always shown. */
+.toolbar-primary {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+}
+.toolbar-primary > .search-shell { flex: 1 1 320px; min-width: 220px; }
+.toolbar-primary > .needs-action-pill { flex: 0 0 auto; }
+.toolbar-primary > .advanced-toggle-btn { flex: 0 0 auto; }
+
+/* Advanced-filters row: status + origin + sort + per-page. Always visible
+   on desktop; collapses on mobile behind the Filters toggle button. */
+.toolbar-advanced {
+    display: flex;
     flex-wrap: wrap;
     align-items: end;
     gap: 1rem;
     margin-top: 1rem;
 }
-.toolbar-grid > .toolbar-field { flex: 1 1 180px; min-width: 180px; }
-.toolbar-grid > .toolbar-field-wide { flex: 2 1 260px; min-width: 260px; }
-.toolbar-grid > .needs-action-pill { flex: 0 0 auto; }
-.toolbar-field { display: flex; flex-direction: column; gap: 0.45rem; font-weight: 700; color: #334155; }
-.search-shell { display: inline-flex; align-items: center; gap: 0.65rem; padding: 0.82rem 0.95rem; border-radius: 14px; border: 1px solid #d7dee7; background: #f8fafc; }
-.search-shell input, .status-filter { width: 100%; box-sizing: border-box; padding: 0.82rem 0.95rem; border: 1px solid #d7dee7; border-radius: 14px; background: #f8fafc; color: #0f172a; font: inherit; }
-.search-shell input { padding: 0; border: none; background: transparent; outline: none; }
-.search-shell:focus-within, .status-filter:focus { border-color: rgba(14, 116, 144, 0.45); box-shadow: 0 0 0 4px rgba(14, 116, 144, 0.12); background: #ffffff; outline: none; }
-.filter-chip-row { margin-top: 1rem; }
-.filter-chip { background: #e0f2fe; color: #0f6c8f; }
-.clear-chip-btn { border: none; background: transparent; color: #0f6c8f; font-size: 0.82rem; font-weight: 700; cursor: pointer; }
+.toolbar-advanced > .toolbar-field { flex: 1 1 180px; min-width: 160px; }
+
+.toolbar-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    font-weight: 700;
+    color: #334155;
+}
+
+/* Search shell — pill-shaped input with a leading search icon and a
+   trailing × clear button that appears only when there's text. */
+.search-shell {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0 0.95rem;
+    border-radius: 14px;
+    border: 1px solid #d7dee7;
+    background: #f8fafc;
+    min-height: 48px; /* consistent touch target with the pill + toggle */
+}
+.search-shell-icon { color: #94a3b8; }
+.search-shell input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.75rem 0;
+    border: none;
+    background: transparent;
+    color: #0f172a;
+    font: inherit;
+    outline: none;
+}
+.search-shell input::placeholder { color: #94a3b8; }
+.search-shell:focus-within {
+    border-color: rgba(14, 116, 144, 0.45);
+    box-shadow: 0 0 0 4px rgba(14, 116, 144, 0.12);
+    background: #ffffff;
+}
+.search-clear-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.18);
+    color: #475569;
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.12s ease;
+}
+.search-clear-btn:hover { background: rgba(148, 163, 184, 0.35); color: #0f172a; }
+
+/* Native select styling to match the search input so the row reads as
+   one control family instead of a mismatched grab-bag. */
+.status-filter {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 48px;
+    padding: 0 0.95rem;
+    border: 1px solid #d7dee7;
+    border-radius: 14px;
+    background: #f8fafc;
+    color: #0f172a;
+    font: inherit;
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.9rem center;
+    padding-right: 2.5rem;
+}
+.status-filter:focus {
+    border-color: rgba(14, 116, 144, 0.45);
+    box-shadow: 0 0 0 4px rgba(14, 116, 144, 0.12);
+    background-color: #ffffff;
+    outline: none;
+}
+
+/* Mobile-only Filters toggle. Displays advanced-filter count as a badge
+   so admins see how many filters are currently active without expanding.
+   Hidden on desktop (>= 900px) where advanced filters are always shown. */
+.advanced-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0 1rem;
+    min-height: 48px;
+    background: #f8fafc;
+    border: 1px solid #d7dee7;
+    color: #334155;
+    border-radius: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.advanced-toggle-btn:hover { background: #f1f5f9; }
+.advanced-toggle-btn.advanced-toggle-active {
+    background: #eff6ff;
+    border-color: #93c5fd;
+    color: #1e3a8a;
+}
+.advanced-toggle-btn > .chevron { font-size: 0.7rem; }
+.advanced-filter-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 0.4rem;
+    background: #dc2626;
+    color: #fff;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+.filter-chip-row { margin-top: 1rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.filter-chip { background: #e0f2fe; color: #0f6c8f; padding: 0.35rem 0.7rem; border-radius: 999px; font-size: 0.78rem; font-weight: 700; }
+.clear-chip-btn { border: none; background: transparent; color: #dc2626; font-size: 0.82rem; font-weight: 700; cursor: pointer; padding: 0.35rem 0.5rem; }
+.clear-chip-btn:hover { text-decoration: underline; }
 
 /* Needs-Action pill — sits inline with the search + status filters and
    toggles the server-side needs_action=1 filter on/off. Amber when off
@@ -2112,7 +2307,8 @@ defineOptions({ layout: null })
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.82rem 1rem;
+    padding: 0 1rem;
+    min-height: 48px;
     background: #fef3c7;
     border: 1px solid #fbbf24;
     color: #92400e;
@@ -2122,7 +2318,7 @@ defineOptions({ layout: null })
     cursor: pointer;
     transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
     white-space: nowrap;
-    align-self: end;
+    align-self: center;
 }
 .needs-action-pill:hover { transform: translateY(-1px); }
 .needs-action-pill-on {
@@ -2324,18 +2520,38 @@ defineOptions({ layout: null })
 .calculated-amount .amount { font-size: 1.5rem; font-weight: bold; color: var(--primary-color); }
 
 /* Responsive */
+
+/* Desktop (>= 900px): advanced filters always visible, mobile toggle hidden. */
+@media (min-width: 900px) {
+    .advanced-toggle-btn { display: none; }
+    .toolbar-advanced { display: flex !important; }
+}
+
+/* Mobile (< 900px): advanced filters collapsed by default; toggling
+   .toolbar-advanced-open reveals them stacked. Primary bar reflows so
+   search takes the full width and pill/toggle sit on the row below. */
+@media (max-width: 899px) {
+    .toolbar-advanced {
+        display: none;
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .toolbar-advanced-open {
+        display: flex !important;
+    }
+    .toolbar-advanced > .toolbar-field { flex: 1 1 auto; min-width: 0; }
+    .toolbar-primary > .search-shell { flex-basis: 100%; }
+}
+
 @media (max-width: 1024px) {
-    .toolbar-grid { grid-template-columns: 1fr 1fr; }
-    .toolbar-field-wide { grid-column: 1 / -1; }
     .rfq-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .hero-action-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 768px) {
     .rfq-stats { grid-template-columns: 1fr 1fr; }
-    .rfq-hero, .hero-action-grid, .toolbar-grid, .mobile-rfq-grid, .pagination-shell, .pagination-controls { grid-template-columns: 1fr; }
+    .rfq-hero, .hero-action-grid, .mobile-rfq-grid, .pagination-shell, .pagination-controls { grid-template-columns: 1fr; }
     .rfq-hero, .table-shell-header, .mobile-card-top, .pagination-shell { display: flex; flex-direction: column; align-items: flex-start; }
-    .toolbar-grid { display: grid; }
     .desktop-table { display: none; }
     .mobile-rfq-list { display: grid; margin-top: 0; }
     .material-inputs { grid-template-columns: 1fr; gap: 0.5rem; }
