@@ -10,22 +10,30 @@
                 </div>
             </header>
 
-            <section class="main-panel">
-                <div class="panel-card full-width">
-                    <!-- Item 2 fix: toolbar with search + status side-by-side.
-                         Previously the status filter lived in the page header
-                         (functional but visually detached) and the search input
-                         had no width so it collapsed on desktop. Now they share
-                         the panel toolbar in a consistent layout. -->
+            <!-- Sticky toolbar — clings to the viewport top as ops scrolls
+                 the jobs table. Mirrors the treatment on /admin/rfq so both
+                 admin pages behave identically. -->
+            <section class="jobs-toolbar-sticky">
+                <div class="panel-card jobs-toolbar-shell">
                     <div class="jobs-toolbar">
                         <label class="jobs-search-shell">
-                            <i class="fas fa-search"></i>
+                            <i class="fas fa-search jobs-search-icon"></i>
                             <input
                                 type="text"
                                 v-model="searchQuery"
                                 @input="filterJobs"
                                 placeholder="Search by Job ID, client name, email…"
                             >
+                            <button
+                                v-if="searchQuery"
+                                type="button"
+                                class="jobs-search-clear"
+                                @click="clearJobsSearch"
+                                aria-label="Clear search"
+                                title="Clear search"
+                            >
+                                <i class="fas fa-times"></i>
+                            </button>
                         </label>
                         <label class="jobs-status-shell">
                             <span>Status</span>
@@ -39,6 +47,11 @@
                             </select>
                         </label>
                     </div>
+                </div>
+            </section>
+
+            <section class="main-panel">
+                <div class="panel-card full-width">
                     <div class="table-scroll">
                     <table class="data-table">
                         <thead>
@@ -323,7 +336,13 @@ const availableTechnicians = computed(() => {
 })
 
 const filterJobs = () => {
-    // Handled by watchers now
+    // Handled by watchers now (debounced for searchQuery, immediate for status).
+}
+
+// One-tap reset for the search field. Mirrors the pattern on Admin/RFQ.
+// Setting to '' triggers the watcher which re-queries after the debounce.
+const clearJobsSearch = () => {
+    searchQuery.value = ''
 }
 
 const getStatusClass = (status) => {
@@ -508,70 +527,128 @@ defineOptions({
 .jobs-page-header-copy h1 { margin: 0 0 0.35rem; }
 .jobs-page-header-copy p { margin: 0; color: var(--text-muted, #64748b); font-size: 0.92rem; }
 
-/* Jobs toolbar — search + status filter side-by-side in the panel,
-   consistent with the RFQ page. Search input previously had no width
-   and would collapse on desktop; status filter was buried in the
-   header. Both now flow inside a flex-wrap toolbar so they're
-   reachable on any viewport. */
+/* Sticky toolbar — clings to viewport top as ops scrolls the jobs
+   table. Same treatment as /admin/rfq so both admin pages behave
+   identically. */
+.jobs-toolbar-sticky {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    margin-bottom: 1rem;
+    background: transparent;
+}
+.jobs-toolbar-shell {
+    padding: 0.9rem 1rem;
+    box-shadow: 0 8px 24px -20px rgba(15, 23, 42, 0.35);
+}
+
+/* Toolbar layout — search takes the flexible column, status sits
+   next to it. Wraps naturally on narrow screens (both stack full-
+   width when the row can't fit). */
 .jobs-toolbar {
     display: flex;
-    align-items: end;
+    align-items: center;
+    gap: 0.75rem;
     flex-wrap: wrap;
-    gap: 1rem;
-    padding: 1.15rem 1.25rem 0;
 }
 .jobs-search-shell,
 .jobs-status-shell {
     display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
+    align-items: center;
+    gap: 0.5rem;
     font-weight: 700;
     color: #334155;
 }
+
+/* Search input — pill-shaped, leading icon, trailing clear × button
+   that appears only when there's text. */
 .jobs-search-shell {
-    flex: 1 1 340px;
-    min-width: 260px;
+    flex: 1 1 320px;
+    min-width: 220px;
+    padding: 0 0.95rem;
+    min-height: 48px;
+    border: 1px solid #d7dee7;
+    border-radius: 14px;
+    background: #f8fafc;
     position: relative;
 }
-.jobs-search-shell > i {
-    position: absolute;
-    left: 0.9rem;
-    top: 50%;
-    transform: translateY(-50%);
-    color: #94a3b8;
-    pointer-events: none;
-}
+.jobs-search-icon { color: #94a3b8; flex-shrink: 0; }
 .jobs-search-shell > input {
-    padding: 0.75rem 0.9rem 0.75rem 2.25rem;
-    border: 1px solid #d7dee7;
-    border-radius: 12px;
-    background: #f8fafc;
+    flex: 1;
+    padding: 0.75rem 0;
+    border: none;
+    background: transparent;
     color: #0f172a;
     font: inherit;
-    width: 100%;
+    outline: none;
+    min-width: 0;
 }
-.jobs-search-shell > input:focus {
+.jobs-search-shell > input::placeholder { color: #94a3b8; }
+.jobs-search-shell:focus-within {
     border-color: rgba(14, 116, 144, 0.45);
     box-shadow: 0 0 0 4px rgba(14, 116, 144, 0.12);
     background: #ffffff;
-    outline: none;
 }
+.jobs-search-clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.18);
+    color: #475569;
+    border: none;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.12s ease;
+}
+.jobs-search-clear:hover { background: rgba(148, 163, 184, 0.35); color: #0f172a; }
+
+/* Status shell — label + select in one control group so it visually
+   reads as a single unit alongside the search input. */
 .jobs-status-shell {
-    flex: 0 1 200px;
-    min-width: 180px;
+    flex: 0 1 240px;
+    min-width: 200px;
 }
 .jobs-status-shell > span {
     font-size: 0.82rem;
     color: #475569;
+    white-space: nowrap;
 }
 .jobs-status-shell > select {
-    padding: 0.75rem 0.9rem;
+    flex: 1;
+    min-height: 48px;
+    padding: 0 2.5rem 0 0.95rem;
     border: 1px solid #d7dee7;
-    border-radius: 12px;
+    border-radius: 14px;
     background: #f8fafc;
     color: #0f172a;
     font: inherit;
-    width: 100%;
+    appearance: none;
+    background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.9rem center;
+}
+.jobs-status-shell > select:focus {
+    border-color: rgba(14, 116, 144, 0.45);
+    box-shadow: 0 0 0 4px rgba(14, 116, 144, 0.12);
+    background-color: #ffffff;
+    outline: none;
+}
+
+/* Mobile — both controls stack full-width for touch. */
+@media (max-width: 640px) {
+    .jobs-search-shell,
+    .jobs-status-shell {
+        flex-basis: 100%;
+    }
+    .jobs-status-shell {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.35rem;
+    }
+    .jobs-status-shell > span { padding-left: 0.15rem; }
 }
 
 .modal-overlay {
