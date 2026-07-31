@@ -788,6 +788,18 @@
                                         <span>Spent {{ cat === 'labor' ? '(paid out)' : '' }}</span>
                                         <strong>KSH {{ formatCurrency(budgetSummary[cat].actual) }}</strong>
                                     </div>
+                                    <!-- Outstanding row on the labour card — the
+                                         number ops actually looks up when deciding
+                                         'how much more can I pay this tech'. Was
+                                         missing entirely; ops was reading
+                                         'Remaining (to commit)' as the balance and
+                                         getting confused (REQ-W78RAR ticket). -->
+                                    <div v-if="cat === 'labor'" class="budget-row budget-row-outstanding">
+                                        <span>Outstanding <small style="color: var(--text-muted);">(owed to technicians)</small></span>
+                                        <strong :class="{ 'positive-owe': (budgetSummary[cat].outstanding || 0) > 0 }">
+                                            KSH {{ formatCurrency(budgetSummary[cat].outstanding || 0) }}
+                                        </strong>
+                                    </div>
                                     <div class="budget-row">
                                         <span>Remaining {{ cat === 'labor' ? '(to commit)' : '' }}</span>
                                         <strong :class="{ negative: budgetSummary[cat].remaining < 0, positive: budgetSummary[cat].remaining >= 0 }">
@@ -859,26 +871,43 @@
                         </div>
 
                         <!-- Item 3c — labour committed breakdown. Lists the lead's
-                             direct assignment fee + each sub-task fee so admins can
-                             see what makes up the "Committed" number on the labour
-                             card and answer the client's ask: "see the technician
-                             fees for each task and subtask". -->
+                             direct assignment fee + each sub-task fee. Extended
+                             to also show Paid + Outstanding per tech so ops can
+                             answer 'who's still owed money?' at a glance. -->
                         <div v-if="labourFeeBreakdown.length" class="labour-breakdown">
                             <div class="labour-breakdown-header">
                                 <h4><i class="fas fa-users-cog"></i> Labour committed breakdown</h4>
                                 <span>{{ labourFeeBreakdown.length }} technician{{ labourFeeBreakdown.length === 1 ? '' : 's' }}</span>
                             </div>
                             <ul class="labour-breakdown-list">
+                                <li class="labour-breakdown-row lb-header">
+                                    <div class="lb-copy"><span class="lb-header-label">Technician</span></div>
+                                    <div class="lb-numbers">
+                                        <span class="lb-header-label">Agreed</span>
+                                        <span class="lb-header-label">Paid</span>
+                                        <span class="lb-header-label">Outstanding</span>
+                                    </div>
+                                </li>
                                 <li v-for="row in labourFeeBreakdown" :key="row.key" class="labour-breakdown-row">
                                     <div class="lb-copy">
                                         <strong>{{ row.name }}</strong>
                                         <span class="lb-role">{{ row.role }}</span>
                                     </div>
-                                    <strong class="lb-amount">KSH {{ formatCurrency(row.amount) }}</strong>
+                                    <div class="lb-numbers">
+                                        <span class="lb-num">KSH {{ formatCurrency(row.amount) }}</span>
+                                        <span class="lb-num lb-num-paid">KSH {{ formatCurrency(row.paid) }}</span>
+                                        <strong :class="['lb-num', 'lb-num-outstanding', { 'lb-num-clear': row.outstanding <= 0 }]">
+                                            KSH {{ formatCurrency(row.outstanding) }}
+                                        </strong>
+                                    </div>
                                 </li>
                                 <li class="labour-breakdown-row lb-total">
-                                    <div class="lb-copy"><strong>Total committed</strong></div>
-                                    <strong class="lb-amount">KSH {{ formatCurrency(labourCommittedTotal) }}</strong>
+                                    <div class="lb-copy"><strong>Total</strong></div>
+                                    <div class="lb-numbers">
+                                        <strong class="lb-num">KSH {{ formatCurrency(labourCommittedTotal) }}</strong>
+                                        <strong class="lb-num">KSH {{ formatCurrency(labourPaidTotal) }}</strong>
+                                        <strong class="lb-num lb-num-outstanding">KSH {{ formatCurrency(labourOutstandingTotal) }}</strong>
+                                    </div>
                                 </li>
                             </ul>
                         </div>
@@ -1871,6 +1900,17 @@ function expendituresByCategory(category) {
 // sub-task with a technician assigned. Feeds the breakdown panel in
 // the Finance section so admins can trace what makes up the "Committed"
 // number and answer "who's owed what on this job?".
+// Sum labour payments already made to a specific technician on this SR.
+// Matches how the backend budgetSummary computes 'spent' — filters
+// technician_payments by category=labor + status=completed.
+function paidToTechnician(technicianId) {
+    return (props.job.technician_payments || [])
+        .filter((p) => Number(p.technician_id) === Number(technicianId)
+            && p.category === 'labor'
+            && p.status === 'completed')
+        .reduce((sum, p) => sum + Number(p.amount || 0), 0)
+}
+
 const labourFeeBreakdown = computed(() => {
     const rows = []
 
@@ -1880,31 +1920,43 @@ const labourFeeBreakdown = computed(() => {
     const primary = props.job.job_assignments?.find?.((a) => !a.service_sub_task_id
         && ['pending', 'accepted', 'completed'].includes(a.status))
     if (primary && Number(primary.agreed_compensation) > 0) {
+        const paid = paidToTechnician(primary.technician_id)
+        const amount = Number(primary.agreed_compensation)
         rows.push({
             key: 'primary-' + primary.id,
             name: primary.technician?.user?.name || 'Assigned technician',
             role: props.job.has_sub_tasks ? 'Lead technician' : 'Technician',
-            amount: Number(primary.agreed_compensation),
+            amount,
+            paid,
+            outstanding: Math.max(0, amount - paid),
         })
     } else if (props.job.technician && Number(currentSingleAssignment.value?.agreed_compensation || 0) > 0) {
         // Fallback for the single-tech path where assignment data comes
         // through currentSingleAssignment rather than a top-level relation.
+        const paid = paidToTechnician(props.job.technician.id)
+        const amount = Number(currentSingleAssignment.value.agreed_compensation)
         rows.push({
             key: 'primary-single',
             name: props.job.technician?.user?.name || 'Assigned technician',
             role: 'Technician',
-            amount: Number(currentSingleAssignment.value.agreed_compensation),
+            amount,
+            paid,
+            outstanding: Math.max(0, amount - paid),
         })
     }
 
     // Sub-tasks with a technician + fee attached.
     for (const st of props.job.sub_tasks || []) {
         if (st.technician && Number(st.agreed_compensation) > 0) {
+            const paid = paidToTechnician(st.technician_id)
+            const amount = Number(st.agreed_compensation)
             rows.push({
                 key: 'subtask-' + st.id,
                 name: st.technician?.user?.name || 'Sub-task technician',
                 role: 'Sub-task: ' + (st.title || `#${st.order}`),
-                amount: Number(st.agreed_compensation),
+                amount,
+                paid,
+                outstanding: Math.max(0, amount - paid),
             })
         }
     }
@@ -1914,6 +1966,12 @@ const labourFeeBreakdown = computed(() => {
 
 const labourCommittedTotal = computed(() =>
     labourFeeBreakdown.value.reduce((sum, r) => sum + (Number(r.amount) || 0), 0)
+)
+const labourPaidTotal = computed(() =>
+    labourFeeBreakdown.value.reduce((sum, r) => sum + (Number(r.paid) || 0), 0)
+)
+const labourOutstandingTotal = computed(() =>
+    labourFeeBreakdown.value.reduce((sum, r) => sum + (Number(r.outstanding) || 0), 0)
 )
 
 // crypto.randomUUID is present in every modern browser + Safari 15.4+.
@@ -3704,16 +3762,73 @@ defineOptions({
     border: 1px solid #eef2f7;
     border-radius: 8px;
 }
-.lb-copy { min-width: 0; }
+.lb-copy { min-width: 0; flex: 1; }
 .lb-copy strong { display: block; color: #0f172a; font-size: 0.9rem; }
 .lb-role { font-size: 0.76rem; color: #64748b; }
-.lb-amount { color: #065f46; white-space: nowrap; }
+
+/* Three-column numbers grid — Agreed / Paid / Outstanding. Right-aligned
+   so vertical scanning across rows is easy. */
+.lb-numbers {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(110px, auto));
+    gap: 0.4rem 1.2rem;
+    text-align: right;
+    align-items: center;
+}
+.lb-num { white-space: nowrap; color: #0f172a; font-size: 0.9rem; }
+.lb-num-paid { color: #475569; }
+.lb-num-outstanding { color: #b45309; font-weight: 700; }
+.lb-num-outstanding.lb-num-clear { color: #94a3b8; font-weight: 500; }
+
+.labour-breakdown-row.lb-header {
+    background: transparent;
+    border: none;
+    padding: 0.2rem 0.7rem;
+}
+.lb-header-label {
+    display: inline-block;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #64748b;
+    font-weight: 700;
+}
+
 .labour-breakdown-row.lb-total {
     background: #ecfdf5;
     border-color: #a7f3d0;
     margin-top: 0.25rem;
 }
-.labour-breakdown-row.lb-total .lb-amount { color: #065f46; font-size: 1.05rem; }
+.labour-breakdown-row.lb-total .lb-num { color: #065f46; font-size: 1rem; }
+.labour-breakdown-row.lb-total .lb-num-outstanding { color: #92400e; font-size: 1.05rem; }
+
+/* Mobile — 3-column numbers grid collapses to stacked rows so the
+   Outstanding number stays large and readable. */
+@media (max-width: 640px) {
+    .labour-breakdown-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.5rem;
+    }
+    .lb-numbers {
+        grid-template-columns: 1fr 1fr;
+        text-align: left;
+    }
+    .lb-numbers > :last-child { grid-column: 1 / -1; padding-top: 0.35rem; border-top: 1px dashed #e5e7eb; }
+    .labour-breakdown-row.lb-header { display: none; } /* column labels don't make sense stacked */
+}
+
+/* Outstanding row on the labour card — subtle amber highlight so ops
+   sees at-a-glance that money is owed. Positive-owe class only fires
+   when the amount > 0 (fully-paid jobs stay quiet). */
+.budget-row-outstanding {
+    background: rgba(251, 191, 36, 0.08);
+    margin: 0 -0.5rem;
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+    border-radius: 6px;
+}
+.budget-row-outstanding strong.positive-owe { color: #b45309; }
 
 .subtask-technician {
     padding: 0.8rem 0.9rem;

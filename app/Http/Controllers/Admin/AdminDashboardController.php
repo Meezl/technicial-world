@@ -326,11 +326,22 @@ class AdminDashboardController extends Controller
             $laborAllocation = $this->getLaborAllocationSummary($job);
             $laborCommitted = (float) $laborAllocation['allocated'];
 
+            // Outstanding to technicians — what we've promised (committed) but
+            // haven't yet paid. This is the number ops actually looks up when
+            // deciding "how much more can I pay this tech" — separate from
+            // remaining-to-commit (Budgeted − Committed) which is about
+            // headroom for adding new technicians. Confusing the two caused
+            // the REQ-W78RAR support ticket: card showed 'Remaining 1,000'
+            // (budget headroom) and ops read it as 'only 1,000 left to pay
+            // the tech' when the actual outstanding balance was 11,500.
+            $laborOutstanding = max(0, $laborCommitted - (float) $laborSpent);
+
             $budgetSummary = [
                 'labor' => [
                     'budgeted' => (float) $job->budget->labor_budget,
-                    'committed' => $laborCommitted,   // sum of agreed fees on all assignments + sub-tasks
-                    'actual' => (float) $laborSpent,  // what's actually left our hands
+                    'committed' => $laborCommitted,       // sum of agreed fees on all assignments + sub-tasks
+                    'actual' => (float) $laborSpent,       // what's actually left our hands
+                    'outstanding' => $laborOutstanding,    // committed − paid — what techs are still owed
                     'remaining' => (float) $job->budget->labor_budget - $laborCommitted,
                 ],
                 'materials' => [
