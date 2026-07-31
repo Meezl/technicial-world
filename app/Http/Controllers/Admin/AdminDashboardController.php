@@ -3428,15 +3428,25 @@ class AdminDashboardController extends Controller
             ->get();
 
         // Build per-service-request payment summary
-        $jobPayments = $serviceRequests->map(function ($sr) use ($technician, $directPayments, $sheetEntries) {
+        $paymentService = app(\App\Services\TechnicianPaymentService::class);
+        $jobPayments = $serviceRequests->map(function ($sr) use ($technician, $directPayments, $sheetEntries, $paymentService) {
             $srDirectPayments = $directPayments->where('service_request_id', $sr->id);
             $srSheetEntries = $sheetEntries->where('service_request_id', $sr->id);
 
-            $totalDirectPaid = (float) $srDirectPayments->where('status', 'completed')->sum('amount');
-            $totalSheetPaid = (float) $srSheetEntries->whereIn('status', ['approved', 'paid'])->sum('current_period_payable');
-            $totalPaid = $totalDirectPaid + $totalSheetPaid;
+            // Delegate to the canonical getTotalLabourPaid — same source
+            // of truth as the JobDetails Labour card + overpayment cap.
+            // Previously this rolled its own sum that ignored paid_amount
+            // for STATUS_PAID entries, so a tech paid via Mark Paid saw
+            // 'Total paid' drift from what other pages showed. Now they
+            // agree byte-for-byte.
+            $totalPaid = $paymentService->getTotalLabourPaid($sr->id, $technician->id);
 
-            $agreedCompensation = (float) ($srSheetEntries->first()?->agreed_compensation ?? 0);
+            // Agreed compensation: prefer the canonical resolveApprovedAmount
+            // (checks JobAssignment, sub-tasks, technician_payout in order).
+            // Previously the report only looked at the FIRST sheet entry
+            // and returned 0 if the tech had never been paid via a sheet,
+            // so early-in-the-job techs showed 0 agreed.
+            $agreedCompensation = $paymentService->resolveApprovedAmount($sr, $technician->id);
             $latestProgress = (int) ($srSheetEntries->first()?->cumulative_progress_pct ?? 0);
 
             return [

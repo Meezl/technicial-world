@@ -143,7 +143,10 @@ class PaymentProcessingController extends Controller
                 continue;
             }
 
-            $cumulativeDue = $this->paymentService->calculateCumulativeAmountDue($sr, $tech->id, $agreed, $progress);
+            // Same formula as computeAmounts + payApprovedProgressReport
+            // (agreed × validated%, no milestone cap). Consistency
+            // across every payout path is the point of the recent audit.
+            $cumulativeDue = round($agreed * ($progress / 100), 2);
             $alreadyPaid   = $this->paymentService->getTotalLabourPaid($sr->id, $tech->id);
             $currentPayable = max(0, round($cumulativeDue - $alreadyPaid, 2));
 
@@ -187,22 +190,27 @@ class PaymentProcessingController extends Controller
 
         $approvedAmount = $this->paymentService->resolveApprovedAmount($serviceRequest, $techId);
         $progress = $this->paymentService->getValidatedProgressForTechnician($serviceRequest, $techId);
-        $cumulativeDue = $this->paymentService->calculateCumulativeAmountDue(
-            $serviceRequest,
-            $techId,
-            $approvedAmount,
-            $progress
-        );
+
+        // Cumulative due = agreed × validated%. No milestone cap here —
+        // consistent with payApprovedProgressReport and the manual
+        // storeTechnicianPayment path (client's mental model: pay techs
+        // their agreed dues as they earn them; milestone allocations
+        // are for external client invoicing, not for gating tech pay).
+        // The overpayment guard in store() below still refuses anything
+        // that would exceed the full agreed compensation.
+        $cumulativeDue = round($approvedAmount * ($progress / 100), 2);
+
+        // Milestone info is still returned as a display hint so ops can
+        // see how much of the cumulative amount is "backed by" reached
+        // milestones — advisory only, no longer a cap.
         $releasedViaMilestones = $this->paymentService->getUnlockedMilestoneAllocationTotal($serviceRequest, $techId);
 
-        // Previous cumulative paid = cumulative_amount_due on the most recent finalized sheet
-        $prevEntry = TechnicianPaymentEntry::where('technician_id', $techId)
-            ->where('service_request_id', $srId)
-            ->whereHas('paymentSheet', fn($q) => $q->where('status', TechnicianPaymentSheet::STATUS_FINALIZED))
-            ->orderByDesc('id')
-            ->first();
-
-        $previousPaid = $prevEntry ? (float) $prevEntry->cumulative_amount_due : 0.0;
+        // Previous paid — delegate to the canonical getTotalLabourPaid so
+        // this compute matches what the Labour card and per-tech report
+        // show. Was previously reading cumulative_amount_due off the last
+        // sheet entry, which drifted from actual paid_amount once Mark
+        // Paid started varying from the scheduled amount (Layer 3 work).
+        $previousPaid = $this->paymentService->getTotalLabourPaid($srId, $techId);
         $currentPayable = max(0, round($cumulativeDue - $previousPaid, 2));
 
         return response()->json([

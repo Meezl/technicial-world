@@ -126,14 +126,13 @@ class TechnicianPaymentService
                 );
                 if ($progressAtEnd <= 0) continue;
 
-                // Cumulative amount due through period_end (capped by any
-                // milestone release rules — see calculateCumulativeAmountDue).
-                $cumulativeAmountDue = $this->calculateCumulativeAmountDue(
-                    $serviceRequest,
-                    $technician->id,
-                    $agreedCompensation,
-                    (int) $progressAtEnd
-                );
+                // Cumulative amount due through period_end. No milestone
+                // cap — consistent with payApprovedProgressReport,
+                // storeTechnicianPayment, and PaymentProcessing computes.
+                // Ops needs one number that agrees across every surface;
+                // the overpayment guard on store still refuses anything
+                // exceeding agreed compensation.
+                $cumulativeAmountDue = round($agreedCompensation * ($progressAtEnd / 100), 2);
 
                 // What we've ALREADY committed for this tech×job from prior
                 // finalized sheets + actual paid amounts. Uses the smarter
