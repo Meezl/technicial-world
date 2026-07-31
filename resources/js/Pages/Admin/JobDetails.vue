@@ -2802,6 +2802,14 @@ const getTechnicianAgreedCompensation = (report) => {
     return 0
 }
 
+// ⚠ Must stay in sync with AdminPaymentController::payApprovedProgressReport
+// (see the $targetAmount block there). Both compute:
+//     target = agreed_compensation × (validated_percent / 100)
+// If you change one, change the other — otherwise the button label and
+// the amount actually paid will diverge and ops will see a phantom
+// "remaining balance" they can't clear (root cause of the REQ-W78RAR
+// bug: frontend said 11,500 due, backend silently paid 1,000, leaving
+// a stuck 10,500 gap).
 const getProgressTargetAmount = (report) => {
     const agreedCompensation = getTechnicianAgreedCompensation(report)
     const validatedPercent = Number(report.validated_percent ?? report.percent_complete ?? 0)

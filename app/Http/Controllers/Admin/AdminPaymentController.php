@@ -171,12 +171,27 @@ class AdminPaymentController extends Controller
             return back()->with('error', 'No agreed compensation found for this technician. Set the agreed fee on the assignment before recording a payout.');
         }
 
-        $targetAmount = $this->technicianPaymentService->calculateCumulativeAmountDue(
-            $progressReport->serviceRequest,
-            $progressReport->technician_id,
-            $approvedAmount,
-            $validatedPercent
-        );
+        // Target amount = agreed compensation × validated progress %.
+        // Kept identical to the frontend's getProgressTargetAmount so the
+        // "Pay KSH X" button label and the amount actually paid always match.
+        //
+        // We deliberately do NOT apply the milestone-released cap here (the
+        // previous calculateCumulativeAmountDue call did). That cap caused
+        // silent underpayment: button said "Pay KSH 11,500" but the API
+        // recorded only KSH 1,000 because only milestones summing to 16k
+        // had been marked reached. Ops was left with a phantom "remaining
+        // balance" they couldn't resolve without asking us.
+        //
+        // The safety net at line ~194 below still refuses any payment that
+        // would push cumulative paid past the full agreed compensation, so
+        // techs can never be overpaid — the guardrail is just at the
+        // legally-meaningful ceiling (agreed) not at the internal cash-flow
+        // hint (milestone unlocks).
+        //
+        // Milestone allocation data remains in the DB for external client
+        // invoicing / reporting — this change only removes it from the
+        // internal tech-payout gate.
+        $targetAmount = round($approvedAmount * ($validatedPercent / 100), 2);
 
         $alreadyPaid = $this->technicianPaymentService->getTotalLabourPaid(
             (int) $progressReport->service_request_id,
