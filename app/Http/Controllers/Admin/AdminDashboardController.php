@@ -302,83 +302,7 @@ class AdminDashboardController extends Controller
             ->get();
 
         // Compute budget vs actual for this SR
-        $budgetSummary = null;
-        if ($job->budget) {
-            $laborSpentDirect = $job->technicianPayments
-                ->where('category', 'labor')->where('status', 'completed')->sum('amount');
-
-            // Sheet entries: count both APPROVED (finalized, about to be
-            // paid or already paid but not marked) and PAID (Mark Paid
-            // confirmed) as spent. Previously only APPROVED counted, so
-            // marking an entry paid REDUCED the labour Spent total — the
-            // opposite of what should happen. Use paid_amount for PAID
-            // entries (real cash-out); current_period_payable for APPROVED.
-            $sheetEntriesForSpent = TechnicianPaymentEntry::where('service_request_id', $job->id)
-                ->whereIn('status', [
-                    TechnicianPaymentEntry::STATUS_APPROVED,
-                    TechnicianPaymentEntry::STATUS_PAID,
-                ])
-                ->get(['status', 'current_period_payable', 'paid_amount']);
-            $laborSpentSheets = $sheetEntriesForSpent->sum(function ($e) {
-                if ($e->status === TechnicianPaymentEntry::STATUS_PAID) {
-                    return (float) ($e->paid_amount ?? $e->current_period_payable);
-                }
-                return (float) $e->current_period_payable;
-            });
-            $laborSpent = $laborSpentDirect + $laborSpentSheets;
-            $materialsSpentPayments = $job->technicianPayments
-                ->where('category', 'materials')->where('status', 'completed')->sum('amount');
-            $materialsSpentExpenditures = $job->expenditures
-                ->where('category', 'materials')->sum('amount');
-            $otherSpentPayments = $job->technicianPayments
-                ->where('category', 'other')->where('status', 'completed')->sum('amount');
-            $otherSpentExpenditures = $job->expenditures
-                ->where('category', 'other')->sum('amount');
-
-            // Item 3a — labour "remaining" needs to reflect COMMITTED fees
-            // (agreed assignments + sub-task fees), not just paid dues. Ops's
-            // mental model: 'how much can I still commit to a new
-            // technician?' — matches the getLaborAllocationSummary logic
-            // used by ensureLaborBudgetCapacity so the cap on new
-            // assignments and the number on this card can't diverge.
-            $laborAllocation = $this->getLaborAllocationSummary($job);
-            $laborCommitted = (float) $laborAllocation['allocated'];
-
-            // Outstanding to technicians — what we've promised (committed) but
-            // haven't yet paid. This is the number ops actually looks up when
-            // deciding "how much more can I pay this tech" — separate from
-            // remaining-to-commit (Budgeted − Committed) which is about
-            // headroom for adding new technicians. Confusing the two caused
-            // the REQ-W78RAR support ticket: card showed 'Remaining 1,000'
-            // (budget headroom) and ops read it as 'only 1,000 left to pay
-            // the tech' when the actual outstanding balance was 11,500.
-            $laborOutstanding = max(0, $laborCommitted - (float) $laborSpent);
-
-            $budgetSummary = [
-                'labor' => [
-                    'budgeted' => (float) $job->budget->labor_budget,
-                    'committed' => $laborCommitted,       // sum of agreed fees on all assignments + sub-tasks
-                    'actual' => (float) $laborSpent,       // what's actually left our hands
-                    'outstanding' => $laborOutstanding,    // committed − paid — what techs are still owed
-                    'remaining' => (float) $job->budget->labor_budget - $laborCommitted,
-                ],
-                'materials' => [
-                    'budgeted' => (float) $job->budget->materials_budget,
-                    'actual' => (float) ($materialsSpentPayments + $materialsSpentExpenditures),
-                    'remaining' => (float) $job->budget->materials_budget - (float) ($materialsSpentPayments + $materialsSpentExpenditures),
-                ],
-                'other' => [
-                    'budgeted' => (float) $job->budget->other_budget,
-                    'actual' => (float) ($otherSpentPayments + $otherSpentExpenditures),
-                    'remaining' => (float) $job->budget->other_budget - (float) ($otherSpentPayments + $otherSpentExpenditures),
-                ],
-                'total' => [
-                    'budgeted' => (float) $job->budget->total_budget,
-                    'actual' => (float) ($laborSpent + $materialsSpentPayments + $materialsSpentExpenditures + $otherSpentPayments + $otherSpentExpenditures),
-                    'remaining' => (float) $job->budget->total_budget - (float) ($laborSpent + $materialsSpentPayments + $materialsSpentExpenditures + $otherSpentPayments + $otherSpentExpenditures),
-                ],
-            ];
-        }
+        $budgetSummary = $this->buildBudgetSummary($job);
 
         return Inertia::render('Admin/JobDetails', [
             'job' => $job,
@@ -1130,6 +1054,103 @@ class AdminDashboardController extends Controller
      * DB constraint coming in Layer 3), we log a warning and use the
      * latest — better than silently ignoring the older ones.
      */
+    /**
+     * Canonical budget summary for a service request. Used by BOTH
+     * JobDetails (Finance section) and the Payments page (Budget Snapshot)
+     * so the two surfaces can NEVER show different numbers for the same
+     * job — a bug we hit twice already (REQ-W78RAR silent-cap + this
+     * Payments page 0-spent mismatch, both caused by duplicated inline
+     * calculations that drifted from the source of truth).
+     *
+     * Returns null if the SR has no budget row yet.
+     *
+     * The labour block computes five figures:
+     *   - budgeted   : the labor_budget on service_request_budgets
+     *   - committed  : sum of agreed fees on active JobAssignments +
+     *                  sub-tasks (via getLaborAllocationSummary — same
+     *                  helper the assignment cap uses)
+     *   - actual     : direct technician_payments (labor+completed) +
+     *                  payment-sheet entries (APPROVED uses
+     *                  current_period_payable; PAID uses paid_amount)
+     *   - outstanding: max(0, committed − actual) — what's still owed
+     *                  to techs. This is the number ops actually looks
+     *                  up when deciding "how much more can I pay this
+     *                  tech"; missing it caused the REQ-W78RAR ticket.
+     *   - remaining  : budgeted − committed — headroom for a NEW
+     *                  commitment. Distinct from outstanding.
+     *
+     * Materials + other are simpler: no committed/outstanding split,
+     * just budgeted − actual = remaining.
+     */
+    protected function buildBudgetSummary(?ServiceRequest $sr): ?array
+    {
+        if (!$sr || !$sr->budget) return null;
+
+        // Labour actual — direct payments plus sheet entries. Same rule
+        // as TechnicianPaymentService::getTotalLabourPaid so cap checks,
+        // card display, and per-tech breakdown all reconcile.
+        $laborSpentDirect = (float) ($sr->technicianPayments ?? collect())
+            ->where('category', 'labor')
+            ->where('status', 'completed')
+            ->sum('amount');
+
+        $sheetEntries = TechnicianPaymentEntry::where('service_request_id', $sr->id)
+            ->whereIn('status', [
+                TechnicianPaymentEntry::STATUS_APPROVED,
+                TechnicianPaymentEntry::STATUS_PAID,
+            ])
+            ->get(['status', 'current_period_payable', 'paid_amount']);
+        $laborSpentSheets = (float) $sheetEntries->sum(function ($e) {
+            if ($e->status === TechnicianPaymentEntry::STATUS_PAID) {
+                return (float) ($e->paid_amount ?? $e->current_period_payable);
+            }
+            return (float) $e->current_period_payable;
+        });
+        $laborSpent = $laborSpentDirect + $laborSpentSheets;
+
+        $materialsSpentPayments = (float) ($sr->technicianPayments ?? collect())
+            ->where('category', 'materials')->where('status', 'completed')->sum('amount');
+        $materialsSpentExpenditures = (float) ($sr->expenditures ?? collect())
+            ->where('category', 'materials')->sum('amount');
+        $otherSpentPayments = (float) ($sr->technicianPayments ?? collect())
+            ->where('category', 'other')->where('status', 'completed')->sum('amount');
+        $otherSpentExpenditures = (float) ($sr->expenditures ?? collect())
+            ->where('category', 'other')->sum('amount');
+
+        $laborAllocation = $this->getLaborAllocationSummary($sr);
+        $laborCommitted = (float) $laborAllocation['allocated'];
+        $laborOutstanding = max(0, $laborCommitted - $laborSpent);
+
+        $materialsSpent = $materialsSpentPayments + $materialsSpentExpenditures;
+        $otherSpent = $otherSpentPayments + $otherSpentExpenditures;
+        $totalSpent = $laborSpent + $materialsSpent + $otherSpent;
+
+        return [
+            'labor' => [
+                'budgeted'    => (float) $sr->budget->labor_budget,
+                'committed'   => $laborCommitted,
+                'actual'      => $laborSpent,
+                'outstanding' => $laborOutstanding,
+                'remaining'   => (float) $sr->budget->labor_budget - $laborCommitted,
+            ],
+            'materials' => [
+                'budgeted'  => (float) $sr->budget->materials_budget,
+                'actual'    => $materialsSpent,
+                'remaining' => (float) $sr->budget->materials_budget - $materialsSpent,
+            ],
+            'other' => [
+                'budgeted'  => (float) $sr->budget->other_budget,
+                'actual'    => $otherSpent,
+                'remaining' => (float) $sr->budget->other_budget - $otherSpent,
+            ],
+            'total' => [
+                'budgeted'  => (float) $sr->budget->total_budget,
+                'actual'    => $totalSpent,
+                'remaining' => (float) $sr->budget->total_budget - $totalSpent,
+            ],
+        ];
+    }
+
     protected function findActivePrimaryAssignment(ServiceRequest $serviceRequest, ?int $technicianId = null): ?JobAssignment
     {
         $query = $serviceRequest->jobAssignments()
@@ -1935,44 +1956,19 @@ class AdminDashboardController extends Controller
         ];
 
         // Budget summary for filtered SR
+        // Delegate to the shared calculator so this page and JobDetails
+        // NEVER disagree. Previously this was a duplicated block that
+        // missed the Layer-3 sheet-entry accounting — the Budget Snapshot
+        // on /admin/payments showed 0 spent for jobs paid via sheets even
+        // though JobDetails correctly showed 15,000.
         $budgetSummary = null;
         if ($serviceRequestId) {
             $sr = ServiceRequest::with(['budget', 'technicianPayments', 'expenditures'])->find($serviceRequestId);
-            if ($sr && $sr->budget) {
-                $laborSpent = $sr->technicianPayments
-                    ->where('category', 'labor')->where('status', 'completed')->sum('amount');
-                $materialsSpentPayments = $sr->technicianPayments
-                    ->where('category', 'materials')->where('status', 'completed')->sum('amount');
-                $materialsSpentExpenditures = $sr->expenditures
-                    ->where('category', 'materials')->sum('amount');
-                $otherSpentPayments = $sr->technicianPayments
-                    ->where('category', 'other')->where('status', 'completed')->sum('amount');
-                $otherSpentExpenditures = $sr->expenditures
-                    ->where('category', 'other')->sum('amount');
-
-                $budgetSummary = [
-                    'budget' => $sr->budget,
-                    'labor' => [
-                        'budgeted' => (float) $sr->budget->labor_budget,
-                        'actual' => (float) $laborSpent,
-                        'remaining' => (float) $sr->budget->labor_budget - (float) $laborSpent,
-                    ],
-                    'materials' => [
-                        'budgeted' => (float) $sr->budget->materials_budget,
-                        'actual' => (float) ($materialsSpentPayments + $materialsSpentExpenditures),
-                        'remaining' => (float) $sr->budget->materials_budget - (float) ($materialsSpentPayments + $materialsSpentExpenditures),
-                    ],
-                    'other' => [
-                        'budgeted' => (float) $sr->budget->other_budget,
-                        'actual' => (float) ($otherSpentPayments + $otherSpentExpenditures),
-                        'remaining' => (float) $sr->budget->other_budget - (float) ($otherSpentPayments + $otherSpentExpenditures),
-                    ],
-                    'total' => [
-                        'budgeted' => (float) $sr->budget->total_budget,
-                        'actual' => (float) ($laborSpent + $materialsSpentPayments + $materialsSpentExpenditures + $otherSpentPayments + $otherSpentExpenditures),
-                        'remaining' => (float) $sr->budget->total_budget - (float) ($laborSpent + $materialsSpentPayments + $materialsSpentExpenditures + $otherSpentPayments + $otherSpentExpenditures),
-                    ],
-                ];
+            $budgetSummary = $this->buildBudgetSummary($sr);
+            if ($budgetSummary && $sr && $sr->budget) {
+                // Payments page also expects the raw budget model attached
+                // (used by the "Edit Budget" button on that card).
+                $budgetSummary['budget'] = $sr->budget;
             }
         }
 
