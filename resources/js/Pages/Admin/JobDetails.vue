@@ -1901,67 +1901,93 @@ function expendituresByCategory(category) {
 // the Finance section so admins can trace what makes up the "Committed"
 // number and answer "who's owed what on this job?".
 // Sum labour payments already made to a specific technician on this SR.
-// Matches how the backend budgetSummary computes 'spent' — filters
-// technician_payments by category=labor + status=completed.
+//
+// ⚠ Must stay in sync with TechnicianPaymentService::getTotalLabourPaid.
+// Both compute: direct technician_payments (category=labor, status=completed)
+// PLUS payment-sheet entries where status IN (APPROVED, PAID). For PAID
+// entries use paid_amount (real cash-out from Layer 3); for APPROVED use
+// current_period_payable (scheduled). If you change the backend total,
+// change this too — otherwise the per-tech Paid column in the breakdown
+// and the card's Spent number will diverge (same class of bug as
+// REQ-W78RAR's phantom balance).
 function paidToTechnician(technicianId) {
-    return (props.job.technician_payments || [])
+    // Direct one-off payments
+    const direct = (props.job.technician_payments || [])
         .filter((p) => Number(p.technician_id) === Number(technicianId)
             && p.category === 'labor'
             && p.status === 'completed')
         .reduce((sum, p) => sum + Number(p.amount || 0), 0)
+
+    // Sheet-system entries (APPROVED = about to be paid or already paid
+    // but not marked; PAID = Mark Paid confirmed, uses paid_amount).
+    const fromSheets = (props.job.payment_entries || [])
+        .filter((e) => Number(e.technician_id) === Number(technicianId)
+            && ['approved', 'paid'].includes(e.status))
+        .reduce((sum, e) => {
+            if (e.status === 'paid') {
+                return sum + Number(e.paid_amount ?? e.current_period_payable ?? 0)
+            }
+            return sum + Number(e.current_period_payable ?? 0)
+        }, 0)
+
+    return direct + fromSheets
 }
 
+// Aggregate per technician so Paid isn't double-counted when a tech
+// holds multiple assignments on the same job (e.g. lead + one sub-task,
+// or two sub-tasks). TechnicianPayment rows don't track sub_task_id, so
+// paidToTechnician(id) returns the TOTAL paid to that tech on this SR —
+// attributing that total to any single assignment row would double-count.
+// Aggregating groups all their assignments into one row: agreed = sum
+// of all their fees, paid = total, outstanding = agreed − paid. Roles
+// merged into a readable list.
 const labourFeeBreakdown = computed(() => {
-    const rows = []
+    const perTech = new Map()
 
-    // Direct (non-sub-task) assignments — usually the lead's fee on jobs
-    // that aren't split into sub-tasks, or the lead's share when they are.
-    // Uses job_assignments (Laravel serializes jobAssignments as snake_case).
-    const primary = props.job.job_assignments?.find?.((a) => !a.service_sub_task_id
-        && ['pending', 'accepted', 'completed'].includes(a.status))
-    if (primary && Number(primary.agreed_compensation) > 0) {
-        const paid = paidToTechnician(primary.technician_id)
-        const amount = Number(primary.agreed_compensation)
-        rows.push({
-            key: 'primary-' + primary.id,
-            name: primary.technician?.user?.name || 'Assigned technician',
-            role: props.job.has_sub_tasks ? 'Lead technician' : 'Technician',
-            amount,
-            paid,
-            outstanding: Math.max(0, amount - paid),
-        })
-    } else if (props.job.technician && Number(currentSingleAssignment.value?.agreed_compensation || 0) > 0) {
-        // Fallback for the single-tech path where assignment data comes
-        // through currentSingleAssignment rather than a top-level relation.
-        const paid = paidToTechnician(props.job.technician.id)
-        const amount = Number(currentSingleAssignment.value.agreed_compensation)
-        rows.push({
-            key: 'primary-single',
-            name: props.job.technician?.user?.name || 'Assigned technician',
-            role: 'Technician',
-            amount,
-            paid,
-            outstanding: Math.max(0, amount - paid),
-        })
+    const push = (technician, role, amount) => {
+        if (!technician || !amount) return
+        const id = Number(technician.id)
+        if (!perTech.has(id)) {
+            perTech.set(id, {
+                key: 'tech-' + id,
+                techId: id,
+                name: technician.user?.name || 'Technician',
+                roles: [],
+                amount: 0,
+            })
+        }
+        const row = perTech.get(id)
+        row.amount += Number(amount) || 0
+        if (role && !row.roles.includes(role)) row.roles.push(role)
     }
 
-    // Sub-tasks with a technician + fee attached.
+    // Direct (non-sub-task) assignments — usually the lead's fee.
+    const primary = props.job.job_assignments?.find?.((a) => !a.service_sub_task_id
+        && ['pending', 'accepted', 'completed'].includes(a.status))
+    if (primary) {
+        push(primary.technician, props.job.has_sub_tasks ? 'Lead' : 'Technician', primary.agreed_compensation)
+    } else if (props.job.technician && Number(currentSingleAssignment.value?.agreed_compensation || 0) > 0) {
+        // Fallback path — single-tech job that came through currentSingleAssignment.
+        push(props.job.technician, 'Technician', currentSingleAssignment.value.agreed_compensation)
+    }
+
+    // Sub-tasks with a technician + fee.
     for (const st of props.job.sub_tasks || []) {
         if (st.technician && Number(st.agreed_compensation) > 0) {
-            const paid = paidToTechnician(st.technician_id)
-            const amount = Number(st.agreed_compensation)
-            rows.push({
-                key: 'subtask-' + st.id,
-                name: st.technician?.user?.name || 'Sub-task technician',
-                role: 'Sub-task: ' + (st.title || `#${st.order}`),
-                amount,
-                paid,
-                outstanding: Math.max(0, amount - paid),
-            })
+            push(st.technician, 'Sub-task: ' + (st.title || `#${st.order}`), st.agreed_compensation)
         }
     }
 
-    return rows
+    // Finalise: attach paid + outstanding + a human role summary.
+    return Array.from(perTech.values()).map((row) => {
+        const paid = paidToTechnician(row.techId)
+        return {
+            ...row,
+            role: row.roles.join(' · '),
+            paid,
+            outstanding: Math.max(0, row.amount - paid),
+        }
+    })
 })
 
 const labourCommittedTotal = computed(() =>
@@ -2877,10 +2903,12 @@ const getProgressTargetAmount = (report) => {
     return (agreedCompensation * validatedPercent) / 100
 }
 
+// Same total the backend payApprovedProgressReport uses to decide payable.
+// Delegates to paidToTechnician above so the pay-button label matches the
+// breakdown table Paid column matches the card's Spent number matches the
+// backend's overpayment cap — one function, one truth.
 const getTechnicianLaborPaid = (report) => {
-    return completedLaborPayments.value
-        .filter((payment) => Number(payment.technician_id) === Number(report.technician_id))
-        .reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+    return paidToTechnician(report.technician_id)
 }
 
 const getProgressPayableAmount = (report) => {

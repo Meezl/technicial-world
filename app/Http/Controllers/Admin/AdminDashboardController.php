@@ -278,6 +278,11 @@ class AdminDashboardController extends Controller
             'jobAssignments.technician.user',
             'budget',
             'technicianPayments.technician.user',
+            // Payment sheet entries — needed so the frontend can compute
+            // per-tech Paid/Outstanding correctly. Without these the
+            // breakdown table shows 0 paid on any job that pays via
+            // sheets rather than direct technicianPayments.
+            'paymentEntries:id,service_request_id,technician_id,status,current_period_payable,paid_amount',
             'expenditures',
             'payments',
             'paymentRequests',
@@ -301,12 +306,25 @@ class AdminDashboardController extends Controller
         if ($job->budget) {
             $laborSpentDirect = $job->technicianPayments
                 ->where('category', 'labor')->where('status', 'completed')->sum('amount');
-            // Also include payments processed via the payment sheet system.
-            // technician_payment_entries records actual disbursed pay as
-            // `current_period_payable` (not `amount`).
-            $laborSpentSheets = TechnicianPaymentEntry::where('service_request_id', $job->id)
-                ->where('status', TechnicianPaymentEntry::STATUS_APPROVED)
-                ->sum('current_period_payable');
+
+            // Sheet entries: count both APPROVED (finalized, about to be
+            // paid or already paid but not marked) and PAID (Mark Paid
+            // confirmed) as spent. Previously only APPROVED counted, so
+            // marking an entry paid REDUCED the labour Spent total — the
+            // opposite of what should happen. Use paid_amount for PAID
+            // entries (real cash-out); current_period_payable for APPROVED.
+            $sheetEntriesForSpent = TechnicianPaymentEntry::where('service_request_id', $job->id)
+                ->whereIn('status', [
+                    TechnicianPaymentEntry::STATUS_APPROVED,
+                    TechnicianPaymentEntry::STATUS_PAID,
+                ])
+                ->get(['status', 'current_period_payable', 'paid_amount']);
+            $laborSpentSheets = $sheetEntriesForSpent->sum(function ($e) {
+                if ($e->status === TechnicianPaymentEntry::STATUS_PAID) {
+                    return (float) ($e->paid_amount ?? $e->current_period_payable);
+                }
+                return (float) $e->current_period_payable;
+            });
             $laborSpent = $laborSpentDirect + $laborSpentSheets;
             $materialsSpentPayments = $job->technicianPayments
                 ->where('category', 'materials')->where('status', 'completed')->sum('amount');

@@ -448,10 +448,31 @@ class TechnicianPaymentService
             ->where('status', 'completed')
             ->sum('amount');
 
-        $sheetPaid = (float) TechnicianPaymentEntry::where('service_request_id', $serviceRequestId)
+        // Sheet entries land in two states that both count as paid:
+        //   APPROVED — sheet finalized, about to be paid (or already paid but
+        //              not marked yet). Use current_period_payable (schedule).
+        //   PAID     — Mark Paid clicked (Layer 3). Use paid_amount if set
+        //              (real cash-out); fall back to current_period_payable
+        //              if paid_amount somehow wasn't captured.
+        //
+        // The previous query only summed APPROVED entries, so once ops
+        // marked an entry paid it dropped out of the total — the
+        // overpayment guard silently lost ground with every confirmed
+        // payment. Now both states count.
+        $sheetEntries = TechnicianPaymentEntry::where('service_request_id', $serviceRequestId)
             ->where('technician_id', $technicianId)
-            ->where('status', TechnicianPaymentEntry::STATUS_APPROVED)
-            ->sum('current_period_payable');
+            ->whereIn('status', [
+                TechnicianPaymentEntry::STATUS_APPROVED,
+                TechnicianPaymentEntry::STATUS_PAID,
+            ])
+            ->get(['status', 'current_period_payable', 'paid_amount']);
+
+        $sheetPaid = (float) $sheetEntries->sum(function ($entry) {
+            if ($entry->status === TechnicianPaymentEntry::STATUS_PAID) {
+                return (float) ($entry->paid_amount ?? $entry->current_period_payable);
+            }
+            return (float) $entry->current_period_payable;
+        });
 
         return round($directPaid + $sheetPaid, 2);
     }
