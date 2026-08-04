@@ -11,6 +11,7 @@ class PaymentRequest extends Model
     protected $fillable = [
         'payment_request_id',
         'service_request_id',
+        'ticket_id',
         'user_id',
         'requested_by',
         'percentage',
@@ -57,6 +58,15 @@ class PaymentRequest extends Model
     /**
      * Get the service request associated with this payment request.
      */
+    /**
+     * Set when this request bills a ticket attendance fee rather than quoted
+     * work. Attendance sits outside the contract cap — see BillingService.
+     */
+    public function ticket(): BelongsTo
+    {
+        return $this->belongsTo(Ticket::class);
+    }
+
     public function serviceRequest(): BelongsTo
     {
         return $this->belongsTo(ServiceRequest::class);
