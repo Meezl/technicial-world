@@ -16,7 +16,7 @@ class ScheduleExtensionController extends Controller
         $user = $request->user();
         $tech = $user?->technician;
 
-        if (!$tech || !in_array($tech->id, [$serviceRequest->technician_id, $serviceRequest->lead_technician_id], true)) {
+        if (!$tech || !$serviceRequest->hasTechnician($tech->id)) {
             abort(403, 'Only the assigned technician can request an extension for this job.');
         }
 

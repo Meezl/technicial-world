@@ -323,9 +323,18 @@
                         <i class="fas fa-tools"></i>
                         Tools
                     </Link>
-                    <button class="btn btn-primary complete-btn" @click="updateStatus('completed')">
+                    <!-- Closing the whole job is the lead's call. A sub-task
+                         holder finishes their own item instead. -->
+                    <button
+                        v-if="isLeadTechnician"
+                        class="btn btn-primary complete-btn"
+                        @click="updateStatus('completed')"
+                    >
                         Mark Complete
                     </button>
+                    <span v-else-if="mySubTasks.length" class="lead-closes-note">
+                        Set your sub-task to 100% — the lead closes the job.
+                    </span>
                 </div>
             </section>
         </main>
@@ -347,6 +356,7 @@ const props = defineProps({
     technician: { type: Object, required: true },
     job: { type: Object, required: true },
     compensationSummary: { type: Object, default: null },
+    isLeadTechnician: { type: Boolean, default: false },
 })
 
 // Camera and gallery picks both land here, already compressed by the
@@ -369,11 +379,19 @@ const progressReports = computed(() => props.job.progress_reports || [])
 const jobPhotos = computed(() => props.job.photos || [])
 const recentPayouts = computed(() => (props.compensationSummary?.history || []).slice(0, 3))
 
+// Mirrors the server rule: your own sub-task, or all of them when you
+// carry the job (lead / sole assignee).
 const reportableSubTasks = computed(() => {
-    return (props.job.sub_tasks || []).filter((task) => {
-        return props.technician.id === props.job.lead_technician_id || props.technician.id === task.technician_id
-    })
+    return (props.job.sub_tasks || []).filter(
+        (task) => props.isLeadTechnician || props.technician.id === task.technician_id,
+    )
 })
+
+// The sub-tasks this technician is personally on — what they update from
+// the job page when someone else leads the project.
+const mySubTasks = computed(() =>
+    (props.job.sub_tasks || []).filter((task) => task.technician_id === props.technician.id),
+)
 
 function getStatusClass(status) {
     const map = {
@@ -410,7 +428,7 @@ function formatCurrency(amount) {
 }
 
 function canUpdateTask(task) {
-    return props.technician.id === props.job.lead_technician_id || props.technician.id === task.technician_id
+    return props.isLeadTechnician || props.technician.id === task.technician_id
 }
 
 function updateTaskProgress(task, value) {
@@ -747,6 +765,14 @@ defineOptions({ layout: null })
 
 .complete-btn {
     background: var(--success-color);
+}
+
+.lead-closes-note {
+    flex: 1;
+    align-self: center;
+    font-size: .8rem;
+    line-height: 1.35;
+    color: var(--text-muted, #64748b);
 }
 
 @media (max-width: 640px) {

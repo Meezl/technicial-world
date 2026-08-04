@@ -62,6 +62,29 @@ return Application::configure(basePath: dirname(__DIR__))
             // browser requests to route('login') as usual.
         });
 
+        // An expired or re-clicked email-verification link renders Laravel's
+        // bare "403 | Invalid signature." page — a dead end with no way
+        // back, which is exactly where users land when they open the email
+        // a day later or when a mail client rewrites the query string.
+        // Send them to the verification prompt, which has a Resend button.
+        $exceptions->render(function (\Illuminate\Routing\Exceptions\InvalidSignatureException $e, \Illuminate\Http\Request $request) {
+            if (!$request->routeIs('verification.verify')) {
+                return null; // Any other signed route keeps the hard failure.
+            }
+
+            if ($request->user()?->hasVerifiedEmail()) {
+                return redirect()->route('verification.notice');
+            }
+
+            if (!$request->user()) {
+                return redirect()->route('login')
+                    ->with('error', 'That verification link has expired. Sign in and we will send you a fresh one.');
+            }
+
+            return redirect()->route('verification.notice')
+                ->with('error', 'That verification link has expired or was already used. Tap "Resend Verification Email" for a new one.');
+        });
+
         // Same treatment for CSRF/token-mismatch (419) failures. Sessions
         // that expire between page loads produce these on the next POST;
         // without this, Inertia sees a raw 419 and the user is stuck.

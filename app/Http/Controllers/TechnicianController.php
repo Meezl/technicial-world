@@ -34,42 +34,20 @@ class TechnicianController extends Controller
             $earnings = $reportingService->getTechnicianEarnings($technician->id);
             $jobEarnings = collect($earnings['by_job'] ?? [])->keyBy('service_request_id');
 
-            // Incoming: assigned but not yet started
-            $incomingJobs = ServiceRequest::where('technician_id', $technician->id)
+            // One membership rule for every way a technician lands on a job
+            // (direct, lead, sub-task, job assignment) — see
+            // ServiceRequest::scopeForTechnician.
+            $incomingJobs = ServiceRequest::forTechnician($technician->id)
                 ->where('status', 'assigned')
                 ->with(['user', 'serviceCategory'])
                 ->latest()
                 ->get();
 
-            // Active: in progress
-            $activeJobs = ServiceRequest::where('technician_id', $technician->id)
+            $activeJobs = ServiceRequest::forTechnician($technician->id)
                 ->where('status', 'in_progress')
                 ->with(['user', 'serviceCategory'])
                 ->latest()
                 ->get();
-
-            // Also include sub-tasks assigned to this technician
-            $subTaskJobIds = ServiceSubTask::where('technician_id', $technician->id)
-                ->whereIn('status', ['assigned', 'in_progress'])
-                ->pluck('service_request_id')
-                ->unique();
-
-            if ($subTaskJobIds->isNotEmpty()) {
-                $subTaskIncoming = ServiceRequest::whereIn('id', $subTaskJobIds)
-                    ->where('status', 'assigned')
-                    ->where('technician_id', '!=', $technician->id)
-                    ->with(['user', 'serviceCategory'])
-                    ->get();
-
-                $subTaskActive = ServiceRequest::whereIn('id', $subTaskJobIds)
-                    ->where('status', 'in_progress')
-                    ->where('technician_id', '!=', $technician->id)
-                    ->with(['user', 'serviceCategory'])
-                    ->get();
-
-                $incomingJobs = $incomingJobs->merge($subTaskIncoming)->unique('id');
-                $activeJobs = $activeJobs->merge($subTaskActive)->unique('id');
-            }
 
             $incomingJobs = $incomingJobs->map(function ($job) use ($jobEarnings) {
                 $job->setAttribute('compensation_summary', $jobEarnings->get($job->id));
@@ -100,25 +78,11 @@ class TechnicianController extends Controller
         if (!$technician)
             return 0;
 
-        // Direct completed jobs
-        $directCompletedCount = ServiceRequest::where('technician_id', $technician->id)
+        // Counted off the single membership rule, so a job can't be tallied
+        // twice when the technician is both lead and sub-task holder.
+        return ServiceRequest::forTechnician($technician->id)
             ->where('status', 'completed')
             ->count();
-
-        // Sub-task related completed jobs
-        $subTaskJobIds = ServiceSubTask::where('technician_id', $technician->id)
-            ->pluck('service_request_id')
-            ->unique();
-
-        $subTaskCompletedCount = 0;
-        if ($subTaskJobIds->isNotEmpty()) {
-            $subTaskCompletedCount = ServiceRequest::whereIn('id', $subTaskJobIds)
-                ->where('technician_id', '!=', $technician->id) // Avoid double counting if tech is both lead and sub (unlikely but safe)
-                ->where('status', 'completed')
-                ->count();
-        }
-
-        return $directCompletedCount + $subTaskCompletedCount;
     }
 
     /**
@@ -137,22 +101,9 @@ class TechnicianController extends Controller
             $earnings = $reportingService->getTechnicianEarnings($technician->id);
             $jobEarnings = collect($earnings['by_job'] ?? [])->keyBy('service_request_id');
 
-            // Direct assignments
-            $directJobs = ServiceRequest::where('technician_id', $technician->id)
-                ->with(['user', 'serviceCategory', 'subTasks'])
-                ->get();
-
-            // Sub-task assignments (jobs where technician has assigned sub-tasks but isn't the main technician)
-            $subTaskJobIds = ServiceSubTask::where('technician_id', $technician->id)
-                ->pluck('service_request_id')
-                ->unique();
-
-            $subTaskJobs = ServiceRequest::whereIn('id', $subTaskJobIds)
-                ->where('technician_id', '!=', $technician->id)
-                ->with(['user', 'serviceCategory', 'subTasks'])
-                ->get();
-
-            $jobs = $directJobs->merge($subTaskJobs)->unique('id')
+            $jobs = ServiceRequest::forTechnician($technician->id)
+                ->with(['user', 'serviceCategory', 'subTasks.technician.user'])
+                ->get()
                 ->sortBy(function ($job) {
                     $statusOrder = [
                         'in_progress' => 0,
@@ -193,11 +144,7 @@ class TechnicianController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
-        // Check if technician is assigned or is a sub-task assignee
-        $isAssigned = $serviceRequest->technician_id === $technician->id;
-        $isSubTaskAssignee = $serviceRequest->subTasks()->where('technician_id', $technician->id)->exists();
-
-        if (!$isAssigned && !$isSubTaskAssignee) {
+        if (!$serviceRequest->hasTechnician($technician->id)) {
             abort(403, 'Unauthorized action.');
         }
 
@@ -225,6 +172,9 @@ class TechnicianController extends Controller
             'technician' => $technician,
             'job' => $serviceRequest,
             'compensationSummary' => $compensationSummary,
+            // Job-wide actions (closing the job) belong to whoever carries
+            // the job; a sub-task holder gets the sub-task controls instead.
+            'isLeadTechnician' => $serviceRequest->isPrimaryTechnician($technician->id),
         ]);
     }
 
@@ -261,7 +211,7 @@ class TechnicianController extends Controller
                 ->get(['id', 'name', 'serial_number', 'category', 'condition', 'location']);
 
             // Active jobs the technician can attach a request to
-            $activeJobs = ServiceRequest::where('technician_id', $technician->id)
+            $activeJobs = ServiceRequest::forTechnician($technician->id)
                 ->whereIn('status', [
                     ServiceRequest::STATUS_ASSIGNED,
                     ServiceRequest::STATUS_IN_PROGRESS,
@@ -456,7 +406,7 @@ class TechnicianController extends Controller
             $technician->load(['user', 'documents']);
 
             // Job statistics
-            $assignedJobs = \App\Models\ServiceRequest::where('technician_id', $technician->id);
+            $assignedJobs = \App\Models\ServiceRequest::forTechnician($technician->id);
             $jobStats = [
                 'total' => (clone $assignedJobs)->count(),
                 'completed' => (clone $assignedJobs)->whereIn('status', ['closed', 'archived'])->count(),
@@ -466,7 +416,7 @@ class TechnicianController extends Controller
             ];
 
             // Recent jobs (last 5)
-            $recentJobs = \App\Models\ServiceRequest::where('technician_id', $technician->id)
+            $recentJobs = \App\Models\ServiceRequest::forTechnician($technician->id)
                 ->with(['serviceCategory:id,name'])
                 ->orderBy('updated_at', 'desc')
                 ->limit(5)
@@ -696,10 +646,7 @@ class TechnicianController extends Controller
             return back()->with('error', 'Technician profile not found');
         }
 
-        $isAssigned = $serviceRequest->technician_id === $technician->id;
-        $isSubTaskAssignee = $serviceRequest->subTasks()->where('technician_id', $technician->id)->exists();
-
-        if (!$isAssigned && !$isSubTaskAssignee) {
+        if (!$serviceRequest->hasTechnician($technician->id)) {
             return back()->with('error', 'Unauthorized');
         }
 
@@ -731,7 +678,10 @@ class TechnicianController extends Controller
                 ]);
             }
 
-            $canReportSubTask = $subTask->technician_id === $technician->id || $serviceRequest->lead_technician_id === $technician->id;
+            // Their own sub-task, or any of them if they carry the job as a
+            // whole — a lead reporting for the crew is normal on site.
+            $canReportSubTask = (int) $subTask->technician_id === (int) $technician->id
+                || $serviceRequest->isPrimaryTechnician($technician->id);
 
             if (!$canReportSubTask) {
                 return back()->with('error', 'Unauthorized sub-task selection.');
@@ -757,8 +707,7 @@ class TechnicianController extends Controller
         $user = auth()->user();
         $technician = $user->technician;
 
-        if (!$technician || $serviceRequest->technician_id !== $technician->id) {
-            // Allow if subtask assignee? For now restrict to main tech for job status.
+        if (!$technician || !$serviceRequest->hasTechnician($technician->id)) {
             return back()->with('error', 'Unauthorized');
         }
 
@@ -767,6 +716,22 @@ class TechnicianController extends Controller
         ]);
 
         $action = $request->action;
+
+        // Starting and arriving are per-person facts — whoever gets to site
+        // first records them. Previously only `service_requests.technician_id`
+        // could do this, so on a project with sub-tasks a technician who was
+        // not the lead could never move the job off 'assigned' — and progress
+        // reports are blocked while a job sits in 'assigned'. That deadlock is
+        // why sub-task technicians could not submit reports at all.
+        //
+        // Closing the whole job stays with the lead: one sub-task finishing
+        // is not the project finishing.
+        if ($action === 'completed' && !$serviceRequest->isPrimaryTechnician($technician->id)) {
+            return back()->with('error',
+                'Only the lead technician can mark the whole job complete. ' .
+                'Update your sub-task to 100% and the lead will close the job.'
+            );
+        }
 
         if ($action === 'en_route') {
             $serviceRequest->update([
@@ -789,16 +754,26 @@ class TechnicianController extends Controller
             // the latest validated progress_report still sits at the
             // previous %, which leaves the payment system unable to bill
             // the remaining balance.
-            $latestValidatedPct = (int) ($serviceRequest->progressReports()
+            //
+            // On a project with sub-tasks the lead may never file a report
+            // in their own name — the crew files them per sub-task. Scoping
+            // the check to the lead's own reports would leave such a job
+            // impossible to close, so read the job-wide validated progress
+            // there and keep the per-technician check for solo jobs.
+            $validatedQuery = $serviceRequest->progressReports()
                 ->where('is_validated', true)
-                ->where('technician_id', $technician->id)
-                ->orderBy('report_date', 'desc')
-                ->value('validated_percent') ?? 0);
+                ->orderBy('report_date', 'desc');
+
+            if (!$serviceRequest->has_sub_tasks) {
+                $validatedQuery->where('technician_id', $technician->id);
+            }
+
+            $latestValidatedPct = (int) ($validatedQuery->value('validated_percent') ?? 0);
 
             if ($latestValidatedPct < 100) {
                 return back()->with('error',
                     'Submit a 100% progress report first (and wait for admin validation) before marking the job complete. ' .
-                    'Your latest validated progress is ' . $latestValidatedPct . '%.'
+                    'The latest validated progress on this job is ' . $latestValidatedPct . '%.'
                 );
             }
 
@@ -879,11 +854,11 @@ class TechnicianController extends Controller
 
         $serviceRequest = $serviceSubTask->serviceRequest;
 
-        // Must be the sub-task's assigned technician or the lead technician
-        $isAssigned = $serviceSubTask->technician_id === $technician->id;
-        $isLead = $serviceRequest->lead_technician_id === $technician->id;
+        // Must be the sub-task's assigned technician, or carry the job as a
+        // whole (lead / sole assignee).
+        $isAssigned = (int) $serviceSubTask->technician_id === (int) $technician->id;
 
-        if (!$isAssigned && !$isLead) {
+        if (!$isAssigned && !$serviceRequest->isPrimaryTechnician($technician->id)) {
             abort(403, 'Unauthorized');
         }
 
