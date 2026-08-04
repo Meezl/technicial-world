@@ -247,6 +247,18 @@ class ServiceRequest extends Model
         return $this->hasMany(PaymentRequest::class);
     }
 
+    /** Tickets raised under this job — site visits, samples, callbacks. */
+    public function tickets()
+    {
+        return $this->hasMany(Ticket::class)->orderBy('created_at');
+    }
+
+    /** Case analyses, sample reports and anything else the job accumulated. */
+    public function documents()
+    {
+        return $this->hasMany(ServiceRequestDocument::class)->orderByDesc('created_at');
+    }
+
     /**
      * Client-billing schedule, ordered the way it bills.
      *

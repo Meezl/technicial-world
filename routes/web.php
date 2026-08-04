@@ -445,4 +445,25 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/admin/requisitions/items/{item}/acknowledge', [\App\Http\Controllers\Admin\RequisitionController::class, 'acknowledgeItem'])->name('admin.requisitions.items.acknowledge');
 });
 
+// ==================== IN-JOB TICKETS & JOB DOCUMENTS ====================
+// Billable activity raised under an existing REQ — a site visit, sample
+// panels, a call-back — plus the documents a job accumulates over its life.
+// Admin and PM both work these; waiving a fee is admin-only and enforced in
+// TicketFeeService rather than here, so every entry point shares the rule.
+Route::middleware(['auth', 'role:admin,project_manager'])->group(function () {
+    Route::post('/jobs/{serviceRequest}/tickets', [\App\Http\Controllers\Admin\JobTicketController::class, 'store'])
+        ->name('jobs.tickets.store');
+    Route::post('/tickets/{ticket}/raise-fee', [\App\Http\Controllers\Admin\JobTicketController::class, 'raiseFee'])
+        ->name('jobs.tickets.raise-fee');
+    Route::post('/tickets/{ticket}/zero-charge', [\App\Http\Controllers\Admin\JobTicketController::class, 'zeroCharge'])
+        ->name('jobs.tickets.zero-charge');
+
+    Route::post('/jobs/{serviceRequest}/documents', [\App\Http\Controllers\Admin\ServiceRequestDocumentController::class, 'store'])
+        ->name('jobs.documents.store');
+    Route::post('/jobs/{serviceRequest}/documents/{document}/visibility', [\App\Http\Controllers\Admin\ServiceRequestDocumentController::class, 'updateVisibility'])
+        ->name('jobs.documents.visibility');
+    Route::delete('/jobs/{serviceRequest}/documents/{document}', [\App\Http\Controllers\Admin\ServiceRequestDocumentController::class, 'destroy'])
+        ->name('jobs.documents.destroy');
+});
+
 require __DIR__ . '/auth.php';

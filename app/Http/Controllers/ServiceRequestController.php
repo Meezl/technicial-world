@@ -155,6 +155,17 @@ class ServiceRequestController extends Controller
             'photos' => function ($q) {
                 $q->clientVisible();
             },
+            // Only documents deliberately shared. Case analyses, margin
+            // thinking and internal notes stay internal — the flag defaults
+            // to false precisely so nothing leaks by omission.
+            'documents' => function ($q) {
+                $q->clientVisible();
+            },
+            // Site visits and samples the client was charged for, so an
+            // attendance fee on their statement has something to point at.
+            'tickets' => function ($q) {
+                $q->where('type', \App\Models\Ticket::TYPE_CALLOUT);
+            },
         ]);
 
         return Inertia::render('Client/RequestStatus', [
