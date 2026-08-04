@@ -305,6 +305,10 @@ class AdminDashboardController extends Controller
             'tickets.creator:id,name',
             // Case analyses, sample reports, signed approvals.
             'documents.uploader:id,name',
+            // Every variation including internal ones — admin sees the lot.
+            'variationOrders.items',
+            'variationOrders.creator:id,name',
+            'variationOrders.approver:id,name',
         ]);
 
         $technicians = Technician::with('user')
@@ -322,6 +326,9 @@ class AdminDashboardController extends Controller
             // They are summed only in the total_* lines — the contract cap
             // must never see an attendance fee.
             'billingSummary' => app(\App\Services\BillingService::class)->summary($serviceRequest),
+            // The running total behind the quotation form: original quote,
+            // every variation, and the value after each one.
+            'variationLedger' => app(\App\Services\VariationOrderService::class)->ledger($serviceRequest),
         ]);
     }
 

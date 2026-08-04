@@ -2,12 +2,15 @@
 
 namespace App\Services;
 
+use App\Mail\VariationOrderIssued;
 use App\Models\AuditLog;
 use App\Models\ServiceRequest;
 use App\Models\User;
 use App\Models\VariationOrder;
 use App\Models\VariationOrderItem;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use RuntimeException;
 
 /**
@@ -89,6 +92,143 @@ class VariationOrderService
             ]);
 
             return $vo;
+        });
+    }
+
+    /**
+     * Send a variation to the client for approval.
+     *
+     * This is the whole point of the feature: the client sees one card
+     * carrying the delta, the reason and what the job would end up costing —
+     * never the entire quotation again. Re-sending a whole 79,500 quotation
+     * to a client who owed 7,500 is what started this.
+     */
+    public function sendToClient(VariationOrder $vo, User $actor): VariationOrder
+    {
+        if ($vo->isZeroIncome()) {
+            throw new RuntimeException(
+                'A zero-income variation is internal and is never sent to the client.'
+            );
+        }
+
+        if ($vo->isLocked() || $vo->status === VariationOrder::STATUS_DECLINED) {
+            throw new RuntimeException('This variation is closed and cannot be sent.');
+        }
+
+        if (!$vo->serviceRequest?->user) {
+            throw new RuntimeException('This job has no client account to send to.');
+        }
+
+        $vo->update([
+            'status'  => VariationOrder::STATUS_PENDING_CLIENT,
+            'sent_at' => now(),
+        ]);
+
+        $this->notifyClient($vo->fresh());
+
+        AuditLog::log(AuditLog::ACTION_UPDATED, $vo, null, [
+            'sent_to_client_by' => $actor->id,
+            'vo_number'         => $vo->vo_number,
+        ]);
+
+        return $vo->fresh();
+    }
+
+    /**
+     * The client accepting the variation themselves.
+     *
+     * A client-raised variation still needs the priced figure accepted — the
+     * client asked for the work, but not at a number they had never seen.
+     * That acceptance is this same call; what differs is only how quickly it
+     * gets here.
+     */
+    public function clientApprove(VariationOrder $vo, User $client, BillingService $billing): VariationOrder
+    {
+        if ($vo->serviceRequest?->user_id !== $client->id) {
+            throw new RuntimeException('This variation belongs to another client.');
+        }
+
+        if (!$vo->is_client_visible) {
+            throw new RuntimeException('This variation is not visible to the client.');
+        }
+
+        if ($vo->status !== VariationOrder::STATUS_PENDING_CLIENT) {
+            throw new RuntimeException('This variation is not awaiting your approval.');
+        }
+
+        return $this->approve($vo, $client, $billing);
+    }
+
+    public function clientDecline(VariationOrder $vo, User $client, ?string $reason = null): VariationOrder
+    {
+        if ($vo->serviceRequest?->user_id !== $client->id) {
+            throw new RuntimeException('This variation belongs to another client.');
+        }
+
+        if ($vo->status !== VariationOrder::STATUS_PENDING_CLIENT) {
+            throw new RuntimeException('This variation is not awaiting your approval.');
+        }
+
+        return $this->decline($vo, $client, $reason);
+    }
+
+    /**
+     * What the client is shown: the delta, why, the time impact, and what the
+     * job would be worth if they agree.
+     */
+    public function cardFor(VariationOrder $vo, BillingService $billing): array
+    {
+        $sr = $vo->serviceRequest;
+        $current = $billing->contractValue($sr);
+
+        return [
+            'vo_number'        => $vo->vo_number,
+            'request_id'       => $sr->request_id,
+            'reason'           => $vo->reason,
+            'materials_delta'  => (float) $vo->materials_delta,
+            'labor_delta'      => (float) $vo->labor_delta,
+            'transport_delta'  => (float) $vo->transport_delta,
+            'net_amount'       => (float) $vo->net_amount,
+            'is_deduction'     => $vo->isDeduction(),
+            'additional_days'  => $vo->additional_days,
+            'current_value'    => $current,
+            // The number the client actually cares about.
+            'projected_value'  => round($current + (float) $vo->net_amount, 2),
+            'items'            => $vo->items->map(fn ($i) => [
+                'category'    => $i->category,
+                'description' => $i->description,
+                'quantity'    => (float) $i->quantity,
+                'unit'        => $i->unit,
+                'unit_price'  => (float) $i->unit_price,
+                'total_price' => (float) $i->total_price,
+            ])->all(),
+        ];
+    }
+
+    /**
+     * Email the card after the response goes out, so SMTP latency never
+     * blocks the admin who pressed send.
+     */
+    private function notifyClient(VariationOrder $vo): void
+    {
+        $voId = $vo->id;
+
+        app()->terminating(function () use ($voId) {
+            try {
+                $vo = VariationOrder::with(['serviceRequest.user', 'items'])->find($voId);
+                if (!$vo?->serviceRequest?->user) {
+                    return;
+                }
+
+                Mail::to($vo->serviceRequest->user->email)->send(
+                    new VariationOrderIssued($vo, app(BillingService::class))
+                );
+            } catch (\Throwable $e) {
+                Log::warning('Variation order email failed', [
+                    'variation_order_id' => $voId,
+                    'error'              => $e->getMessage(),
+                ]);
+            }
         });
     }
 
