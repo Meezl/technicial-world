@@ -8,7 +8,6 @@ use App\Http\Controllers\PM\PMDashboardController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\TechnicianLeadController;
 use Illuminate\Foundation\Application;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -20,15 +19,6 @@ Route::get('/', function () {
         'canRegister' => Route::has('register'),
         'laravelVersion' => Application::VERSION,
         'phpVersion' => PHP_VERSION,
-    ]);
-});
-
-// Temporary: run database seeders via URL (REMOVE AFTER USE)
-Route::get('/run-seed-9x7k2m', function () {
-    Artisan::call('db:seed', ['--force' => true]);
-    return response()->json([
-        'status' => 'success',
-        'output' => Artisan::output(),
     ]);
 });
 
