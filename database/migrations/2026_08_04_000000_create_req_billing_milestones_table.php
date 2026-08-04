@@ -25,8 +25,24 @@ use Illuminate\Support\Facades\Schema;
  */
 return new class extends Migration
 {
+    /**
+     * Deliberately re-runnable.
+     *
+     * MySQL does not roll DDL back, so if this fails partway — the backfill
+     * timing out on a large table, the container being restarted mid-deploy —
+     * the migrations row is never written and the next boot runs it again.
+     * Unguarded, that second run dies on "table already exists" and the
+     * deploy crash-loops. Every step below is therefore safe to repeat.
+     */
     public function up(): void
     {
+        if (Schema::hasTable('req_billing_milestones')) {
+            $this->backfillFromJson();
+            $this->renameLegacyColumn();
+
+            return;
+        }
+
         Schema::create('req_billing_milestones', function (Blueprint $table) {
             $table->id();
             $table->foreignId('service_request_id')->constrained()->cascadeOnDelete();
@@ -47,16 +63,23 @@ return new class extends Migration
         });
 
         $this->backfillFromJson();
+        $this->renameLegacyColumn();
+    }
 
-        // Keep the old data rather than dropping it — cheap insurance, and it
-        // frees the `billing_milestones` name so the model can expose an
-        // accessor of that name for the frontend without colliding with a
-        // real column.
-        if (Schema::hasColumn('service_requests', 'billing_milestones')) {
-            Schema::table('service_requests', function (Blueprint $table) {
-                $table->renameColumn('billing_milestones', 'billing_milestones_legacy');
-            });
+    /**
+     * Keep the old data rather than dropping it — cheap insurance, and it
+     * frees the `billing_milestones` name so the model can expose an accessor
+     * of that name for the frontend without colliding with a real column.
+     */
+    private function renameLegacyColumn(): void
+    {
+        if (!Schema::hasColumn('service_requests', 'billing_milestones')) {
+            return;
         }
+
+        Schema::table('service_requests', function (Blueprint $table) {
+            $table->renameColumn('billing_milestones', 'billing_milestones_legacy');
+        });
     }
 
     /**
@@ -71,9 +94,18 @@ return new class extends Migration
             return;
         }
 
+        // Jobs already carried over on an earlier attempt. Re-inserting them
+        // would double every milestone on the job, which on this table means
+        // double-billing the client — the exact thing it exists to prevent.
+        $alreadyDone = DB::table('req_billing_milestones')
+            ->distinct()
+            ->pluck('service_request_id')
+            ->all();
+
         DB::table('service_requests')
             ->select('id', 'billing_milestones')
             ->whereNotNull('billing_milestones')
+            ->when($alreadyDone, fn ($q) => $q->whereNotIn('id', $alreadyDone))
             ->orderBy('id')
             ->chunk(200, function ($rows) {
                 foreach ($rows as $row) {
