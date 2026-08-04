@@ -247,6 +247,15 @@ class ServiceRequest extends Model
         return $this->hasMany(PaymentRequest::class);
     }
 
+    /**
+     * Signed changes stacked on the approved quote. The contract value is
+     * derived from these rather than the quote being overwritten.
+     */
+    public function variationOrders()
+    {
+        return $this->hasMany(VariationOrder::class)->orderBy('id');
+    }
+
     /** Tickets raised under this job — site visits, samples, callbacks. */
     public function tickets()
     {

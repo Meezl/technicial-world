@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\PaymentRequest;
 use App\Models\ReqBillingMilestone;
 use App\Models\ServiceRequest;
+use App\Models\VariationOrder;
 use App\Notifications\PaymentRequestNotification;
 use App\Models\User;
 use Illuminate\Support\Collection;
@@ -30,13 +31,21 @@ class BillingService
     ];
 
     /**
-     * What the client has agreed to pay in total. Today that is the approved
-     * quote; when variation orders land this becomes quote + approved VOs and
-     * every caller below inherits the change for free.
+     * What the client has agreed to pay in total: the approved quote plus
+     * every approved variation.
+     *
+     * Derived, never overwritten. The quote keeps the figure the client first
+     * agreed to and each variation stays a separate signed entry, so the
+     * history is reconstructable — which is the whole point of the ledger.
+     * Pending variations do not count until the client agrees.
      */
     public function contractValue(ServiceRequest $sr): float
     {
-        return round((float) $sr->quote_amount, 2);
+        $approvedVariations = (float) $sr->variationOrders()
+            ->whereIn('status', VariationOrder::COUNTS_TOWARD_CONTRACT)
+            ->sum('net_amount');
+
+        return round((float) $sr->quote_amount + $approvedVariations, 2);
     }
 
     /**
