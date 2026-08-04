@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class ProgressReport extends Model
 {
@@ -59,14 +60,20 @@ class ProgressReport extends Model
         return $this->belongsTo(User::class, 'validated_by');
     }
 
-    public function photos(): HasMany
+    /**
+     * Photos now live in the shared job_photos table so a report's photos and
+     * a client's evidence on the same job sit side by side. Column names are
+     * unchanged from the old progress_photos table, so callers see the same
+     * shape they always did.
+     */
+    public function photos(): MorphMany
     {
-        return $this->hasMany(ProgressPhoto::class);
+        return $this->morphMany(JobPhoto::class, 'photoable');
     }
 
-    public function activePhotos(): HasMany
+    public function activePhotos(): MorphMany
     {
-        return $this->hasMany(ProgressPhoto::class)->where('removed_by_pm', false);
+        return $this->photos()->where('removed_by_pm', false);
     }
 
     /**

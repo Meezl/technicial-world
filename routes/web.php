@@ -425,6 +425,18 @@ Route::middleware(['auth', 'role:technician'])->group(function () {
     Route::get('/technician/earnings', [\App\Http\Controllers\TechnicianController::class, 'earnings'])->name('technician.earnings');
 });
 
+// ==================== JOB PHOTO EVIDENCE (Multi-Role) ====================
+// One endpoint for every role — the client showing a snag, the technician
+// recording the site, ops adding context. Who may post to a given job is
+// decided per job inside the controller, not by the route's middleware,
+// because it depends on assignment rather than role alone.
+Route::middleware(['auth'])->group(function () {
+    Route::post('/jobs/{serviceRequest}/photos', [\App\Http\Controllers\JobPhotoController::class, 'store'])
+        ->name('jobs.photos.store');
+    Route::delete('/job-photos/{jobPhoto}', [\App\Http\Controllers\JobPhotoController::class, 'destroy'])
+        ->name('jobs.photos.destroy');
+});
+
 // ==================== REQUISITION MANAGEMENT (Multi-Role) ====================
 Route::middleware(['auth'])->group(function () {
     Route::get('/admin/requisitions', [\App\Http\Controllers\Admin\RequisitionController::class, 'index'])->name('admin.requisitions.index');

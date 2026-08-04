@@ -150,6 +150,11 @@ class ServiceRequestController extends Controller
                 $q->where('removed_by_pm', false);
             },
             'progressReports.technician.user:id,name',
+            // Photos on the job itself — the client's own evidence plus
+            // anything the team deliberately shared with them.
+            'photos' => function ($q) {
+                $q->clientVisible();
+            },
         ]);
 
         return Inertia::render('Client/RequestStatus', [
