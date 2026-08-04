@@ -122,7 +122,10 @@ class VariationOrderTest extends TestCase
         $this->service()->approve($vo, $admin, $billing);
 
         $this->assertSame(904000.0, $billing->contractValue($sr->fresh()));
-        $this->assertSame(904000.0, $billing->billableRemaining($sr->fresh()));
+        // Approval bills the variation straight away, so what is left to bill
+        // is the original quote, untouched.
+        $this->assertSame(96000.0, $billing->billed($sr->fresh()));
+        $this->assertSame(808000.0, $billing->billableRemaining($sr->fresh()));
     }
 
     public function test_the_ledger_reads_as_quote_then_variations_then_total(): void
@@ -298,7 +301,15 @@ class VariationOrderTest extends TestCase
 
         $this->assertSame(79500.0, $summary['contract_value']);
         $this->assertSame(72000.0, $summary['settled']);
-        $this->assertSame(7500.0, $summary['billable_remaining'], 'Only the variation is left to bill.');
-        $this->assertSame(7500.0, $summary['outstanding']);
+        // The job was finished, so approving the variation invoices it there
+        // and then — nothing waits on a milestone that will never come round.
+        $this->assertSame(79500.0, $summary['billed']);
+        $this->assertSame(0.0, $summary['billable_remaining']);
+        $this->assertSame(7500.0, $summary['outstanding'], 'The client owes the variation and nothing else.');
+
+        $raised = $sr->paymentRequests()->where('status', PaymentRequest::STATUS_PENDING)->get();
+        $this->assertCount(1, $raised);
+        $this->assertSame('7500.00', $raised->first()->amount);
+        $this->assertSame($vo->id, $raised->first()->variation_order_id);
     }
 }

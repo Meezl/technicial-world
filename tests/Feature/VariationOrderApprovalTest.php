@@ -96,7 +96,14 @@ class VariationOrderApprovalTest extends TestCase
         $summary = $billing->summary($sr->fresh());
         $this->assertSame(79500.0, $summary['contract_value']);
         $this->assertSame(72000.0, $summary['settled']);
-        $this->assertSame(7500.0, $summary['billable_remaining'], 'Only the variation is left to bill.');
+        $this->assertSame(7500.0, $summary['outstanding'], 'The client owes the variation and nothing else.');
+
+        // Approval invoiced it immediately, citing both references.
+        $bill = $sr->paymentRequests()->where('status', PaymentRequest::STATUS_PENDING)->sole();
+        $this->assertSame('7500.00', $bill->amount);
+        $this->assertSame($vo->id, $bill->variation_order_id);
+        $this->assertStringContainsString($vo->vo_number, $bill->notes);
+        $this->assertStringContainsString($sr->request_id, $bill->notes);
     }
 
     public function test_the_card_carries_the_delta_and_the_projected_value(): void

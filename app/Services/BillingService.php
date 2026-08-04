@@ -152,7 +152,12 @@ class BillingService
             // rows, so they have to be recognised and skipped — otherwise each
             // revision appends a second, unbilled copy of every settled
             // milestone and the client gets billed for it again.
+            // Scoped to the quote's own milestones throughout. A variation
+            // owns its schedule, and re-quoting the job must not disturb it —
+            // without this, revising a quote would silently delete the
+            // unbilled schedule of every pending variation on the job.
             $billed = $sr->billingSchedule()
+                ->whereNull('variation_order_id')
                 ->where(fn ($q) => $this->scopeAlreadyBilled($q))
                 ->get();
 
@@ -166,6 +171,7 @@ class BillingService
             }
 
             $sr->billingSchedule()
+                ->whereNull('variation_order_id')
                 ->whereNull('payment_request_id')
                 ->whereNull('triggered_at')
                 ->delete();
@@ -245,6 +251,13 @@ class BillingService
             ->whereNull('payment_request_id')
             ->whereNull('triggered_at')
             ->where('progress_pct', '<=', $progressPct)
+            // A variation's milestones exist from the moment it is raised so
+            // the schedule is visible on the card, but they must not bill
+            // until the client has agreed to that variation.
+            ->where(fn ($q) => $q
+                ->whereNull('variation_order_id')
+                ->orWhereHas('variationOrder', fn ($v) => $v
+                    ->whereIn('status', VariationOrder::COUNTS_TOWARD_CONTRACT)))
             ->orderBy('progress_pct')
             ->orderBy('sort_order')
             ->get();
@@ -277,11 +290,20 @@ class BillingService
                 $trimmed = true;
             }
 
-            $note = sprintf(
-                'Auto-generated: billing milestone "%s" reached at %s%% progress.',
-                $milestone->label,
-                rtrim(rtrim(number_format($progressPct, 2, '.', ''), '0'), '.')
-            );
+            // A bill for a variation cites both references, so an invoice can
+            // always be traced to the mother job and the change that caused it.
+            $note = $milestone->belongsToVariation()
+                ? sprintf(
+                    'Auto-generated: %s under %s — %s.',
+                    $milestone->variationOrder->vo_number,
+                    $sr->request_id,
+                    $milestone->label
+                )
+                : sprintf(
+                    'Auto-generated: billing milestone "%s" reached at %s%% progress.',
+                    $milestone->label,
+                    rtrim(rtrim(number_format($progressPct, 2, '.', ''), '0'), '.')
+                );
             if ($trimmed) {
                 $note .= sprintf(
                     ' Amount trimmed from KES %s to the remaining approved balance.',
@@ -292,6 +314,7 @@ class BillingService
             $paymentRequest = PaymentRequest::create([
                 'payment_request_id' => PaymentRequest::generatePaymentRequestId(),
                 'service_request_id' => $sr->id,
+                'variation_order_id' => $milestone->variation_order_id,
                 'user_id'            => $sr->user_id,
                 'requested_by'       => $requestedBy,
                 'percentage'         => $contract > 0 ? round(($amount / $contract) * 100, 2) : 0,

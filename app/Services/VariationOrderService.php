@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Mail\VariationOrderIssued;
 use App\Models\AuditLog;
+use App\Models\ReqBillingMilestone;
 use App\Models\ServiceRequest;
 use App\Models\User;
 use App\Models\VariationOrder;
@@ -79,11 +80,15 @@ class VariationOrderService
             // A zero-income variation moves technician money only. If it
             // carries a client-facing figure, someone has mis-scoped it —
             // fail loudly rather than quietly bill for internal work.
+            // Checked before any schedule is laid out, so the refusal does
+            // not depend on the transaction rolling back.
             if ($isZeroIncome && abs((float) $vo->net_amount) > 0.001) {
                 throw new RuntimeException(
                     'A zero-income variation cannot carry a client amount. Raise a normal variation instead.'
                 );
             }
+
+            $this->buildBillingSchedule($vo, $data['billing'] ?? null);
 
             AuditLog::log(AuditLog::ACTION_CREATED, $vo, null, [
                 'vo_number'  => $vo->vo_number,
@@ -93,6 +98,76 @@ class VariationOrderService
 
             return $vo;
         });
+    }
+
+    /**
+     * Lay out how a variation will be billed.
+     *
+     * A variation carries its own deposit top-up and milestones rather than
+     * being re-spread across whatever the job has left. Re-spreading is the
+     * obvious approach and it breaks on the case that caused all this: a job
+     * that is already finished has no remaining milestones to absorb the
+     * extra.
+     *
+     * With nothing specified the whole net amount becomes a single milestone
+     * at 0%, which bills the moment the client approves. On a finished job
+     * that is exactly right, and it is the common case.
+     *
+     * The rows exist from the moment the variation is raised so the schedule
+     * can be shown on the card, but the trigger will not touch them until the
+     * variation is approved.
+     *
+     * @param array{deposit?: float|int, milestones?: array<int, array{label: string, progress_pct: float|int, amount: float|int}>}|null $billing
+     */
+    private function buildBillingSchedule(VariationOrder $vo, ?array $billing): void
+    {
+        $net = round((float) $vo->net_amount, 2);
+
+        // Nothing to bill for an internal variation, and a deduction lowers
+        // the contract rather than raising an invoice — if it leaves the
+        // client in credit that is a refund conversation, not a bill.
+        if ($vo->isZeroIncome() || $net <= 0) {
+            return;
+        }
+
+        $rows = [];
+        $deposit = round((float) ($billing['deposit'] ?? 0), 2);
+
+        if ($deposit > 0) {
+            $rows[] = [
+                'label'        => 'Deposit top-up',
+                'progress_pct' => 0,
+                'amount'       => min($deposit, $net),
+            ];
+        }
+
+        foreach ($billing['milestones'] ?? [] as $m) {
+            if (!isset($m['label'], $m['progress_pct'], $m['amount'])) {
+                continue;
+            }
+            $rows[] = [
+                'label'        => $m['label'],
+                'progress_pct' => (float) $m['progress_pct'],
+                'amount'       => (float) $m['amount'],
+            ];
+        }
+
+        // Nothing staged — bill it in one go on approval.
+        if (empty($rows)) {
+            $rows[] = ['label' => 'Variation in full', 'progress_pct' => 0, 'amount' => $net];
+        }
+
+        $sortOrder = 0;
+        foreach ($rows as $row) {
+            ReqBillingMilestone::create([
+                'service_request_id' => $vo->service_request_id,
+                'variation_order_id' => $vo->id,
+                'label'              => $row['label'],
+                'progress_pct'       => $row['progress_pct'],
+                'amount'             => $row['amount'],
+                'sort_order'         => $sortOrder++,
+            ]);
+        }
     }
 
     /**
@@ -273,6 +348,13 @@ class VariationOrderService
             'vo_number'  => $vo->vo_number,
             'net_amount' => (float) $vo->net_amount,
         ]);
+
+        // Bill straight away for anything the job's progress has already
+        // passed. On a finished job that means the whole variation invoices
+        // on approval — which is the case that started this: the work was
+        // done, the client owed 7,500, and nothing should wait on a
+        // milestone that will never come round again.
+        $billing->raiseDueMilestones($sr->fresh(), (float) $sr->progress_percentage);
 
         return $vo->fresh();
     }

@@ -86,6 +86,18 @@ class VariationOrder extends Model
     }
 
     /**
+     * This variation's own billing schedule — its deposit top-up and
+     * milestones. Separate from the quote's, so a variation on a finished
+     * job can still bill.
+     */
+    public function billingSchedule(): HasMany
+    {
+        return $this->hasMany(ReqBillingMilestone::class)
+            ->orderBy('progress_pct')
+            ->orderBy('sort_order');
+    }
+
+    /**
      * Internal-only variation: adjusts technician fees with no client-side
      * change. The client must never see it or be billed for it.
      */
