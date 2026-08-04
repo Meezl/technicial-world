@@ -211,6 +211,9 @@ class TechnicianController extends Controller
             'progressReports.validator',
             'progressReports.subTask',
             'progressReports.photos',
+            // Job-level photos — the client's evidence of a snag, so the
+            // technician sees it before going back to site.
+            'photos.uploader:id,name',
         ]);
 
         $reportingService = app(ReportingService::class);

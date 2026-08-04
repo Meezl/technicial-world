@@ -39,18 +39,47 @@ class BillingService
         return round((float) $sr->quote_amount, 2);
     }
 
-    /** Money already asked for — pending plus paid. */
+    /**
+     * Money already asked for against the CONTRACT — pending plus paid.
+     *
+     * Ticket attendance fees are excluded deliberately. A job carries two
+     * kinds of money: the quoted work (capped at the contract value) and
+     * attendance fees charged for turning up (governed separately). Folding
+     * a KES 7,500 sample fee into this figure would consume 7,500 of the
+     * client's quoted-work allowance and the job would under-bill by exactly
+     * that at the end.
+     */
     public function billed(ServiceRequest $sr): float
     {
         return round((float) $sr->paymentRequests()
+            ->whereNull('ticket_id')
             ->whereIn('status', self::BILLED_STATUSES)
             ->sum('amount'), 2);
     }
 
-    /** Money actually received. */
+    /** Contract money actually received. */
     public function settled(ServiceRequest $sr): float
     {
         return round((float) $sr->paymentRequests()
+            ->whereNull('ticket_id')
+            ->where('status', PaymentRequest::STATUS_PAID)
+            ->sum('amount'), 2);
+    }
+
+    /** Attendance fees asked for — pending plus paid. Uncapped. */
+    public function attendanceBilled(ServiceRequest $sr): float
+    {
+        return round((float) $sr->paymentRequests()
+            ->whereNotNull('ticket_id')
+            ->whereIn('status', self::BILLED_STATUSES)
+            ->sum('amount'), 2);
+    }
+
+    /** Attendance fees actually received. */
+    public function attendanceSettled(ServiceRequest $sr): float
+    {
+        return round((float) $sr->paymentRequests()
+            ->whereNotNull('ticket_id')
             ->where('status', PaymentRequest::STATUS_PAID)
             ->sum('amount'), 2);
     }
@@ -61,20 +90,38 @@ class BillingService
         return round($this->contractValue($sr) - $this->billed($sr), 2);
     }
 
-    /** Everything the UI and the commands need, computed the same way. */
+    /**
+     * Everything the UI and the commands need, computed the same way.
+     *
+     * The two streams are reported side by side and summed only in the
+     * `total_*` lines, which exist for reporting — never for the cap.
+     */
     public function summary(ServiceRequest $sr): array
     {
         $contract = $this->contractValue($sr);
         $billed   = $this->billed($sr);
         $settled  = $this->settled($sr);
 
+        $attBilled  = $this->attendanceBilled($sr);
+        $attSettled = $this->attendanceSettled($sr);
+
         return [
+            // Quoted work + approved variations. Capped.
             'contract_value'      => $contract,
             'billed'              => $billed,
             'settled'             => $settled,
             'awaiting_payment'    => round($billed - $settled, 2),
             'billable_remaining'  => round($contract - $billed, 2),
             'outstanding'         => round($contract - $settled, 2),
+
+            // Ticket attendance fees. Outside the cap.
+            'attendance_billed'   => $attBilled,
+            'attendance_settled'  => $attSettled,
+            'attendance_due'      => round($attBilled - $attSettled, 2),
+
+            // Reporting only.
+            'total_billed'        => round($billed + $attBilled, 2),
+            'total_settled'       => round($settled + $attSettled, 2),
         ];
     }
 

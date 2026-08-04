@@ -467,6 +467,44 @@
                         </div>
                     </article>
 
+                    <!-- Photos attached to the job itself rather than to a
+                         progress report — client evidence of a snag, and
+                         anything ops added outside a formal submission. -->
+                    <article class="job-shell-card" v-if="jobPhotos.length">
+                        <div class="job-card-header">
+                            <div>
+                                <span class="section-kicker">Evidence</span>
+                                <h3>Photos on this job</h3>
+                                <p>Sent by the client or added by the team outside a progress report.</p>
+                            </div>
+                            <span class="sub-task-count">{{ jobPhotos.length }} photo{{ jobPhotos.length === 1 ? '' : 's' }}</span>
+                        </div>
+
+                        <div class="admin-photo-grid">
+                            <div
+                                v-for="(photo, photoIndex) in jobPhotos"
+                                :key="photo.id"
+                                class="admin-photo-card"
+                            >
+                                <button
+                                    type="button"
+                                    class="admin-photo-open"
+                                    :aria-label="`Open photo ${photoIndex + 1} of ${jobPhotos.length}`"
+                                    @click="openPhotoCarousel(jobPhotos, photoIndex)"
+                                >
+                                    <img :src="photo.url" :alt="photo.caption || 'Job photo'">
+                                </button>
+                                <div class="admin-photo-overlay">
+                                    <span v-if="photo.caption" class="admin-photo-caption">{{ photo.caption }}</span>
+                                    <small style="color:var(--text-muted);">
+                                        {{ photo.uploader?.name || 'Unknown' }}
+                                        <template v-if="photo.uploader_role"> · {{ photo.uploader_role.replace('_', ' ') }}</template>
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </article>
+
                     <article class="job-shell-card">
                         <div class="job-card-header">
                             <div>
@@ -610,16 +648,25 @@
 
                                 <div v-if="report.photos?.length" class="admin-photo-grid">
                                     <div
-                                        v-for="photo in report.photos"
+                                        v-for="(photo, photoIndex) in report.photos"
                                         :key="photo.id"
                                         :class="[
                                             'admin-photo-card',
                                             { removed: photo.removed_by_pm || progressValidationForms[report.id]?.remove_photo_ids.includes(photo.id) }
                                         ]"
                                     >
-                                        <a :href="`/storage/${photo.file_path}`" target="_blank">
-                                            <img :src="`/storage/${photo.file_path}`" :alt="photo.caption || 'Progress photo'">
-                                        </a>
+                                        <!-- Opens the carousel rather than dumping the
+                                             raw file in a new tab, so a validator can
+                                             arrow through a report's photos in one
+                                             pass without losing this page. -->
+                                        <button
+                                            type="button"
+                                            class="admin-photo-open"
+                                            :aria-label="`Open photo ${photoIndex + 1} of ${report.photos.length}`"
+                                            @click="openPhotoCarousel(report.photos, photoIndex)"
+                                        >
+                                            <img :src="photo.url || `/storage/${photo.file_path}`" :alt="photo.caption || 'Progress photo'">
+                                        </button>
                                         <div class="admin-photo-overlay">
                                             <span v-if="photo.removed_by_pm" class="admin-photo-flag">Removed</span>
                                             <button
@@ -1778,11 +1825,21 @@
                 </div>
             </div>
         </div>
+
+        <!-- One carousel for the whole page; whichever photo strip was
+             clicked feeds it. -->
+        <ImageLightbox
+            :images="carouselPhotos"
+            :initial-index="carouselIndex"
+            hide-thumbnails
+            @close="carouselIndex = null"
+        />
     </div>
 </template>
 
 <script setup>
 import AdminSidebar from '../../Components/AdminSidebar.vue'
+import ImageLightbox from '../../Components/ImageLightbox.vue'
 import { Link } from '@inertiajs/vue3'
 import { ref, computed, reactive } from 'vue'
 import { router } from '@inertiajs/vue3'
@@ -1801,6 +1858,20 @@ const props = defineProps({
         default: null
     }
 })
+
+// Photo carousel. Any photo strip on the page hands its full set here so the
+// validator can arrow or swipe through them without going back to the grid.
+const carouselPhotos = ref([])
+const carouselIndex = ref(null)
+
+const openPhotoCarousel = (photos, index) => {
+    carouselPhotos.value = (photos || []).map(photo => ({
+        src: photo.url || photo.file_path,
+        caption: photo.caption,
+        filename: photo.original_filename,
+    }))
+    carouselIndex.value = index
+}
 
 // State
 const showSingleAssignModal = ref(false)
@@ -2144,6 +2215,7 @@ const milestoneLaborReleasedTotal = computed(() => {
     }, 0)
 })
 const progressReports = computed(() => props.job.progress_reports || [])
+const jobPhotos = computed(() => props.job.photos || [])
 
 // Detects the "Mark Complete tapped without 100% progress report" scenario:
 // the SR shows progress=100 or status=completed, but the latest validated
@@ -4083,6 +4155,17 @@ defineOptions({
 
 .admin-photo-card.removed {
     opacity: 0.62;
+}
+
+/* The thumbnail is a button now (it opens the carousel), so it needs the
+   default button chrome stripped. */
+.admin-photo-open {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: zoom-in;
 }
 
 .admin-photo-card img {

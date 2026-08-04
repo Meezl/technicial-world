@@ -247,6 +247,18 @@ class ServiceRequest extends Model
         return $this->hasMany(PaymentRequest::class);
     }
 
+    /** Tickets raised under this job — site visits, samples, callbacks. */
+    public function tickets()
+    {
+        return $this->hasMany(Ticket::class)->orderBy('created_at');
+    }
+
+    /** Case analyses, sample reports and anything else the job accumulated. */
+    public function documents()
+    {
+        return $this->hasMany(ServiceRequestDocument::class)->orderByDesc('created_at');
+    }
+
     /**
      * Client-billing schedule, ordered the way it bills.
      *
@@ -362,6 +374,26 @@ class ServiceRequest extends Model
     public function progressReports()
     {
         return $this->hasMany(ProgressReport::class)->orderBy('report_date', 'desc');
+    }
+
+    /**
+     * Photos attached to the job itself — client evidence of a snag, a
+     * technician's record of the site — as opposed to photos submitted as
+     * part of a progress report, which hang off the report.
+     */
+    public function photos()
+    {
+        return $this->morphMany(JobPhoto::class, 'photoable')->orderBy('created_at', 'desc');
+    }
+
+    /**
+     * Every photo on the job, whatever it hangs off. The denormalised
+     * service_request_id on job_photos is what makes this one indexed query
+     * instead of a walk through each morph target.
+     */
+    public function allPhotos()
+    {
+        return $this->hasMany(JobPhoto::class)->orderBy('created_at', 'desc');
     }
 
     public function validatedProgressReports()

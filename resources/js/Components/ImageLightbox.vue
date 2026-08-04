@@ -27,6 +27,8 @@
                 @keydown.esc="close"
                 @keydown.left="prev"
                 @keydown.right="next"
+                @touchstart.passive="onTouchStart"
+                @touchend.passive="onTouchEnd"
                 tabindex="0"
                 ref="overlayRef"
             >
@@ -75,7 +77,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 const props = defineProps({
     /**
@@ -151,10 +153,53 @@ const prev = () => {
         : openIndex.value - 1
 }
 
+// Swipe between photos. On a phone this is how people actually expect a
+// gallery to work — the arrow buttons are a desktop affordance and are
+// awkward to hit one-handed on site.
+const SWIPE_MIN_PX = 45
+let touchStartX = 0
+let touchStartY = 0
+
+const onTouchStart = (e) => {
+    touchStartX = e.changedTouches[0].clientX
+    touchStartY = e.changedTouches[0].clientY
+}
+
+const onTouchEnd = (e) => {
+    if (openIndex.value === null || normalizedImages.value.length < 2) return
+
+    const dx = e.changedTouches[0].clientX - touchStartX
+    const dy = e.changedTouches[0].clientY - touchStartY
+
+    // Ignore mostly-vertical drags so scrolling a tall photo doesn't
+    // accidentally advance the carousel.
+    if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < Math.abs(dy)) return
+
+    dx < 0 ? next() : prev()
+}
+
 const onThumbError = (e, img) => {
     e.target.style.opacity = '0.35'
     e.target.title = 'Image not loading: ' + img.src
 }
+
+// Lock the page behind the overlay, and warm the neighbouring photos so a
+// swipe shows the next one immediately instead of a blank frame on 4G.
+watch(openIndex, (index) => {
+    if (typeof document === 'undefined') return
+    document.body.style.overflow = index === null ? '' : 'hidden'
+
+    if (index === null) return
+    const total = normalizedImages.value.length
+    for (const offset of [1, -1]) {
+        const neighbour = normalizedImages.value[(index + offset + total) % total]
+        if (neighbour?.src) new Image().src = neighbour.src
+    }
+})
+
+onBeforeUnmount(() => {
+    if (typeof document !== 'undefined') document.body.style.overflow = ''
+})
 
 defineExpose({ open, close })
 </script>
@@ -270,4 +315,11 @@ defineExpose({ open, close })
     transition: opacity 0.2s ease;
 }
 .lightbox-fade-enter-from, .lightbox-fade-leave-to { opacity: 0; }
+
+/* While closing, the overlay is still a full-screen element sitting above
+   the page. If its transitionend never arrives — a backgrounded tab doesn't
+   run transitions — it lingers invisibly and swallows every click on the
+   page underneath. It is on its way out either way, so it should never take
+   a click. */
+.lightbox-fade-leave-active { pointer-events: none; }
 </style>

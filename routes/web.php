@@ -425,12 +425,45 @@ Route::middleware(['auth', 'role:technician'])->group(function () {
     Route::get('/technician/earnings', [\App\Http\Controllers\TechnicianController::class, 'earnings'])->name('technician.earnings');
 });
 
+// ==================== JOB PHOTO EVIDENCE (Multi-Role) ====================
+// One endpoint for every role — the client showing a snag, the technician
+// recording the site, ops adding context. Who may post to a given job is
+// decided per job inside the controller, not by the route's middleware,
+// because it depends on assignment rather than role alone.
+Route::middleware(['auth'])->group(function () {
+    Route::post('/jobs/{serviceRequest}/photos', [\App\Http\Controllers\JobPhotoController::class, 'store'])
+        ->name('jobs.photos.store');
+    Route::delete('/job-photos/{jobPhoto}', [\App\Http\Controllers\JobPhotoController::class, 'destroy'])
+        ->name('jobs.photos.destroy');
+});
+
 // ==================== REQUISITION MANAGEMENT (Multi-Role) ====================
 Route::middleware(['auth'])->group(function () {
     Route::get('/admin/requisitions', [\App\Http\Controllers\Admin\RequisitionController::class, 'index'])->name('admin.requisitions.index');
     Route::post('/admin/requisitions', [\App\Http\Controllers\Admin\RequisitionController::class, 'store'])->name('admin.requisitions.store');
     Route::post('/admin/requisitions/items/{item}', [\App\Http\Controllers\Admin\RequisitionController::class, 'updateItem'])->name('admin.requisitions.items.update');
     Route::post('/admin/requisitions/items/{item}/acknowledge', [\App\Http\Controllers\Admin\RequisitionController::class, 'acknowledgeItem'])->name('admin.requisitions.items.acknowledge');
+});
+
+// ==================== IN-JOB TICKETS & JOB DOCUMENTS ====================
+// Billable activity raised under an existing REQ — a site visit, sample
+// panels, a call-back — plus the documents a job accumulates over its life.
+// Admin and PM both work these; waiving a fee is admin-only and enforced in
+// TicketFeeService rather than here, so every entry point shares the rule.
+Route::middleware(['auth', 'role:admin,project_manager'])->group(function () {
+    Route::post('/jobs/{serviceRequest}/tickets', [\App\Http\Controllers\Admin\JobTicketController::class, 'store'])
+        ->name('jobs.tickets.store');
+    Route::post('/tickets/{ticket}/raise-fee', [\App\Http\Controllers\Admin\JobTicketController::class, 'raiseFee'])
+        ->name('jobs.tickets.raise-fee');
+    Route::post('/tickets/{ticket}/zero-charge', [\App\Http\Controllers\Admin\JobTicketController::class, 'zeroCharge'])
+        ->name('jobs.tickets.zero-charge');
+
+    Route::post('/jobs/{serviceRequest}/documents', [\App\Http\Controllers\Admin\ServiceRequestDocumentController::class, 'store'])
+        ->name('jobs.documents.store');
+    Route::post('/jobs/{serviceRequest}/documents/{document}/visibility', [\App\Http\Controllers\Admin\ServiceRequestDocumentController::class, 'updateVisibility'])
+        ->name('jobs.documents.visibility');
+    Route::delete('/jobs/{serviceRequest}/documents/{document}', [\App\Http\Controllers\Admin\ServiceRequestDocumentController::class, 'destroy'])
+        ->name('jobs.documents.destroy');
 });
 
 require __DIR__ . '/auth.php';

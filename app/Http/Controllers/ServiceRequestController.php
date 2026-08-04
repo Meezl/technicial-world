@@ -150,6 +150,22 @@ class ServiceRequestController extends Controller
                 $q->where('removed_by_pm', false);
             },
             'progressReports.technician.user:id,name',
+            // Photos on the job itself — the client's own evidence plus
+            // anything the team deliberately shared with them.
+            'photos' => function ($q) {
+                $q->clientVisible();
+            },
+            // Only documents deliberately shared. Case analyses, margin
+            // thinking and internal notes stay internal — the flag defaults
+            // to false precisely so nothing leaks by omission.
+            'documents' => function ($q) {
+                $q->clientVisible();
+            },
+            // Site visits and samples the client was charged for, so an
+            // attendance fee on their statement has something to point at.
+            'tickets' => function ($q) {
+                $q->where('type', \App\Models\Ticket::TYPE_CALLOUT);
+            },
         ]);
 
         return Inertia::render('Client/RequestStatus', [

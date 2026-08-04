@@ -5,8 +5,9 @@ namespace App\Services;
 use App\Mail\ProgressApproved;
 use App\Models\ProgressReport;
 use App\Models\ProgressReportNoteVersion;
-use App\Models\ProgressPhoto;
+use App\Models\JobPhoto;
 use App\Models\ServiceRequest;
+use App\Models\User;
 use App\Models\AuditLog;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -156,23 +157,18 @@ class ProgressService
                 'client_visible_notes' => $clientNotes,
             ]);
 
-            // Handle photo removals
+            // Handle photo removals. Scoped through the report's own relation
+            // so an id belonging to another report can't be flipped.
             if (!empty($data['remove_photo_ids'])) {
-                ProgressPhoto::whereIn('id', $data['remove_photo_ids'])
-                    ->where('progress_report_id', $report->id)
+                $report->photos()
+                    ->whereIn('id', $data['remove_photo_ids'])
                     ->update(['removed_by_pm' => true]);
             }
 
             // Store admin-uploaded photos attached during validation
             foreach ($adminPhotos as $photo) {
                 if (!($photo instanceof UploadedFile)) continue;
-                $path = $photo->store('progress-photos', 'public');
-                ProgressPhoto::create([
-                    'progress_report_id' => $report->id,
-                    'file_path' => $path,
-                    'added_by' => $pmId,
-                    'caption' => 'Added by admin during validation',
-                ]);
+                $this->addPhoto($report, $photo, $pmId, 'Added by admin during validation');
             }
 
             // Update service request progress based on validated value
@@ -215,14 +211,23 @@ class ProgressService
         UploadedFile $file,
         int $userId,
         ?string $caption = null
-    ): ProgressPhoto {
+    ): JobPhoto {
         $path = $file->store('progress-photos/' . $report->service_request_id, 'public');
 
-        return ProgressPhoto::create([
-            'progress_report_id' => $report->id,
-            'file_path' => $path,
-            'caption' => $caption,
-            'added_by' => $userId,
+        return $report->photos()->create([
+            // Denormalised so job-wide queries and the permission check don't
+            // have to walk back through the report.
+            'service_request_id' => $report->service_request_id,
+            'file_path'          => $path,
+            'caption'            => $caption,
+            'added_by'           => $userId,
+            'uploader_role'      => User::find($userId)?->role,
+            'original_filename'  => $file->getClientOriginalName(),
+            'mime_type'          => $file->getMimeType(),
+            'size_bytes'         => $file->getSize(),
+            // A progress photo reaches the client through report validation,
+            // not on upload — the PM decides what counts.
+            'client_visible'     => true,
         ]);
     }
 

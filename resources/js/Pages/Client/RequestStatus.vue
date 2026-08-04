@@ -602,12 +602,63 @@
                             <p v-if="report.client_visible_notes" class="prc-notes">{{ report.client_visible_notes }}</p>
                             <p v-else class="prc-notes prc-notes-muted">No notes provided.</p>
 
-                            <ImageLightbox
-                                v-if="(report.photos || []).length"
-                                :images="(report.photos || []).map(p => ({ src: p.file_path, caption: p.caption }))"
-                            />
+                            <JobPhotoGallery :photos="report.photos" />
                         </article>
                     </div>
+                </div>
+            </section>
+
+            <!-- Client evidence. Until now the only photos a client could
+                 attach were the ones sent at the moment they filed the
+                 request — a snag found later had nowhere to go but WhatsApp,
+                 leaving no record on the job. -->
+            <section class="panel-section" v-if="serviceRequest.status !== 'completed' || jobPhotos.length">
+                <div class="panel-card full-width">
+                    <div class="card-header">
+                        <h3>Your Photos</h3>
+                        <small style="color:var(--text-muted);">
+                            Show us what you're seeing — a snag, damage, or the finished work
+                        </small>
+                    </div>
+
+                    <JobPhotoGallery :photos="jobPhotos" title="Shared on this job" />
+
+                    <p v-if="!jobPhotos.length" class="empty-photos-note">
+                        No photos yet. Add one below and the team working on your job will see it.
+                    </p>
+
+                    <form class="client-photo-form" @submit.prevent="submitJobPhotos">
+                        <PhotoUploader
+                            ref="jobPhotoUploader"
+                            v-model="newJobPhotos"
+                            :max="6"
+                            :disabled="uploadingJobPhotos"
+                            hint="Up to 6 photos. They're resized on your phone first, so this works on a slow connection."
+                            @busy="preparingJobPhotos = $event"
+                        />
+
+                        <input
+                            v-model="jobPhotoCaption"
+                            type="text"
+                            class="form-control"
+                            maxlength="200"
+                            placeholder="What are we looking at? (optional)"
+                            style="margin-top:.75rem;"
+                        />
+
+                        <button
+                            type="submit"
+                            class="btn btn-primary"
+                            style="margin-top:.75rem;"
+                            :disabled="!newJobPhotos.length || uploadingJobPhotos || preparingJobPhotos"
+                        >
+                            <span v-if="preparingJobPhotos"><i class="fas fa-spinner fa-spin"></i> Preparing photos…</span>
+                            <span v-else-if="uploadingJobPhotos">
+                                <i class="fas fa-spinner fa-spin"></i> Uploading… {{ jobPhotoProgress }}%
+                            </span>
+                            <span v-else><i class="fas fa-upload"></i> Send {{ newJobPhotos.length || '' }} photo{{ newJobPhotos.length === 1 ? '' : 's' }}</span>
+                        </button>
+                    </form>
                 </div>
             </section>
 
@@ -788,7 +839,8 @@ import { router } from '@inertiajs/vue3'
 import axios from 'axios'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
 import ClientBottomNav from '../../Components/ClientBottomNav.vue'
-import ImageLightbox from '../../Components/ImageLightbox.vue'
+import JobPhotoGallery from '../../Components/JobPhotoGallery.vue'
+import PhotoUploader from '../../Components/PhotoUploader.vue'
 
 const props = defineProps({
     serviceRequest: {
@@ -804,6 +856,45 @@ const props = defineProps({
 })
 
 const bank = props.bank
+
+// ---- Client photo evidence -------------------------------------------------
+const jobPhotoUploader = ref(null)
+const newJobPhotos = ref([])
+const jobPhotoCaption = ref('')
+const preparingJobPhotos = ref(false)
+const uploadingJobPhotos = ref(false)
+const jobPhotoProgress = ref(0)
+
+const jobPhotos = computed(() => props.serviceRequest.photos || [])
+
+function submitJobPhotos() {
+    if (!newJobPhotos.value.length || preparingJobPhotos.value) return
+
+    const formData = new FormData()
+    newJobPhotos.value.forEach((file, index) => formData.append(`photos[${index}]`, file))
+    if (jobPhotoCaption.value) formData.append('caption', jobPhotoCaption.value)
+
+    uploadingJobPhotos.value = true
+    jobPhotoProgress.value = 0
+
+    router.post(`/jobs/${props.serviceRequest.id}/photos`, formData, {
+        forceFormData: true,
+        preserveScroll: true,
+        onProgress: (event) => {
+            if (event?.percentage != null) jobPhotoProgress.value = event.percentage
+        },
+        onSuccess: () => {
+            uploadingJobPhotos.value = false
+            jobPhotoCaption.value = ''
+            // Only clear on success — a failed upload keeps the photos so the
+            // client can retry without picking them again.
+            jobPhotoUploader.value?.reset()
+        },
+        onError: () => {
+            uploadingJobPhotos.value = false
+        },
+    })
+}
 
 // Which bank value was just copied to the clipboard; drives the icon swap
 // on the copy buttons (checkmark for ~1.5s after a successful copy).

@@ -295,6 +295,16 @@ class AdminDashboardController extends Controller
             'progressReports.photos',
             // Ops-only edit history for each report's notes fields.
             'progressReports.noteVersions.editor:id,name',
+            // Job-level photos: client evidence and anything ops attached
+            // outside a formal progress report.
+            'photos.uploader:id,name',
+            // Billable activity raised under this job — samples, site visits,
+            // call-backs — with whatever each one billed.
+            'tickets.paymentRequests:id,ticket_id,payment_request_id,amount,status,paid_at',
+            'tickets.feeAuthoriser:id,name',
+            'tickets.creator:id,name',
+            // Case analyses, sample reports, signed approvals.
+            'documents.uploader:id,name',
         ]);
 
         $technicians = Technician::with('user')
@@ -308,6 +318,10 @@ class AdminDashboardController extends Controller
             'job' => $job,
             'technicians' => $technicians,
             'budgetSummary' => $budgetSummary,
+            // Contract money and attendance money, reported side by side.
+            // They are summed only in the total_* lines — the contract cap
+            // must never see an attendance fee.
+            'billingSummary' => app(\App\Services\BillingService::class)->summary($serviceRequest),
         ]);
     }
 

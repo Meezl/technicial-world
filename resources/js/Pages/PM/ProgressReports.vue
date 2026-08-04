@@ -163,14 +163,24 @@
 
                         <div class="photo-grid">
                             <div
-                                v-for="photo in report.photos"
+                                v-for="(photo, photoIndex) in report.photos"
                                 :key="photo.id"
                                 class="photo-item"
                                 :class="{
                                     removed: photo.removed_by_pm || validationForms[report.id]?.remove_photo_ids.includes(photo.id),
                                 }"
                             >
-                                <img :src="'/storage/' + photo.file_path" :alt="photo.caption || 'Progress photo'">
+                                <!-- Click to open the carousel: validating a
+                                     report means actually looking at the
+                                     photos, not squinting at 120px tiles. -->
+                                <button
+                                    type="button"
+                                    class="photo-open"
+                                    :aria-label="`Open photo ${photoIndex + 1} of ${report.photos.length}`"
+                                    @click="openPhotoCarousel(report.photos, photoIndex)"
+                                >
+                                    <img :src="photo.url || '/storage/' + photo.file_path" :alt="photo.caption || 'Progress photo'">
+                                </button>
                                 <div class="photo-overlay">
                                     <span v-if="photo.caption" class="photo-caption">{{ photo.caption }}</span>
                                     <button
@@ -246,6 +256,13 @@
                 />
             </div>
         </section>
+
+        <ImageLightbox
+            :images="carouselPhotos"
+            :initial-index="carouselIndex"
+            hide-thumbnails
+            @close="carouselIndex = null"
+        />
     </PMLayout>
 </template>
 
@@ -253,6 +270,7 @@
 import { computed, reactive, ref } from 'vue'
 import { Link, router } from '@inertiajs/vue3'
 import PMLayout from '../../Layouts/PMLayout.vue'
+import ImageLightbox from '../../Components/ImageLightbox.vue'
 
 const props = defineProps({
     reports: { type: Object, default: () => ({ data: [] }) },
@@ -293,6 +311,19 @@ function applyFilter() {
         preserveScroll: true,
         replace: true,
     })
+}
+
+// Photo carousel, shared by every report card on the page.
+const carouselPhotos = ref([])
+const carouselIndex = ref(null)
+
+function openPhotoCarousel(photos, index) {
+    carouselPhotos.value = (photos || []).map(photo => ({
+        src: photo.url || photo.file_path,
+        caption: photo.caption,
+        filename: photo.original_filename,
+    }))
+    carouselIndex.value = index
 }
 
 function togglePhotoRemoval(report, photoId) {
@@ -677,6 +708,18 @@ defineOptions({ layout: null })
 .photo-item.removed {
     opacity: 0.45;
     border-color: #ef4444;
+}
+
+/* The thumbnail became a button (it opens the carousel) — strip the default
+   button chrome and let it fill the tile. */
+.photo-open {
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: zoom-in;
 }
 
 .photo-item img {

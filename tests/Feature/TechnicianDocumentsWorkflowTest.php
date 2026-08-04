@@ -5,7 +5,6 @@ namespace Tests\Feature;
 use App\Models\Technician;
 use App\Models\TechnicianDocument;
 use App\Models\JobAssignment;
-use App\Models\ProgressPhoto;
 use App\Models\ProgressReport;
 use App\Models\ServiceCategory;
 use App\Models\ServiceRequest;
@@ -143,16 +142,24 @@ class TechnicianDocumentsWorkflowTest extends TestCase
         $technician->refresh();
         $user->refresh();
 
-        $this->assertSame('Updated Technician', $user->name);
+        // Low-risk fields apply immediately.
         $this->assertSame('0712345678', $user->phone);
-        $this->assertSame('Mombasa', $technician->location);
-        $this->assertSame(Technician::TRADE_ELECTRICIAN, $technician->trade);
-        $this->assertSame('Solar Installations', $technician->specialization);
-        $this->assertSame('Updated bio', $technician->bio);
-        $this->assertSame('5 years in field service.', $technician->experience_narrative);
-        $this->assertSame(['Wiring', 'Solar'], $technician->skills);
         $this->assertNotNull($technician->profile_photo_path);
         Storage::disk('public')->assertExists($technician->profile_photo_path);
+
+        // Skills and bio are approval-gated: they are queued for an admin,
+        // not written straight onto the live profile a client sees.
+        $this->assertSame('Original bio', $technician->bio);
+        $this->assertNotSame(['Wiring', 'Solar'], (array) $technician->skills);
+        $this->assertSame('Updated bio', $technician->pending_profile_changes['bio'] ?? null);
+        $this->assertSame(['Wiring', 'Solar'], $technician->pending_profile_changes['skills'] ?? null);
+
+        // Identity and trade are not technician-editable at all — those move
+        // through admin, so posting them must not change anything.
+        $this->assertNotSame('Updated Technician', $user->name);
+        $this->assertSame('Nairobi', $technician->location);
+        $this->assertSame(Technician::TRADE_GENERAL, $technician->trade);
+        $this->assertSame('General Repairs', $technician->specialization);
 
         $replaceResponse = $this->actingAs($user)->post(route('technician.profile.document'), [
             'document_type' => TechnicianDocument::TYPE_PASSPORT_PHOTO,
@@ -204,7 +211,10 @@ class TechnicianDocumentsWorkflowTest extends TestCase
             'technician_id' => $technician->id,
             'description' => 'Fix damaged distribution board.',
             'location' => 'Westlands',
-            'status' => 'assigned',
+            // A technician must start the job before reporting progress, so
+            // the job has to be under way for this path to be reachable. The
+            // guard itself is covered by the test below.
+            'status' => 'in_progress',
             'urgency' => 'high',
         ]);
 
@@ -232,6 +242,59 @@ class TechnicianDocumentsWorkflowTest extends TestCase
         foreach ($report->photos as $photo) {
             Storage::disk('public')->assertExists($photo->file_path);
         }
+    }
+
+    public function test_progress_report_is_rejected_until_the_job_is_started(): void
+    {
+        Storage::fake('public');
+
+        $client = User::factory()->create([
+            'role' => User::ROLE_CLIENT,
+        ]);
+
+        $technicianUser = User::factory()->create([
+            'role' => User::ROLE_TECHNICIAN,
+        ]);
+
+        $technician = Technician::create([
+            'user_id' => $technicianUser->id,
+            'technician_id' => 'TECH-401',
+            'specialization' => 'Electrical',
+            'trade' => Technician::TRADE_ELECTRICIAN,
+            'location' => 'Nairobi',
+            'availability' => 'busy',
+        ]);
+
+        $category = ServiceCategory::create([
+            'name' => 'Electrical Guard',
+            'is_active' => true,
+        ]);
+
+        $serviceRequest = ServiceRequest::create([
+            'request_id' => 'REQ-401',
+            'user_id' => $client->id,
+            'service_category_id' => $category->id,
+            'technician_id' => $technician->id,
+            'description' => 'Fix damaged distribution board.',
+            'location' => 'Westlands',
+            'status' => 'assigned',
+            'urgency' => 'high',
+        ]);
+
+        $response = $this->actingAs($technicianUser)->post(route('technician.progress-report', $serviceRequest), [
+            'percent_complete' => 45,
+            'report_date' => now()->toDateString(),
+            'notes' => 'Trying to report before starting.',
+            'photos' => [UploadedFile::fake()->image('too-early.jpg')],
+        ]);
+
+        $response->assertSessionHas('error');
+
+        // Nothing is written — not the report, and not the photo. A rejected
+        // submission must not leave an orphaned file on the disk.
+        $this->assertNull(ProgressReport::first());
+        $this->assertSame(0, \App\Models\JobPhoto::count());
+        $this->assertEmpty(Storage::disk('public')->allFiles());
     }
 
     public function test_admin_can_validate_progress_and_remove_photo_from_approved_set(): void
@@ -285,14 +348,14 @@ class TechnicianDocumentsWorkflowTest extends TestCase
             'notes' => 'Pipe rerouting completed.',
         ]);
 
-        $photoOne = ProgressPhoto::create([
-            'progress_report_id' => $report->id,
+        $photoOne = $report->photos()->create([
+            'service_request_id' => $serviceRequest->id,
             'file_path' => UploadedFile::fake()->image('report-photo-1.jpg')->store("progress-photos/{$serviceRequest->id}", 'public'),
             'added_by' => $technicianUser->id,
         ]);
 
-        $photoTwo = ProgressPhoto::create([
-            'progress_report_id' => $report->id,
+        $photoTwo = $report->photos()->create([
+            'service_request_id' => $serviceRequest->id,
             'file_path' => UploadedFile::fake()->image('report-photo-2.jpg')->store("progress-photos/{$serviceRequest->id}", 'public'),
             'added_by' => $technicianUser->id,
         ]);
@@ -319,7 +382,7 @@ class TechnicianDocumentsWorkflowTest extends TestCase
         $this->assertSame(55, $serviceRequest->progress_percentage);
     }
 
-    public function test_admin_can_pay_approved_progress_report_based_on_labor_budget_without_double_paying(): void
+    public function test_admin_can_pay_approved_progress_report_against_agreed_compensation_without_double_paying(): void
     {
         $admin = User::factory()->create([
             'role' => User::ROLE_ADMIN,
@@ -366,6 +429,17 @@ class TechnicianDocumentsWorkflowTest extends TestCase
             'created_by' => $admin->id,
         ]);
 
+        // What this technician is owed comes from their assignment, never
+        // from the job's total labor budget — see resolveApprovedAmount.
+        // Without this the payout is refused, which the test below covers.
+        JobAssignment::create([
+            'service_request_id' => $serviceRequest->id,
+            'technician_id' => $technician->id,
+            'assigned_by' => $admin->id,
+            'agreed_compensation' => 100000,
+            'status' => JobAssignment::STATUS_ACCEPTED,
+        ]);
+
         TechnicianPayment::create([
             'payment_id' => 'TPY-SEED-1',
             'technician_id' => $technician->id,
@@ -407,6 +481,70 @@ class TechnicianDocumentsWorkflowTest extends TestCase
         $secondResponse->assertRedirect();
 
         $this->assertCount(1, TechnicianPayment::where('progress_report_id', $report->id)->get());
+    }
+
+    /**
+     * A job's labor budget is the pot for every technician on the job, not
+     * one technician's fee. Inferring a payout from it paid a single
+     * technician the whole budget, so the payout is refused until somebody
+     * states what this technician is actually owed.
+     */
+    public function test_payout_is_refused_when_the_technician_has_no_agreed_compensation(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $technicianUser = User::factory()->create(['role' => User::ROLE_TECHNICIAN]);
+
+        $technician = Technician::create([
+            'user_id' => $technicianUser->id,
+            'technician_id' => 'TECH-601',
+            'specialization' => 'Fitting',
+            'trade' => Technician::TRADE_FITTER,
+            'location' => 'Nairobi',
+            'availability' => 'busy',
+        ]);
+
+        $category = ServiceCategory::create([
+            'name' => 'Fitting Unallocated',
+            'is_active' => true,
+        ]);
+
+        $serviceRequest = ServiceRequest::create([
+            'request_id' => 'REQ-601',
+            'user_id' => $client->id,
+            'service_category_id' => $category->id,
+            'technician_id' => $technician->id,
+            'description' => 'Install replacement fittings.',
+            'location' => 'Industrial Area',
+            'status' => 'in_progress',
+            'urgency' => 'medium',
+        ]);
+
+        // A generous labor budget, but nothing allocated to this technician.
+        ServiceRequestBudget::create([
+            'service_request_id' => $serviceRequest->id,
+            'labor_budget' => 100000,
+            'materials_budget' => 0,
+            'other_budget' => 0,
+            'created_by' => $admin->id,
+        ]);
+
+        $report = ProgressReport::create([
+            'service_request_id' => $serviceRequest->id,
+            'technician_id' => $technician->id,
+            'submitted_by' => $technicianUser->id,
+            'report_date' => now()->toDateString(),
+            'percent_complete' => 50,
+            'is_validated' => true,
+            'validated_by' => $admin->id,
+            'validated_at' => now(),
+            'validated_percent' => 50,
+        ]);
+
+        $response = $this->actingAs($admin)->post(route('admin.progress.pay-technician', $report));
+
+        $response->assertSessionHas('error');
+        $this->assertSame(0, TechnicianPayment::count());
     }
 
     public function test_admin_can_assign_technician_with_agreed_dues_within_labor_budget(): void

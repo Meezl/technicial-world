@@ -68,6 +68,20 @@
                 </a>
             </section>
 
+            <!-- What the client sent in — seen before going back to site,
+                 rather than found in a WhatsApp thread afterwards. -->
+            <section class="panel-card" v-if="jobPhotos.length">
+                <div class="section-heading">
+                    <div>
+                        <span class="section-kicker">Evidence</span>
+                        <h3>Photos on this job</h3>
+                    </div>
+                    <span class="section-pill">{{ jobPhotos.length }}</span>
+                </div>
+
+                <JobPhotoGallery :photos="jobPhotos" />
+            </section>
+
             <section class="panel-card" v-if="compensationSummary">
                 <div class="section-heading">
                     <div>
@@ -200,30 +214,28 @@
                         <textarea v-model="progressForm.notes" rows="4" class="input textarea" placeholder="Describe what was completed, what remains, and anything the PM/admin should know."></textarea>
                     </label>
 
-                    <label class="form-field">
+                    <!-- A div, not a label: the uploader renders its own buttons
+                         and thumbnails, and a wrapping label would hijack taps
+                         on them. -->
+                    <div class="form-field">
                         <span>Progress photos</span>
-                        <!-- #27 — accept image/* (rather than a narrow extension
-                             whitelist) so iPhone HEIC photos and other camera
-                             outputs aren't blocked at the file picker. Mobile
-                             browsers also gain access to the camera + gallery. -->
-                        <input ref="photoInput" type="file" accept="image/*" class="input" multiple>
-                        <small class="form-hint">Upload up to 6 photos to show actual site progress.</small>
-                        <!-- Camera shortcut: opens the rear camera directly on phones.
-                             `multiple` is intentionally omitted — iOS Safari ignores it
-                             when `capture` is set. Tap again to queue more photos. -->
-                        <div class="camera-shortcut" style="margin-top:.5rem;">
-                            <input ref="cameraInput" type="file" accept="image/*" capture="environment" style="display:none" @change="onCameraCapture" />
-                            <button type="button" class="btn btn-secondary btn-sm" @click="cameraInput.click()">
-                                <i class="fas fa-camera"></i> Take photo with camera
-                            </button>
-                            <span v-if="cameraQueue.length > 0" style="margin-left:.5rem;color:var(--success-color);font-size:.85rem;font-weight:600;">
-                                {{ cameraQueue.length }} photo{{ cameraQueue.length > 1 ? 's' : '' }} queued
-                            </span>
-                        </div>
-                    </label>
+                        <PhotoUploader
+                            ref="photoUploader"
+                            v-model="photos"
+                            :max="6"
+                            :disabled="submittingReport"
+                            hint="Up to 6 photos showing actual site progress. Take them one at a time or pick several from the gallery — they add up rather than replace each other."
+                            @busy="preparingPhotos = $event"
+                        />
+                    </div>
 
-                    <button type="submit" class="btn btn-primary" :disabled="submittingReport">
-                        <span v-if="!submittingReport">
+                    <!-- Blocked while photos are still being resized, so a fast
+                         tap can't submit a half-prepared queue. -->
+                    <button type="submit" class="btn btn-primary" :disabled="submittingReport || preparingPhotos">
+                        <span v-if="preparingPhotos">
+                            <i class="fas fa-spinner fa-spin"></i> Preparing photos…
+                        </span>
+                        <span v-else-if="!submittingReport">
                             <i class="fas fa-camera"></i> Submit Progress Report
                         </span>
                         <span v-else>
@@ -281,18 +293,10 @@
                             PM/Admin note: {{ report.validation_notes }}
                         </p>
 
-                        <div v-if="report.photos?.length" class="photo-grid">
-                            <a
-                                v-for="photo in report.photos"
-                                :key="photo.id"
-                                :href="`/storage/${photo.file_path}`"
-                                class="photo-card"
-                                target="_blank"
-                            >
-                                <img :src="`/storage/${photo.file_path}`" :alt="photo.caption || 'Progress photo'">
-                                <span v-if="photo.removed_by_pm" class="photo-flag">Removed from approval</span>
-                            </a>
-                        </div>
+                        <!-- Tapping a photo used to dump the raw file into a
+                             new browser tab, which on a phone leaves the PWA
+                             entirely. Now it opens the swipeable carousel. -->
+                        <JobPhotoGallery :photos="report.photos" show-removed-badge />
                     </article>
                 </div>
 
@@ -334,6 +338,8 @@
 import { computed, ref } from 'vue'
 import { Link, router, usePage } from '@inertiajs/vue3'
 import TechnicianBottomNav from '@/Components/TechnicianBottomNav.vue'
+import PhotoUploader from '@/Components/PhotoUploader.vue'
+import JobPhotoGallery from '@/Components/JobPhotoGallery.vue'
 
 const page = usePage()
 
@@ -343,20 +349,12 @@ const props = defineProps({
     compensationSummary: { type: Object, default: null },
 })
 
-const photoInput = ref(null)
-const cameraInput = ref(null)
-const cameraQueue = ref([])  // photos captured via the camera shortcut
+// Camera and gallery picks both land here, already compressed by the
+// uploader (#27).
+const photoUploader = ref(null)
+const photos = ref([])
+const preparingPhotos = ref(false)
 
-/**
- * The hidden camera input fires its own change event. Append the
- * captured files to the queue so they get sent on submit, even if the
- * regular file picker isn't used (#27).
- */
-function onCameraCapture(event) {
-    const files = Array.from(event.target?.files || [])
-    if (files.length) cameraQueue.value.push(...files)
-    event.target.value = '' // allow re-capturing the same photo if needed
-}
 const submittingReport = ref(false)
 const uploadStage = ref('')
 const uploadPercent = ref(0)
@@ -368,6 +366,7 @@ const progressForm = ref({
 })
 
 const progressReports = computed(() => props.job.progress_reports || [])
+const jobPhotos = computed(() => props.job.photos || [])
 const recentPayouts = computed(() => (props.compensationSummary?.history || []).slice(0, 3))
 
 const reportableSubTasks = computed(() => {
@@ -432,24 +431,15 @@ function updateStatus(action) {
 }
 
 async function submitProgressReport() {
+    if (preparingPhotos.value) return
+
     submittingReport.value = true
+    uploadStage.value = 'Uploading…'
 
-    // STAGE 1 — compress photos in the browser. Without this a 5-photo
-    // submission from an iPhone over 4G easily tops 30 MB and times out.
-    const rawFiles = [
-        ...Array.from(photoInput.value?.files || []),
-        ...cameraQueue.value,
-    ].slice(0, 6)
-
-    let allFiles = rawFiles
-    if (rawFiles.length > 0) {
-        uploadStage.value = `Preparing ${rawFiles.length} photo${rawFiles.length > 1 ? 's' : ''}…`
-        const { compressAll } = await import('@/composables/useImageCompression.js')
-        allFiles = await compressAll(rawFiles, (done, total) => {
-            uploadStage.value = `Preparing photos… ${done} of ${total}`
-        })
-        uploadStage.value = 'Uploading…'
-    }
+    // Photos arrive already compressed from PhotoUploader — without that a
+    // 5-photo submission from an iPhone over 4G easily tops 30 MB and times
+    // out.
+    const allFiles = photos.value
 
     const formData = new FormData()
     formData.append('percent_complete', progressForm.value.percent_complete)
@@ -485,10 +475,9 @@ async function submitProgressReport() {
             uploadPercent.value = 0
             progressForm.value.notes = ''
             progressForm.value.service_sub_task_id = ''
-            cameraQueue.value = []
-            if (photoInput.value) {
-                photoInput.value.value = ''
-            }
+            // Only clear the queue on success — on failure the technician
+            // keeps their photos and can retry without re-shooting.
+            photoUploader.value?.reset()
         },
         onError: () => {
             submittingReport.value = false
