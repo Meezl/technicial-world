@@ -144,7 +144,7 @@ class BillingService
             // revision appends a second, unbilled copy of every settled
             // milestone and the client gets billed for it again.
             $billed = $sr->billingSchedule()
-                ->whereNotNull('payment_request_id')
+                ->where(fn ($q) => $this->scopeAlreadyBilled($q))
                 ->get();
 
             // Identity is (label, progress_pct) — the only fields the form
@@ -156,7 +156,10 @@ class BillingService
                 $claimed[$key] = ($claimed[$key] ?? 0) + 1;
             }
 
-            $sr->billingSchedule()->whereNull('payment_request_id')->delete();
+            $sr->billingSchedule()
+                ->whereNull('payment_request_id')
+                ->whereNull('triggered_at')
+                ->delete();
 
             if (empty($milestones)) {
                 return;
@@ -189,6 +192,24 @@ class BillingService
     }
 
     /**
+     * "This milestone has already billed."
+     *
+     * Normally that means it owns a payment request. But the migration off
+     * the old JSON blob matches a triggered milestone to the bill it raised
+     * by amount and label, and on real data some of those will not match —
+     * a manually raised request, an edited amount, an older note format.
+     * Those rows arrive with triggered_at set and no payment link, and if
+     * only the link were checked they would look unbilled and bill the
+     * client a second time on the next progress validation. Which is the
+     * exact defect this table was built to end.
+     */
+    private function scopeAlreadyBilled($query)
+    {
+        return $query->whereNotNull('payment_request_id')
+            ->orWhereNotNull('triggered_at');
+    }
+
+    /**
      * Identity for reconciling a resubmitted schedule against what is already
      * billed. Renaming a billed milestone breaks the match and it will look
      * new — the contract-value cap in raiseDueMilestones is the backstop.
@@ -203,7 +224,7 @@ class BillingService
      * passed that has not already billed.
      *
      * Two independent safeguards, because this runs unattended:
-     *  1. A milestone with a payment_request_id is skipped outright.
+     *  1. A milestone that has already billed is skipped outright.
      *  2. Nothing is billed beyond the contract value, and an amount that
      *     would overshoot is trimmed to the remaining balance.
      *
@@ -213,6 +234,7 @@ class BillingService
     {
         $due = $sr->billingSchedule()
             ->whereNull('payment_request_id')
+            ->whereNull('triggered_at')
             ->where('progress_pct', '<=', $progressPct)
             ->orderBy('progress_pct')
             ->orderBy('sort_order')

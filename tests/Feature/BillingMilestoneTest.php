@@ -92,6 +92,64 @@ class BillingMilestoneTest extends TestCase
         $this->assertSame(0.0, $summary['billable_remaining']);
     }
 
+    /**
+     * The migration off the old JSON blob links each triggered milestone to
+     * the bill it raised by matching amount and label. On production data
+     * some will not match — a manually raised request, an edited amount, an
+     * older note format — and land with triggered_at set but no payment
+     * link. Those must still count as billed, or the first progress
+     * validation after deploy re-bills work the client already paid for.
+     */
+    public function test_a_migrated_milestone_with_no_payment_link_does_not_rebill(): void
+    {
+        [$sr] = $this->makeJob();
+        $billing = app(BillingService::class);
+
+        // Exactly what the backfill produces when it cannot find the bill.
+        ReqBillingMilestone::create([
+            'service_request_id' => $sr->id,
+            'label'              => 'Deposit',
+            'progress_pct'       => 0,
+            'amount'             => 35000,
+            'sort_order'         => 0,
+            'payment_request_id' => null,
+            'triggered_at'       => now()->subMonth(),
+        ]);
+
+        $raised = $billing->raiseDueMilestones($sr->fresh(), 100);
+
+        $this->assertCount(0, $raised, 'A milestone already triggered before the migration must not bill again.');
+        $this->assertSame(0, $sr->paymentRequests()->count());
+    }
+
+    /** And a revision must not delete or duplicate it either. */
+    public function test_a_migrated_milestone_survives_a_revision(): void
+    {
+        [$sr] = $this->makeJob();
+        $billing = app(BillingService::class);
+
+        ReqBillingMilestone::create([
+            'service_request_id' => $sr->id,
+            'label'              => 'Deposit',
+            'progress_pct'       => 0,
+            'amount'             => 35000,
+            'sort_order'         => 0,
+            'triggered_at'       => now()->subMonth(),
+        ]);
+
+        $billing->replaceUnbilledMilestones($sr->fresh(), [
+            ['label' => 'Deposit', 'progress_pct' => 0, 'amount' => 35000],
+            ['label' => 'Balance', 'progress_pct' => 100, 'amount' => 37000],
+        ]);
+
+        $labels = $sr->fresh()->billingSchedule()->pluck('label')->all();
+        $this->assertSame(['Deposit', 'Balance'], $labels, 'No duplicate Deposit row.');
+
+        $raised = $billing->raiseDueMilestones($sr->fresh(), 100);
+        $this->assertCount(1, $raised);
+        $this->assertSame('37000.00', $raised->first()->amount, 'Only the new milestone bills.');
+    }
+
     public function test_repeated_triggers_do_not_duplicate_bills(): void
     {
         [$sr] = $this->makeJob();
