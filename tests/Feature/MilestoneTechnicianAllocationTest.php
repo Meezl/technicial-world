@@ -190,7 +190,14 @@ class MilestoneTechnicianAllocationTest extends TestCase
         $this->assertDatabaseCount('payment_milestones', 1);
     }
 
-    public function test_compute_amounts_is_capped_by_reached_milestone_allocations(): void
+    /**
+     * Milestone allocations are an external client-invoicing concept. They
+     * are reported alongside the payout as a cash-flow hint, but they do not
+     * gate what a technician is owed — capping on them silently underpaid
+     * technicians and left ops with a phantom balance they couldn't clear.
+     * See PaymentProcessingController::computeAmounts.
+     */
+    public function test_compute_amounts_reports_milestone_releases_without_capping_the_payout(): void
     {
         ['admin' => $admin, 'serviceRequest' => $serviceRequest, 'technicianOne' => $technicianOne] = $this->createJobWithAssignedTechnicians();
 
@@ -226,9 +233,13 @@ class MilestoneTechnicianAllocationTest extends TestCase
             ->assertJson([
                 'approved_amount' => 40000,
                 'cumulative_progress_pct' => 50,
-                'cumulative_amount_due' => 12000,
+                // Agreed 40,000 × 50% validated — the technician has earned
+                // this regardless of how much the client has been invoiced.
+                'cumulative_amount_due' => 20000,
+                // Advisory only: how much of that is backed by milestones
+                // the client has reached.
                 'released_via_milestones' => 12000,
-                'current_period_payable' => 12000,
+                'current_period_payable' => 20000,
             ]);
     }
 
@@ -262,7 +273,12 @@ class MilestoneTechnicianAllocationTest extends TestCase
             ]);
     }
 
-    public function test_progress_report_payout_is_capped_by_reached_milestone_allocations(): void
+    /**
+     * The payout button and the amount actually recorded must agree. Capping
+     * on milestone releases here meant the button said one number and the
+     * API wrote a smaller one. See AdminPaymentController::payApprovedProgressReport.
+     */
+    public function test_progress_report_payout_is_not_capped_by_reached_milestone_allocations(): void
     {
         ['admin' => $admin, 'serviceRequest' => $serviceRequest, 'technicianOne' => $technicianOne] = $this->createJobWithAssignedTechnicians();
 
@@ -296,6 +312,7 @@ class MilestoneTechnicianAllocationTest extends TestCase
         $payment = TechnicianPayment::query()->first();
 
         $this->assertNotNull($payment);
-        $this->assertEquals(12000.0, (float) $payment->amount);
+        // Agreed 40,000 × 50% — not the 12,000 released via milestones.
+        $this->assertEquals(20000.0, (float) $payment->amount);
     }
 }
