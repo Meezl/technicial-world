@@ -307,6 +307,79 @@ class SubTaskTechnicianVisibilityTest extends TestCase
     }
 
     /**
+     * The technician needs the scope and the programme to do the job, and the
+     * amount agreed for their own work. They must not receive the client's
+     * price or the job's margin — which the page used to ship in its props
+     * because the whole model was serialised.
+     */
+    public function test_job_page_carries_scope_and_own_fee_but_no_client_pricing(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+            'quote_notes' => 'Supply and install a 5kW rooftop solar array.',
+            'quote_materials' => [
+                ['name' => '550W panel', 'quantity' => 6, 'unit_price' => 18500],
+                ['name' => '5kW inverter', 'quantity' => 1, 'unit_price' => 92000],
+            ],
+            'expected_duration_days' => 7,
+            'quote_amount' => 480000,
+            'quote_labor_cost' => 120000,
+            'final_amount' => 480000,
+            'revenue_generated' => 300000,
+        ]);
+
+        ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+            'agreed_compensation' => 10000,
+        ]);
+
+        ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Roof strengthening',
+            'technician_id' => $lead->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+            'agreed_compensation' => 45000,
+        ]);
+
+        $this->actingAs($crew->user)
+            ->get(route('technician.jobs.show', $job))
+            ->assertOk()
+            ->assertInertia(function ($page) {
+                $page->where('scope.notes', 'Supply and install a 5kW rooftop solar array.')
+                    ->where('scope.expected_duration_days', 7)
+                    ->has('scope.materials', 2)
+                    ->where('scope.materials.0.name', '550W panel')
+                    ->where('scope.materials.0.quantity', 6);
+
+                // The packing list must not become a price list.
+                $materials = $page->toArray()['props']['scope']['materials'];
+                foreach ($materials as $material) {
+                    $this->assertArrayNotHasKey('unit_price', $material);
+                }
+
+                $job = $page->toArray()['props']['job'];
+                foreach (['quote_amount', 'quote_labor_cost', 'final_amount',
+                          'revenue_generated', 'quote_materials', 'billing_milestones'] as $field) {
+                    $this->assertArrayNotHasKey($field, $job, "$field leaked to the technician");
+                }
+
+                // Their own fee is theirs to see; the other crew member's is not.
+                $subTasks = collect($job['sub_tasks'])->keyBy('title');
+                $this->assertSame('10000.00', $subTasks['Solar Installation Works']['agreed_compensation']);
+                $this->assertArrayNotHasKey('agreed_compensation', $subTasks['Roof strengthening']);
+            });
+    }
+
+    /**
      * REQ-X6HTRO exactly as it sits in production (service_request 68):
      * technician_id = 54 (the sub-task holder), lead_technician_id = 28, and
      * the lead holds no sub-task of their own — only a live JobAssignment

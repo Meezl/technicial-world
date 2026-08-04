@@ -127,6 +127,88 @@
                 </div>
             </section>
 
+            <!-- What was quoted and the dates being held to. The technician
+                 was working off a description and a location alone; the scope,
+                 the material list and the programme all sat on the REQ where
+                 only the office could see them. Client pricing stays out —
+                 the fee that matters to them is in Compensation above. -->
+            <section class="panel-card" v-if="hasScopeDetail">
+                <div class="section-heading">
+                    <div>
+                        <span class="section-kicker">RFQ</span>
+                        <h3>Scope &amp; programme</h3>
+                    </div>
+                </div>
+
+                <p v-if="scope.notes" class="scope-notes">{{ scope.notes }}</p>
+
+                <div
+                    v-if="scope.commencement_at || scope.target_completion_at || scope.expected_duration_days"
+                    class="info-list"
+                    style="margin-top: 1rem;"
+                >
+                    <div v-if="scope.commencement_at" class="info-row">
+                        <span>Start on site</span>
+                        <strong>{{ formatShortDate(scope.commencement_at) }}</strong>
+                    </div>
+                    <div v-if="scope.target_completion_at" class="info-row">
+                        <span>Target completion</span>
+                        <strong>{{ formatShortDate(scope.target_completion_at) }}</strong>
+                    </div>
+                    <div v-if="scope.expected_duration_days" class="info-row">
+                        <span>Expected duration</span>
+                        <strong>{{ scope.expected_duration_days }} day{{ scope.expected_duration_days == 1 ? '' : 's' }}</strong>
+                    </div>
+                </div>
+
+                <div v-if="scopeMaterials.length" style="margin-top: 1rem;">
+                    <span class="section-kicker">Materials on this job</span>
+                    <div class="info-list" style="margin-top: 0.5rem;">
+                        <div v-for="(material, index) in scopeMaterials" :key="`${material.name}-${index}`" class="info-row">
+                            <span>{{ material.name }}</span>
+                            <strong v-if="material.quantity">Qty {{ material.quantity }}</strong>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Drawings and briefs: the files attached to this technician's
+                 own assignment, plus anything ops deliberately shared on the
+                 job. Internal documents stay internal. -->
+            <section class="panel-card" v-if="hasJobFiles">
+                <div class="section-heading">
+                    <div>
+                        <span class="section-kicker">Documents</span>
+                        <h3>Drawings &amp; briefs</h3>
+                    </div>
+                </div>
+
+                <div class="info-list">
+                    <a
+                        v-for="(file, index) in assignmentFiles"
+                        :key="`assignment-${index}`"
+                        class="info-row file-row"
+                        :href="`/storage/${file.path}`"
+                        target="_blank"
+                        rel="noopener"
+                    >
+                        <span><i class="fas fa-paperclip"></i> {{ file.name }}</span>
+                        <strong>Open</strong>
+                    </a>
+                    <a
+                        v-for="doc in sharedDocuments"
+                        :key="`doc-${doc.id}`"
+                        class="info-row file-row"
+                        :href="`/storage/${doc.path}`"
+                        target="_blank"
+                        rel="noopener"
+                    >
+                        <span><i class="fas fa-file-alt"></i> {{ doc.title || doc.original_name }}</span>
+                        <strong>Open</strong>
+                    </a>
+                </div>
+            </section>
+
             <section class="panel-card" v-if="job.sub_tasks?.length">
                 <div class="section-heading">
                     <div>
@@ -150,6 +232,14 @@
                         <div class="subtask-meta">
                             <span>Assigned to {{ task.technician?.user?.name || 'Unassigned' }}</span>
                             <strong>{{ task.progress_percentage || 0 }}%</strong>
+                        </div>
+
+                        <!-- The amount agreed for this item. Only ever present
+                             on the viewer's own sub-tasks — a colleague's fee
+                             is not serialised to them at all. -->
+                        <div v-if="task.agreed_compensation" class="subtask-fee">
+                            <span>Agreed for this task</span>
+                            <strong>{{ formatCurrency(task.agreed_compensation) }}</strong>
                         </div>
 
                         <input
@@ -357,7 +447,26 @@ const props = defineProps({
     job: { type: Object, required: true },
     compensationSummary: { type: Object, default: null },
     isLeadTechnician: { type: Boolean, default: false },
+    scope: { type: Object, default: () => ({}) },
+    assignmentFiles: { type: Array, default: () => [] },
 })
+
+// What was quoted, what to install, and the dates being held to. Deliberately
+// carries no client pricing — see TechnicianController::jobScopeForTechnician.
+const scopeMaterials = computed(() => props.scope?.materials || [])
+const sharedDocuments = computed(() => props.job.documents || [])
+const hasScopeDetail = computed(() =>
+    Boolean(
+        props.scope?.notes ||
+        scopeMaterials.value.length ||
+        props.scope?.expected_duration_days ||
+        props.scope?.commencement_at ||
+        props.scope?.target_completion_at,
+    ),
+)
+const hasJobFiles = computed(() =>
+    props.assignmentFiles.length > 0 || sharedDocuments.value.length > 0,
+)
 
 // Camera and gallery picks both land here, already compressed by the
 // uploader (#27).
@@ -766,6 +875,33 @@ defineOptions({ layout: null })
 .complete-btn {
     background: var(--success-color);
 }
+
+.scope-notes {
+    white-space: pre-wrap;
+    line-height: 1.55;
+    color: var(--text-muted, #475569);
+    margin: 0;
+}
+
+.subtask-fee {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: .75rem;
+    margin-top: .6rem;
+    padding-top: .6rem;
+    border-top: 1px dashed #e2e8f0;
+    font-size: .85rem;
+}
+
+.subtask-fee span { color: var(--text-muted, #64748b); }
+
+.file-row {
+    text-decoration: none;
+    color: inherit;
+}
+
+.file-row strong { color: var(--primary-color); }
 
 .lead-closes-note {
     flex: 1;

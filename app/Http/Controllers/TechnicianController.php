@@ -161,6 +161,9 @@ class TechnicianController extends Controller
             // Job-level photos — the client's evidence of a snag, so the
             // technician sees it before going back to site.
             'photos.uploader:id,name',
+            // Only documents ops deliberately shared. Case analyses and
+            // margin thinking default to internal and stay there.
+            'documents' => fn ($q) => $q->clientVisible(),
         ]);
 
         $reportingService = app(ReportingService::class);
@@ -170,12 +173,102 @@ class TechnicianController extends Controller
 
         return Inertia::render('Technician/JobDetails', [
             'technician' => $technician,
-            'job' => $serviceRequest,
+            'job' => $this->technicianSafeJob($serviceRequest, $technician->id),
             'compensationSummary' => $compensationSummary,
             // Job-wide actions (closing the job) belong to whoever carries
             // the job; a sub-task holder gets the sub-task controls instead.
             'isLeadTechnician' => $serviceRequest->isPrimaryTechnician($technician->id),
+            'scope' => $this->jobScopeForTechnician($serviceRequest),
+            'assignmentFiles' => $this->assignmentFilesFor($serviceRequest, $technician->id),
         ]);
+    }
+
+    /**
+     * Commercial fields a technician must never receive.
+     *
+     * The whole model used to be serialised into the page props, so the
+     * client's price, the job's margin and the billing schedule were being
+     * shipped to every technician's browser — invisible on screen, one
+     * devtools tab away in practice. A technician is owed their own agreed
+     * fee, which travels separately in compensationSummary.
+     */
+    private const COMMERCIAL_FIELDS = [
+        'quote_amount',
+        'quote_materials',
+        'quote_labor_cost',
+        'quote_transport_cost',
+        'quote_down_payment',
+        'quoted_amount',
+        'final_amount',
+        'revenue_generated',
+        'technician_payout',
+        'quote_materials_file_path',
+        'quote_materials_file_paths',
+        'billing_milestones',
+        'billingSchedule',
+    ];
+
+    private function technicianSafeJob(ServiceRequest $serviceRequest, int $technicianId): ServiceRequest
+    {
+        $serviceRequest->makeHidden(self::COMMERCIAL_FIELDS);
+
+        // A crew member's fee is between them and the office — hide the
+        // figure on sub-tasks that are not this technician's own.
+        $serviceRequest->subTasks->each(function ($subTask) use ($technicianId) {
+            if ((int) $subTask->technician_id !== $technicianId) {
+                $subTask->makeHidden(['agreed_compensation', 'compensation_notes']);
+            }
+        });
+
+        return $serviceRequest;
+    }
+
+    /**
+     * What the technician needs to actually do the job: the scope as quoted,
+     * what to install, and the dates they are being held to. Materials carry
+     * name and quantity but never unit_price — that is the client's costing,
+     * not a packing list.
+     */
+    private function jobScopeForTechnician(ServiceRequest $serviceRequest): array
+    {
+        $materials = collect($serviceRequest->quote_materials ?? [])
+            ->map(fn ($material) => [
+                'name' => $material['name'] ?? 'Unnamed item',
+                'quantity' => $material['quantity'] ?? null,
+            ])
+            ->filter(fn ($material) => $material['name'] !== 'Unnamed item' || $material['quantity'])
+            ->values()
+            ->all();
+
+        return [
+            'notes' => $serviceRequest->quote_notes,
+            'materials' => $materials,
+            'expected_duration_days' => $serviceRequest->expected_duration_days,
+            'commencement_at' => $serviceRequest->commencement_at,
+            'target_completion_at' => $serviceRequest->target_completion_at,
+            'contact_time_minutes' => $serviceRequest->contact_time_minutes,
+        ];
+    }
+
+    /**
+     * Drawings and briefs ops attached when handing this technician the work.
+     * Scoped to their own live assignments — another technician's brief is
+     * not theirs to open.
+     */
+    private function assignmentFilesFor(ServiceRequest $serviceRequest, int $technicianId): array
+    {
+        return $serviceRequest->jobAssignments()
+            ->where('technician_id', $technicianId)
+            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
+            ->get()
+            ->flatMap(fn ($assignment) => collect($assignment->attachments ?? [])
+                ->map(fn ($file) => [
+                    'name' => $file['name'] ?? basename($file['path'] ?? ''),
+                    'path' => $file['path'] ?? null,
+                ])
+                ->filter(fn ($file) => !empty($file['path'])))
+            ->values()
+            ->all();
     }
 
     /**
