@@ -7,6 +7,7 @@ use App\Models\ProgressReport;
 use App\Models\ProgressReportNoteVersion;
 use App\Models\JobPhoto;
 use App\Models\ServiceRequest;
+use App\Models\ServiceSubTask;
 use App\Models\User;
 use App\Models\AuditLog;
 use Illuminate\Http\UploadedFile;
@@ -102,8 +103,10 @@ class ProgressService
                 $this->addPhoto($report, $photo, $pmId);
             }
 
-            // Update service request progress
-            $this->updateServiceRequestProgress($serviceRequest);
+            // A PM-authored report is validated on arrival, so it moves the
+            // sub-task the same way a technician's validated one does.
+            $this->syncSubTaskFromReport($report);
+            $this->updateServiceRequestProgress($serviceRequest->fresh());
 
             AuditLog::log(AuditLog::ACTION_CREATED, $report, null, ['pm_authored' => true]);
 
@@ -171,9 +174,11 @@ class ProgressService
                 $this->addPhoto($report, $photo, $pmId, 'Added by admin during validation');
             }
 
-            // Update service request progress based on validated value
+            // A validated sub-task report moves that sub-task, and the job's
+            // headline figure is then recomputed from all of them.
+            $this->syncSubTaskFromReport($report->fresh());
             $serviceRequest = $report->serviceRequest;
-            $this->updateServiceRequestProgress($serviceRequest);
+            $this->updateServiceRequestProgress($serviceRequest->fresh());
 
             AuditLog::log(AuditLog::ACTION_APPROVAL, $report, null, [
                 'validated_percent' => $data['validated_percent'] ?? $report->percent_complete,
@@ -234,22 +239,87 @@ class ProgressService
     /**
      * Update the service request's progress based on latest validated reports.
      */
+    /**
+     * Push a validated sub-task report onto the sub-task itself, so the
+     * report and the sub-task cannot disagree about how far along that piece
+     * of work is. Reporting is the technician's route to moving their own
+     * bar; the slider on the job page is the same thing by hand.
+     */
+    private function syncSubTaskFromReport(ProgressReport $report): void
+    {
+        $subTask = $report->subTask;
+
+        if (!$subTask) {
+            return;
+        }
+
+        $percent = (int) ($report->validated_percent ?? $report->percent_complete);
+
+        $update = ['progress_percentage' => $percent];
+
+        if ($percent >= 100) {
+            $update['status'] = ServiceSubTask::STATUS_COMPLETED;
+            $update['completed_at'] = $subTask->completed_at ?? now();
+        } elseif ($percent > 0 && $subTask->status === ServiceSubTask::STATUS_ASSIGNED) {
+            $update['status'] = ServiceSubTask::STATUS_IN_PROGRESS;
+        }
+
+        $subTask->update($update);
+    }
+
+    /**
+     * The job's headline percentage.
+     *
+     * On a project with sub-tasks this is the average across them, so each
+     * technician's report contributes their share and nobody's slice can
+     * stand in for the whole. It used to take the most recent validated
+     * report of any kind and assign its percentage to the job, which meant
+     * the figure swung to whichever trade reported last — and a single
+     * sub-task reaching 100% completed the entire job and fired its billing
+     * milestones.
+     *
+     * A job that was never split still reads its latest validated report;
+     * there, that report *is* the whole job.
+     */
     private function updateServiceRequestProgress(ServiceRequest $serviceRequest): void
+    {
+        $effectivePercent = $serviceRequest->isSplitIntoSubTasks()
+            ? $this->aggregateSubTaskProgress($serviceRequest)
+            : $this->latestValidatedPercent($serviceRequest);
+
+        if ($effectivePercent === null) {
+            return;
+        }
+
+        $updateData = ['progress_percentage' => $effectivePercent];
+
+        // Only a job that is wholly done closes itself. With sub-tasks that
+        // means every one of them is at 100%, not just the one just reported.
+        if ($effectivePercent >= 100 && $serviceRequest->status !== ServiceRequest::STATUS_COMPLETED) {
+            $updateData['status'] = ServiceRequest::STATUS_COMPLETED;
+        }
+
+        $serviceRequest->update($updateData);
+        $this->triggerBillingMilestones($serviceRequest->fresh(), (float) $effectivePercent);
+    }
+
+    private function aggregateSubTaskProgress(ServiceRequest $serviceRequest): int
+    {
+        return (int) round($serviceRequest->subTasks()->avg('progress_percentage') ?? 0);
+    }
+
+    private function latestValidatedPercent(ServiceRequest $serviceRequest): ?int
     {
         $latestValidated = $serviceRequest->progressReports()
             ->where('is_validated', true)
             ->orderBy('report_date', 'desc')
             ->first();
 
-        if ($latestValidated) {
-            $effectivePercent = $latestValidated->validated_percent ?? $latestValidated->percent_complete;
-            $updateData = ['progress_percentage' => $effectivePercent];
-            if ((int) $effectivePercent >= 100 && $serviceRequest->status !== ServiceRequest::STATUS_COMPLETED) {
-                $updateData['status'] = ServiceRequest::STATUS_COMPLETED;
-            }
-            $serviceRequest->update($updateData);
-            $this->triggerBillingMilestones($serviceRequest->fresh(), (float) $effectivePercent);
+        if (!$latestValidated) {
+            return null;
         }
+
+        return (int) ($latestValidated->validated_percent ?? $latestValidated->percent_complete);
     }
 
     /**

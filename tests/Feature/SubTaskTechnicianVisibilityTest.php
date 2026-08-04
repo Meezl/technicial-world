@@ -307,6 +307,171 @@ class SubTaskTechnicianVisibilityTest extends TestCase
     }
 
     /**
+     * The job as a whole belongs to the lead. A crew member reports against
+     * their own sub-task, and that is what feeds the overall figure.
+     */
+    public function test_only_the_lead_may_report_on_the_job_as_a_whole(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        // technician_id names the crew member, as on REQ-X6HTRO — being the
+        // primary column must not confer the lead's authority.
+        $job = $this->makeJob($client, [
+            'technician_id' => $crew->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        $othersTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Roof strengthening',
+            'technician_id' => $lead->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        // Crew member, no sub-task named: refused.
+        $this->actingAs($crew->user)
+            ->post(route('technician.progress-report', $job), [
+                'percent_complete' => 80,
+                'notes' => 'Job is nearly there.',
+            ])
+            ->assertSessionHasErrors('service_sub_task_id');
+
+        // Crew member, somebody else's sub-task: refused.
+        $this->actingAs($crew->user)
+            ->post(route('technician.progress-report', $job), [
+                'percent_complete' => 80,
+                'notes' => 'Reporting on the roof.',
+                'service_sub_task_id' => $othersTask->id,
+            ])
+            ->assertSessionHasErrors('service_sub_task_id');
+
+        $this->assertDatabaseCount('progress_reports', 0);
+
+        // Crew member, their own sub-task: allowed.
+        $this->actingAs($crew->user)
+            ->post(route('technician.progress-report', $job), [
+                'percent_complete' => 40,
+                'notes' => 'Panels mounted.',
+                'service_sub_task_id' => $subTask->id,
+            ])
+            ->assertSessionHasNoErrors();
+
+        // The lead speaks for the whole job.
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report', $job), [
+                'percent_complete' => 45,
+                'notes' => 'Overall position at end of week.',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseHas('progress_reports', [
+            'service_request_id' => $job->id,
+            'technician_id' => $lead->id,
+            'service_sub_task_id' => null,
+        ]);
+    }
+
+    /**
+     * A validated sub-task report moves that sub-task, and the job's figure
+     * is the average across them. It used to take the latest validated report
+     * of any kind, so the job's percentage swung to whichever trade reported
+     * last, and one sub-task hitting 100% completed the whole job.
+     */
+    public function test_sub_task_reports_aggregate_into_overall_job_progress(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $pm = User::factory()->create(['role' => User::ROLE_PROJECT_MANAGER]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+            'progress_percentage' => 0,
+        ]);
+
+        $solar = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        $roof = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Roof strengthening',
+            'technician_id' => $lead->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        $progress = app(\App\Services\ProgressService::class);
+
+        // The roof is finished. On the old rule this alone completed the job.
+        $roofReport = $progress->submitReport($job, $lead->id, $lead->user->id, [
+            'percent_complete' => 100,
+            'service_sub_task_id' => $roof->id,
+        ]);
+        $progress->validate($roofReport, $pm->id, ['validated_percent' => 100]);
+
+        $this->assertSame(100, $roof->fresh()->progress_percentage);
+        $this->assertSame(ServiceSubTask::STATUS_COMPLETED, $roof->fresh()->status);
+        $this->assertSame(50, $job->fresh()->progress_percentage, 'one of two sub-tasks done is half the job');
+        $this->assertNotSame('completed', $job->fresh()->status);
+
+        // The solar half reports 40%: the job moves to the average, 70%.
+        $solarReport = $progress->submitReport($job, $crew->id, $crew->user->id, [
+            'percent_complete' => 40,
+            'service_sub_task_id' => $solar->id,
+        ]);
+        $progress->validate($solarReport, $pm->id, ['validated_percent' => 40]);
+
+        $this->assertSame(40, $solar->fresh()->progress_percentage);
+        $this->assertSame(70, $job->fresh()->progress_percentage);
+        $this->assertNotSame('completed', $job->fresh()->status);
+
+        // Only when the last sub-task lands does the job read 100%.
+        $finalReport = $progress->submitReport($job, $crew->id, $crew->user->id, [
+            'percent_complete' => 100,
+            'service_sub_task_id' => $solar->id,
+        ]);
+        $progress->validate($finalReport, $pm->id, ['validated_percent' => 100]);
+
+        $this->assertSame(100, $job->fresh()->progress_percentage);
+    }
+
+    /**
+     * A job that was never split still reads its latest validated report —
+     * there, that report is the whole job.
+     */
+    public function test_a_job_without_sub_tasks_still_tracks_its_latest_report(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $pm = User::factory()->create(['role' => User::ROLE_PROJECT_MANAGER]);
+        $tech = $this->makeTechnician();
+
+        $job = $this->makeJob($client, ['technician_id' => $tech->id]);
+
+        $progress = app(\App\Services\ProgressService::class);
+        $report = $progress->submitReport($job, $tech->id, $tech->user->id, [
+            'percent_complete' => 65,
+        ]);
+        $progress->validate($report, $pm->id, ['validated_percent' => 65]);
+
+        $this->assertSame(65, $job->fresh()->progress_percentage);
+    }
+
+    /**
      * The technician needs the scope and the programme to do the job, and the
      * amount agreed for their own work. They must not receive the client's
      * price or the job's margin — which the page used to ship in its props

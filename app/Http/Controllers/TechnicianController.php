@@ -177,7 +177,7 @@ class TechnicianController extends Controller
             'compensationSummary' => $compensationSummary,
             // Job-wide actions (closing the job) belong to whoever carries
             // the job; a sub-task holder gets the sub-task controls instead.
-            'isLeadTechnician' => $serviceRequest->isPrimaryTechnician($technician->id),
+            'isLeadTechnician' => $serviceRequest->isLeadTechnician($technician->id),
             'scope' => $this->jobScopeForTechnician($serviceRequest),
             'assignmentFiles' => $this->assignmentFilesFor($serviceRequest, $technician->id),
         ]);
@@ -762,6 +762,8 @@ class TechnicianController extends Controller
             'photos.*' => 'nullable|file|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
         ]);
 
+        $isLead = $serviceRequest->isLeadTechnician($technician->id);
+
         if ($request->filled('service_sub_task_id')) {
             $subTask = $serviceRequest->subTasks()->where('id', $request->service_sub_task_id)->first();
 
@@ -771,14 +773,22 @@ class TechnicianController extends Controller
                 ]);
             }
 
-            // Their own sub-task, or any of them if they carry the job as a
-            // whole — a lead reporting for the crew is normal on site.
-            $canReportSubTask = (int) $subTask->technician_id === (int) $technician->id
-                || $serviceRequest->isPrimaryTechnician($technician->id);
-
-            if (!$canReportSubTask) {
-                return back()->with('error', 'Unauthorized sub-task selection.');
+            // Their own sub-task, or any of them if they lead the job — a
+            // lead reporting for the crew is normal on site.
+            if ((int) $subTask->technician_id !== (int) $technician->id && !$isLead) {
+                return back()->withErrors([
+                    'service_sub_task_id' => 'You can only report on a sub-task assigned to you.',
+                ]);
             }
+        } elseif ($serviceRequest->isSplitIntoSubTasks() && !$isLead) {
+            // The job as a whole is the lead's to speak for. Everyone else
+            // reports against their own sub-task, and those roll up into the
+            // overall figure — so a crew member cannot set the job's headline
+            // percentage from the part of it they can see.
+            return back()->withErrors([
+                'service_sub_task_id' => 'Pick the sub-task you are reporting on. '
+                    . 'Only the lead technician reports on the job as a whole.',
+            ]);
         }
 
         app(ProgressService::class)->submitReport(
@@ -819,7 +829,7 @@ class TechnicianController extends Controller
         //
         // Closing the whole job stays with the lead: one sub-task finishing
         // is not the project finishing.
-        if ($action === 'completed' && !$serviceRequest->isPrimaryTechnician($technician->id)) {
+        if ($action === 'completed' && !$serviceRequest->isLeadTechnician($technician->id)) {
             return back()->with('error',
                 'Only the lead technician can mark the whole job complete. ' .
                 'Update your sub-task to 100% and the lead will close the job.'
@@ -951,7 +961,7 @@ class TechnicianController extends Controller
         // whole (lead / sole assignee).
         $isAssigned = (int) $serviceSubTask->technician_id === (int) $technician->id;
 
-        if (!$isAssigned && !$serviceRequest->isPrimaryTechnician($technician->id)) {
+        if (!$isAssigned && !$serviceRequest->isLeadTechnician($technician->id)) {
             abort(403, 'Unauthorized');
         }
 

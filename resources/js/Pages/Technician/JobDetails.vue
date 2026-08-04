@@ -288,7 +288,10 @@
                     <label class="form-field" v-if="job.sub_tasks?.length">
                         <span>Sub-task</span>
                         <select v-model="progressForm.service_sub_task_id" class="input">
-                            <option value="">Whole job update</option>
+                            <!-- The job as a whole is the lead's to report on.
+                                 Everyone else reports their own sub-task, and
+                                 those roll up into the job's percentage. -->
+                            <option v-if="isLeadTechnician" value="">Whole job update</option>
                             <option
                                 v-for="task in reportableSubTasks"
                                 :key="task.id"
@@ -297,6 +300,9 @@
                                 {{ task.title || task.name }}
                             </option>
                         </select>
+                        <small v-if="!isLeadTechnician" class="field-hint">
+                            Your sub-task progress counts towards the job's overall figure.
+                        </small>
                     </label>
 
                     <label class="form-field">
@@ -477,11 +483,22 @@ const preparingPhotos = ref(false)
 const submittingReport = ref(false)
 const uploadStage = ref('')
 const uploadPercent = ref(0)
+// A technician who does not lead the job has no "whole job" option, so the
+// form opens on their own sub-task rather than on a choice the server will
+// reject — and on that sub-task's progress, not the job's blended figure.
+const ownSubTasks = (props.job.sub_tasks || []).filter(
+    (task) => task.technician_id === props.technician.id,
+)
+const defaultSubTaskId =
+    !props.isLeadTechnician && ownSubTasks.length ? ownSubTasks[0].id : ''
+
 const progressForm = ref({
-    percent_complete: Number(props.job.progress_percentage || 0),
+    percent_complete: Number(
+        (defaultSubTaskId ? ownSubTasks[0].progress_percentage : props.job.progress_percentage) || 0,
+    ),
     report_date: new Date().toISOString().slice(0, 10),
     notes: '',
-    service_sub_task_id: '',
+    service_sub_task_id: defaultSubTaskId,
 })
 
 const progressReports = computed(() => props.job.progress_reports || [])
@@ -601,7 +618,9 @@ async function submitProgressReport() {
             uploadStage.value = ''
             uploadPercent.value = 0
             progressForm.value.notes = ''
-            progressForm.value.service_sub_task_id = ''
+            // Back to their own sub-task, not to a "whole job" they may not
+            // be allowed to report on.
+            progressForm.value.service_sub_task_id = defaultSubTaskId
             // Only clear the queue on success — on failure the technician
             // keeps their photos and can retry without re-shooting.
             photoUploader.value?.reset()
@@ -874,6 +893,13 @@ defineOptions({ layout: null })
 
 .complete-btn {
     background: var(--success-color);
+}
+
+.field-hint {
+    display: block;
+    margin-top: .35rem;
+    font-size: .78rem;
+    color: var(--text-muted, #64748b);
 }
 
 .scope-notes {

@@ -532,14 +532,42 @@ class ServiceRequest extends Model
     }
 
     /**
-     * The technician who owns the job as a whole — the single assignee, or
-     * the lead on a project with sub-tasks. Job-wide actions (marking the
-     * whole job complete) belong to them, not to every sub-task holder.
+     * Attached to the job at job level rather than through a sub-task. Used
+     * for membership, not for authority — see isLeadTechnician().
      */
     public function isPrimaryTechnician(int $technicianId): bool
     {
         return (int) $this->technician_id === $technicianId
             || (int) $this->lead_technician_id === $technicianId;
+    }
+
+    /**
+     * The one technician who speaks for the whole job: reporting on it as a
+     * whole, and closing it.
+     *
+     * lead_technician_id wins wherever it is set, because on a project with
+     * sub-tasks technician_id is whoever happened to be assigned first and
+     * can name a different person entirely (REQ-X6HTRO: technician_id 54,
+     * lead 28). Only a job that was never split falls back to technician_id,
+     * where the sole assignee is by definition the lead.
+     */
+    public function isLeadTechnician(int $technicianId): bool
+    {
+        if ($this->lead_technician_id) {
+            return (int) $this->lead_technician_id === $technicianId;
+        }
+
+        return (int) $this->technician_id === $technicianId;
+    }
+
+    /**
+     * A job is run as a project when it actually carries sub-tasks — the
+     * has_sub_tasks flag alone has been left set on jobs whose sub-tasks were
+     * since deleted.
+     */
+    public function isSplitIntoSubTasks(): bool
+    {
+        return $this->subTasks()->exists();
     }
 
     public function scopeActive($query)
