@@ -3,13 +3,11 @@
 namespace App\Services;
 
 use App\Mail\ProgressApproved;
-use App\Models\PaymentRequest;
 use App\Models\ProgressReport;
 use App\Models\ProgressReportNoteVersion;
 use App\Models\ProgressPhoto;
 use App\Models\ServiceRequest;
 use App\Models\AuditLog;
-use App\Notifications\PaymentRequestNotification;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -263,73 +261,15 @@ class ProgressService
     }
 
     /**
-     * For each billing milestone whose progress_pct threshold has been crossed
-     * and has not yet been triggered, create a PaymentRequest and mark it triggered.
+     * Raise payment requests for any billing milestone the job's progress has
+     * passed. Idempotent — a milestone that has already raised its bill is
+     * skipped on every subsequent call, including after a quote revision.
+     *
+     * See BillingService::raiseDueMilestones for the safeguards.
      */
     private function triggerBillingMilestones(ServiceRequest $serviceRequest, float $progressPct): void
     {
-        $milestones = $serviceRequest->billing_milestones;
-        if (empty($milestones)) {
-            return;
-        }
-
-        $changed = false;
-        foreach ($milestones as &$milestone) {
-            if (!empty($milestone['triggered'])) {
-                continue;
-            }
-            if ((float) $milestone['progress_pct'] > $progressPct) {
-                continue;
-            }
-
-            // Threshold crossed — raise a payment request.
-            // `requested_by` is NOT NULL on the schema, so we fall back from
-            // PM → the user currently validating → first admin in the system
-            // when no PM is assigned to this service request.
-            $requestedBy = $serviceRequest->assigned_pm_id
-                ?? auth()->id()
-                ?? \App\Models\User::where('role', 'admin')->value('id');
-
-            $paymentRequest = PaymentRequest::create([
-                'payment_request_id' => PaymentRequest::generatePaymentRequestId(),
-                'service_request_id' => $serviceRequest->id,
-                'user_id'            => $serviceRequest->user_id,
-                'requested_by'       => $requestedBy,
-                'percentage'         => $milestone['progress_pct'],
-                'amount'             => (float) $milestone['amount'],
-                'status'             => PaymentRequest::STATUS_PENDING,
-                'notes'              => 'Auto-generated: billing milestone "' . $milestone['label'] . '" reached at ' . $progressPct . '% progress.',
-            ]);
-
-            // Notify the client AFTER the HTTP response goes out so SMTP
-            // latency doesn't block the validation UI.
-            $prId = $paymentRequest->id;
-            $srId = $serviceRequest->id;
-            $msLabel = $milestone['label'] ?? null;
-            app()->terminating(function () use ($prId, $srId, $msLabel) {
-                try {
-                    $pr = PaymentRequest::find($prId);
-                    $sr = ServiceRequest::with('user')->find($srId);
-                    if ($pr && $sr?->user) {
-                        $sr->user->notify(new PaymentRequestNotification($pr));
-                    }
-                } catch (\Throwable $e) {
-                    \Illuminate\Support\Facades\Log::warning('Milestone payment notification failed', [
-                        'service_request_id' => $srId,
-                        'milestone_label'    => $msLabel,
-                        'error'              => $e->getMessage(),
-                    ]);
-                }
-            });
-
-            $milestone['triggered'] = true;
-            $changed = true;
-        }
-        unset($milestone);
-
-        if ($changed) {
-            $serviceRequest->update(['billing_milestones' => $milestones]);
-        }
+        app(BillingService::class)->raiseDueMilestones($serviceRequest, $progressPct);
     }
 
     /**

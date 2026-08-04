@@ -34,7 +34,11 @@ class ServiceRequest extends Model
         'quote_labor_cost',
         'quote_transport_cost',
         'quote_down_payment',
-        'billing_milestones',
+        // Both revision fields were missing from $fillable, so the counter
+        // never incremented — which silently disabled the stale-revision
+        // guard on client approval (it compares against this number).
+        'quote_revision_count',
+        'quote_last_revised_at',
         'down_payment_requested',
         'quote_notes',
         'expected_duration_days',
@@ -65,13 +69,22 @@ class ServiceRequest extends Model
         'preferred_date',
     ];
 
-    protected $appends = ['priority_window_ends_at', 'action_reasons'];
+    // `billing_milestones` is deliberately absent from $fillable — it is no
+    // longer a column. Milestones live in req_billing_milestones and are
+    // written through BillingService::replaceUnbilledMilestones() so a paid
+    // milestone can never be overwritten by a mass-assign.
+
+    protected $appends = ['priority_window_ends_at', 'action_reasons', 'billing_milestones'];
+
+    // `billing_milestones` is appended to every serialised service request, so
+    // the schedule is always eager-loaded. Without this, list pages fire one
+    // query per row to build that accessor.
+    protected $with = ['billingSchedule'];
 
     protected $casts = [
         'files' => 'array',
         'quote_materials' => 'array',
         'quote_materials_file_paths' => 'array',
-        'billing_milestones' => 'array',
         'quoted_amount' => 'decimal:2',
         'final_amount' => 'decimal:2',
         'revenue_generated' => 'decimal:2',
@@ -232,6 +245,37 @@ class ServiceRequest extends Model
     public function paymentRequests()
     {
         return $this->hasMany(PaymentRequest::class);
+    }
+
+    /**
+     * Client-billing schedule, ordered the way it bills.
+     *
+     * Named billingSchedule rather than billingMilestones on purpose: the
+     * `billing_milestones` accessor below would otherwise shadow the relation
+     * (Laravel resolves both `billing_milestones` and `billingMilestones` to
+     * getBillingMilestonesAttribute), so `$sr->billingMilestones` would hand
+     * back a plain array instead of the related models.
+     */
+    public function billingSchedule()
+    {
+        return $this->hasMany(ReqBillingMilestone::class)
+            ->orderBy('progress_pct')
+            ->orderBy('sort_order');
+    }
+
+    /**
+     * The admin RFQ form and the client request-status page both read
+     * `billing_milestones` as a flat array. That used to be a JSON column;
+     * it is now derived from the schedule rows so those pages keep working
+     * unchanged while the table stays the single source of truth.
+     */
+    public function getBillingMilestonesAttribute(): array
+    {
+        $rows = $this->relationLoaded('billingSchedule')
+            ? $this->getRelation('billingSchedule')
+            : $this->billingSchedule()->get();
+
+        return $rows->map->toLegacyArray()->all();
     }
 
     public function project()

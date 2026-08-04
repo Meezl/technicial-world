@@ -2310,8 +2310,10 @@ class AdminDashboardController extends Controller
             }
         }
 
-        // Normalise billing milestones — strip any stale triggered flags so
-        // each revision starts clean; the ProgressService re-triggers them.
+        // Normalise the submitted schedule. Milestones that have already
+        // raised a bill are NOT touched by this — BillingService replaces
+        // only the unbilled tail. Wiping the whole schedule here is what
+        // re-billed clients for milestones they had already paid.
         $billingMilestones = null;
         if ($request->filled('billing_milestones')) {
             $billingMilestones = collect($request->billing_milestones)
@@ -2319,7 +2321,6 @@ class AdminDashboardController extends Controller
                     'label'        => $m['label'],
                     'progress_pct' => (float) $m['progress_pct'],
                     'amount'       => (float) $m['amount'],
-                    'triggered'    => false,
                 ])
                 ->sortBy('progress_pct')
                 ->values()
@@ -2339,7 +2340,6 @@ class AdminDashboardController extends Controller
             'quote_notes' => $request->notes,
             'quote_materials_file_path' => $filePath ?? $serviceRequest->quote_materials_file_path,
             'quote_materials_file_paths' => !empty($mergedFilePaths) ? $mergedFilePaths : null,
-            'billing_milestones' => $billingMilestones,
         ];
 
         if ($isRevision) {
@@ -2364,16 +2364,31 @@ class AdminDashboardController extends Controller
         // (manual or milestone-triggered) need to be cancelled so the
         // client isn't asked to pay against the stale figure. We record
         // the cancelled IDs to mention in the revision email.
+        //
+        // Order matters: cancel first, THEN rewrite the schedule. Cancelling
+        // frees the milestones whose bills are being withdrawn so they can be
+        // replaced, while milestones already PAID keep their payment link and
+        // survive untouched.
         $cancelledRequestIds = [];
         if ($isRevision) {
             $cancelledQuery = PaymentRequest::where('service_request_id', $serviceRequest->id)
                 ->where('status', PaymentRequest::STATUS_PENDING);
             $cancelledRequestIds = $cancelledQuery->pluck('payment_request_id')->all();
+            $cancelledIds = $cancelledQuery->pluck('id')->all();
             $cancelledQuery->update([
                 'status' => PaymentRequest::STATUS_CANCELLED,
                 'notes'  => \Illuminate\Support\Facades\DB::raw("CONCAT(COALESCE(notes,''), '\n[Cancelled by quote revision on " . now()->toDateTimeString() . "]')"),
             ]);
+
+            // Detach milestones whose bill was just withdrawn so the new
+            // schedule can replace them.
+            \App\Models\ReqBillingMilestone::where('service_request_id', $serviceRequest->id)
+                ->whereIn('payment_request_id', $cancelledIds)
+                ->update(['payment_request_id' => null, 'triggered_at' => null]);
         }
+
+        app(\App\Services\BillingService::class)
+            ->replaceUnbilledMilestones($serviceRequest->fresh(), $billingMilestones);
 
         // Send the appropriate email
         try {
@@ -2871,14 +2886,9 @@ class AdminDashboardController extends Controller
             $amount = round(($percentage / 100) * $quoteAmount, 2);
         }
 
-        $alreadyBilled = (float) PaymentRequest::where('service_request_id', $serviceRequest->id)
-            ->whereIn('status', [
-                PaymentRequest::STATUS_PENDING,
-                PaymentRequest::STATUS_PAID,
-            ])
-            ->sum('amount');
-
-        $remaining = round($quoteAmount - $alreadyBilled, 2);
+        $billing = app(\App\Services\BillingService::class);
+        $alreadyBilled = $billing->billed($serviceRequest);
+        $remaining = $billing->billableRemaining($serviceRequest);
 
         if ($amount > $remaining + 0.001) {
             return response()->json([

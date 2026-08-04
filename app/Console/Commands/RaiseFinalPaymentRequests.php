@@ -113,16 +113,8 @@ class RaiseFinalPaymentRequests extends Command
 
     private function outstandingBalance(ServiceRequest $sr): float
     {
-        $quote = (float) $sr->quote_amount;
-        if ($quote <= 0) return 0.0;
+        if ((float) $sr->quote_amount <= 0) return 0.0;
 
-        $billed = (float) PaymentRequest::where('service_request_id', $sr->id)
-            ->whereIn('status', [
-                PaymentRequest::STATUS_PENDING,
-                PaymentRequest::STATUS_PAID,
-            ])
-            ->sum('amount');
-
-        return round($quote - $billed, 2);
+        return app(\App\Services\BillingService::class)->billableRemaining($sr);
     }
 }
