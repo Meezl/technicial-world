@@ -2,9 +2,6 @@
 
 namespace App\Providers;
 
-use App\Listeners\LogSentEmail;
-use Illuminate\Mail\Events\MessageSent;
-use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Vite;
 use Illuminate\Support\ServiceProvider;
 
@@ -19,7 +16,14 @@ class AppServiceProvider extends ServiceProvider
     {
         Vite::prefetch(concurrency: 3);
 
-        // Persist a full copy of every outgoing email for audit (#5).
-        Event::listen(MessageSent::class, LogSentEmail::class);
+        // NOTE: do not register listeners from app/Listeners here. Laravel
+        // auto-discovers them from their handle() type-hint, so an explicit
+        // Event::listen() binds them a second time and the handler runs
+        // twice. LogSentEmail was registered here and was writing two
+        // email_logs rows for every message sent.
+        //
+        // Currently discovered:
+        //   MessageSent -> LogSentEmail   (audit copy of every email, #5)
+        //   Verified    -> SendWelcomeEmail (welcome email, post-verification)
     }
 }

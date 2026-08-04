@@ -12,7 +12,6 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rules;
 use Inertia\Inertia;
 use Inertia\Response;
-use App\Notifications\WelcomeNotification;
 
 class RegisteredUserController extends Controller
 {
@@ -53,10 +52,13 @@ class RegisteredUserController extends Controller
             'role' => User::ROLE_CLIENT,
         ]);
 
+        // Sends the "Verify Email Address" notification. The welcome email
+        // is deliberately NOT sent here — it goes out on the Verified event
+        // instead (see SendWelcomeEmail). Sending both at signup produced two
+        // near-identical stock-template emails seconds apart, which clients
+        // reported as "the verification email arrived twice", and its
+        // "Go to Dashboard" button was a dead end for an unverified user.
         event(new Registered($user));
-
-        // Send welcome notification
-        $user->notify(new WelcomeNotification());
 
         Auth::login($user);
 
