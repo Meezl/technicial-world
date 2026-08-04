@@ -309,6 +309,12 @@ class AdminDashboardController extends Controller
             'variationOrders.items',
             'variationOrders.creator:id,name',
             'variationOrders.approver:id,name',
+            'variationOrders.billingSchedule',
+            // Both halves of the click-through: from a variation to the fee
+            // changes it authorised, and from a fee change back to it.
+            'variationOrders.compensationAmendments.technician.user:id,name',
+            'compensationAmendments.variationOrder:id,vo_number,net_amount',
+            'compensationAmendments.technician.user:id,name',
         ]);
 
         $technicians = Technician::with('user')

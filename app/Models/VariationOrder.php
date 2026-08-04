@@ -86,6 +86,16 @@ class VariationOrder extends Model
     }
 
     /**
+     * Technician fee changes this variation authorised. The other half of the
+     * click-through: from a variation you can see whose fees moved because of
+     * it, and from a fee change you can see the scope change behind it.
+     */
+    public function compensationAmendments(): HasMany
+    {
+        return $this->hasMany(CompensationAmendment::class);
+    }
+
+    /**
      * This variation's own billing schedule — its deposit top-up and
      * milestones. Separate from the quote's, so a variation on a finished
      * job can still bill.
