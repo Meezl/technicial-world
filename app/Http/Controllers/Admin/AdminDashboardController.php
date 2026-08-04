@@ -952,8 +952,16 @@ class AdminDashboardController extends Controller
             (float) $request->agreed_compensation
         );
 
+        // technician_id is the job's primary assignee and is read all over
+        // the app — the client's "Assigned Technician", job completion,
+        // ratings. Writing only lead_technician_id here left it NULL for the
+        // whole life of a project staffed lead-first, because
+        // assignSubTaskTechnician only backfills it when there is no lead
+        // yet. assignSubTaskTechnician already sets both together; this
+        // keeps the two staffing routes consistent.
         $serviceRequest->update([
             'lead_technician_id' => $technician->id,
+            'technician_id' => $technician->id,
         ]);
 
         // If the job isn't assigned yet, also set it as assigned

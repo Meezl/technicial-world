@@ -6,6 +6,7 @@ use App\Models\JobAssignment;
 use App\Models\ProgressReport;
 use App\Models\ServiceCategory;
 use App\Models\ServiceRequest;
+use App\Models\ServiceRequestBudget;
 use App\Models\ServiceSubTask;
 use App\Models\Technician;
 use App\Models\User;
@@ -303,5 +304,200 @@ class SubTaskTechnicianVisibilityTest extends TestCase
                 ->where('serviceRequest.sub_tasks.0.technician.user.name', $crew->user->name)
                 ->has('serviceRequest.progress_reports', 1)
                 ->where('serviceRequest.progress_reports.0.sub_task.title', 'Second fix wiring'));
+    }
+
+    /**
+     * REQ-X6HTRO exactly as it sits in production (service_request 68):
+     * technician_id = 54 (the sub-task holder), lead_technician_id = 28, and
+     * the lead holds no sub-task of their own — only a live JobAssignment
+     * worth 55,000.
+     *
+     * The lead therefore matched neither branch of the old query: not
+     * technician_id, and not a sub-task assignee. Their Jobs list and
+     * dashboard came back empty and the job page 403'd, while
+     * ReportingService still found the job through lead_technician_id and
+     * showed them the 55,000 they were owed.
+     */
+    public function test_a_lead_with_no_sub_task_of_their_own_still_has_the_job(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $subTaskHolder = $this->makeTechnician();
+
+        // technician_id deliberately points at the sub-task holder rather
+        // than the lead — the state the two staffing routes leave behind.
+        $job = $this->makeJob($client, [
+            'technician_id' => $subTaskHolder->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $subTaskHolder->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+            'agreed_compensation' => 10000,
+        ]);
+
+        JobAssignment::create([
+            'service_request_id' => $job->id,
+            'technician_id' => $lead->id,
+            'assigned_by' => $client->id,
+            'agreed_compensation' => 55000,
+            'status' => JobAssignment::STATUS_PENDING,
+        ]);
+
+        // A superseded assignment for the same technician must not confuse
+        // the lookup — production carries two 'reassigned' rows here.
+        JobAssignment::create([
+            'service_request_id' => $job->id,
+            'technician_id' => $lead->id,
+            'assigned_by' => $client->id,
+            'agreed_compensation' => 55000,
+            'status' => JobAssignment::STATUS_REASSIGNED,
+        ]);
+
+        foreach ([$lead, $subTaskHolder] as $tech) {
+            $this->actingAs($tech->user)
+                ->get(route('technician.jobs'))
+                ->assertOk()
+                ->assertInertia(fn ($page) => $page->has('jobs', 1));
+
+            $this->actingAs($tech->user)
+                ->get(route('technician.dashboard'))
+                ->assertOk()
+                ->assertInertia(fn ($page) => $page->has('activeJobs', 1));
+
+            $this->actingAs($tech->user)
+                ->get(route('technician.jobs.show', $job))
+                ->assertOk();
+        }
+
+        // The lead can report on the job even though no sub-task is theirs.
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report', $job), [
+                'percent_complete' => 50,
+                'notes' => 'Panels mounted, inverter pending.',
+            ])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('progress_reports', [
+            'service_request_id' => $job->id,
+            'technician_id' => $lead->id,
+            'percent_complete' => 50,
+        ]);
+
+        // A lead may also report against someone else's sub-task — normal on
+        // site, and the old rule allowed it only via lead_technician_id.
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report', $job), [
+                'percent_complete' => 60,
+                'notes' => 'Signed off the solar sub-task with the crew.',
+                'service_sub_task_id' => $job->subTasks()->first()->id,
+            ])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('progress_reports', [
+            'service_request_id' => $job->id,
+            'technician_id' => $lead->id,
+            'percent_complete' => 60,
+        ]);
+    }
+
+    /**
+     * The real REQ-X6HTRO shape, driven through the actual admin routes:
+     * ops names a lead with "Assign Lead Technician", then hands out
+     * sub-tasks. assignLeadTechnician wrote only lead_technician_id, and
+     * assignSubTaskTechnician only backfills technician_id when there is no
+     * lead yet — so service_requests.technician_id stayed NULL for the life
+     * of the project and every technician on it, lead included, was locked
+     * out of their own job.
+     */
+    public function test_project_staffed_lead_first_then_sub_tasks_is_visible_to_everyone_on_it(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crewA = $this->makeTechnician();
+        $crewB = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'status' => 'pending',
+            'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
+        ]);
+
+        ServiceRequestBudget::create([
+            'service_request_id' => $job->id,
+            'labor_budget' => 300000,
+            'materials_budget' => 0,
+            'other_budget' => 0,
+        ]);
+
+        foreach (['Second fix wiring', 'HVAC ducting'] as $title) {
+            $this->actingAs($admin)
+                ->post(route('admin.sub-tasks.store', $job), ['title' => $title])
+                ->assertSessionHasNoErrors();
+        }
+
+        [$wiring, $hvac] = $job->subTasks()->orderBy('order')->get()->all();
+
+        $this->actingAs($admin)
+            ->post(route('admin.jobs.assign-lead', $job), [
+                'technician_id' => $lead->id,
+                'agreed_compensation' => 90000,
+            ])
+            ->assertSessionHasNoErrors();
+
+        foreach ([[$wiring, $crewA], [$hvac, $crewB]] as [$task, $tech]) {
+            $this->actingAs($admin)
+                ->post(route('admin.sub-tasks.assign', $task), [
+                    'technician_id' => $tech->id,
+                    'agreed_compensation' => 55000,
+                ])
+                ->assertSessionHasNoErrors();
+        }
+
+        // Staffing a job must leave a usable primary technician behind —
+        // the client's "Assigned Technician", rating and completion paths
+        // all read this column.
+        $this->assertNotNull($job->fresh()->technician_id);
+
+        foreach ([$lead, $crewA, $crewB] as $tech) {
+            $this->actingAs($tech->user)
+                ->get(route('technician.jobs'))
+                ->assertOk()
+                ->assertInertia(fn ($page) => $page->has('jobs', 1));
+
+            $this->actingAs($tech->user)
+                ->get(route('technician.dashboard'))
+                ->assertOk()
+                ->assertInertia(fn ($page) => $page->has('incomingJobs', 1));
+
+            $this->actingAs($tech->user)
+                ->get(route('technician.jobs.show', $job))
+                ->assertOk();
+        }
+
+        // And the sub-task holder can actually work: start the job, then report.
+        $this->actingAs($crewB->user)
+            ->post(route('technician.jobs.status', $job), ['action' => 'en_route'])
+            ->assertRedirect();
+
+        $this->assertSame('in_progress', $job->fresh()->status);
+
+        $this->actingAs($crewB->user)
+            ->post(route('technician.progress-report', $job), [
+                'percent_complete' => 35,
+                'notes' => 'Duct spine hung.',
+                'service_sub_task_id' => $hvac->id,
+            ])
+            ->assertRedirect();
+
+        $this->assertDatabaseHas('progress_reports', [
+            'service_request_id' => $job->id,
+            'service_sub_task_id' => $hvac->id,
+            'technician_id' => $crewB->id,
+        ]);
     }
 }
