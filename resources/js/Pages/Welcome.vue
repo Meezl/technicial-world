@@ -10,7 +10,6 @@
                     <h1>Professional Technical Services</h1>
                     <p class="subtitle">Connect with qualified technicians across Kenya. Quality work, reliable service, transparent pricing.</p>
                     <div class="hero-cta">
-                        <Link href="/contact" class="btn-primary">Get a Quote</Link>
                         <a href="#about" class="btn-secondary">Learn More</a>
                     </div>
                 </div>
