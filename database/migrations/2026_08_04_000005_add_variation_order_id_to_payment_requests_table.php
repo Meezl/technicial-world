@@ -20,6 +20,11 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Guarded so a retried deploy does not die on a duplicate column.
+        if (Schema::hasColumn('payment_requests', 'variation_order_id')) {
+            return;
+        }
+
         Schema::table('payment_requests', function (Blueprint $table) {
             $table->foreignId('variation_order_id')->nullable()->after('ticket_id')
                 ->constrained()->nullOnDelete();

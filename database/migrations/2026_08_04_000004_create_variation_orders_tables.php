@@ -20,7 +20,24 @@ use Illuminate\Support\Facades\Schema;
  */
 return new class extends Migration
 {
+    /**
+     * Guarded so a half-finished deploy can retry. MySQL does not roll DDL
+     * back, so a failure between the two creates would leave the first table
+     * in place and the migration unrecorded — and an unguarded retry dies on
+     * "table already exists", crash-looping the deploy.
+     */
     public function up(): void
+    {
+        if (!Schema::hasTable('variation_orders')) {
+            $this->createVariationOrders();
+        }
+
+        if (!Schema::hasTable('variation_order_items')) {
+            $this->createVariationOrderItems();
+        }
+    }
+
+    private function createVariationOrders(): void
     {
         Schema::create('variation_orders', function (Blueprint $table) {
             $table->id();
@@ -69,7 +86,10 @@ return new class extends Migration
 
             $table->index(['service_request_id', 'status']);
         });
+    }
 
+    private function createVariationOrderItems(): void
+    {
         Schema::create('variation_order_items', function (Blueprint $table) {
             $table->id();
             $table->foreignId('variation_order_id')->constrained()->cascadeOnDelete();
