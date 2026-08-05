@@ -156,6 +156,7 @@ class TechnicianController extends Controller
             'progressReports.technician.user',
             'progressReports.submitter',
             'progressReports.validator',
+            'progressReports.rejector:id,name',
             'progressReports.subTask',
             'progressReports.photos',
             // Job-level photos — the client's evidence of a snag, so the
@@ -997,34 +998,77 @@ class TechnicianController extends Controller
      */
     public function approveSubTaskReport(\App\Models\ProgressReport $progressReport)
     {
-        $user = auth()->user();
-        $technician = $user->technician;
-        $serviceRequest = $progressReport->serviceRequest;
-
-        if (!$technician || !$serviceRequest || !$serviceRequest->isLeadTechnician($technician->id)) {
-            abort(403, 'Only the lead technician can approve sub-task progress on this job.');
-        }
-
-        if (!$progressReport->service_sub_task_id) {
-            return back()->with('error',
-                'A whole-job report is validated by the project team, not on site.');
-        }
+        $technician = $this->authorizeLeadSignOff($progressReport);
 
         if ($progressReport->is_validated) {
             return back()->with('error', 'That report has already been approved.');
         }
 
-        // No signing off your own work — a lead who also holds a sub-task
-        // still goes to the project team for that one.
-        if ((int) $progressReport->technician_id === (int) $technician->id) {
-            return back()->with('error',
-                'Your own sub-task progress is approved by the project team, not by you.');
-        }
+        // releaseBilling: false — the lead's word moves the work, not the
+        // money. Any milestone the new percentage passes is raised by a PM or
+        // admin, who still sees this report in their queue.
+        app(ProgressService::class)->validate(
+            $progressReport,
+            auth()->id(),
+            ['validated_percent' => $progressReport->percent_complete],
+            [],
+            releaseBilling: false
+        );
 
-        app(ProgressService::class)->validate($progressReport, $user->id, [
-            'validated_percent' => $progressReport->percent_complete,
+        $progressReport->forceFill(['approved_by_lead_at' => now()])->save();
+
+        return back()->with('success',
+            'Sub-task progress approved. The office will confirm any payment that follows.');
+    }
+
+    /**
+     * The lead sends a claim back with a reason, so the technician knows what
+     * to put right rather than guessing why their bar never moved.
+     */
+    public function rejectSubTaskReport(Request $request, \App\Models\ProgressReport $progressReport)
+    {
+        $this->authorizeLeadSignOff($progressReport);
+
+        $data = $request->validate([
+            'rejection_reason' => 'required|string|min:5|max:1000',
+        ], [
+            'rejection_reason.required' => 'Tell the technician what needs putting right.',
+            'rejection_reason.min' => 'Give the technician something to act on — a few words at least.',
         ]);
 
-        return back()->with('success', 'Sub-task progress approved.');
+        if ($progressReport->approved_by_lead_at === null && $progressReport->is_validated) {
+            return back()->with('error',
+                'That report has been validated by the project team — ask them to reopen it.');
+        }
+
+        app(ProgressService::class)->reject($progressReport, auth()->id(), $data['rejection_reason']);
+
+        return back()->with('success', 'Sent back to the technician with your reason.');
+    }
+
+    /**
+     * Shared gate for the lead's on-site sign-off: they lead this job, the
+     * report is against a sub-task, and it is not their own work.
+     */
+    private function authorizeLeadSignOff(\App\Models\ProgressReport $progressReport): Technician
+    {
+        $technician = auth()->user()->technician;
+        $serviceRequest = $progressReport->serviceRequest;
+
+        if (!$technician || !$serviceRequest || !$serviceRequest->isLeadTechnician($technician->id)) {
+            abort(403, 'Only the lead technician can sign off sub-task progress on this job.');
+        }
+
+        if (!$progressReport->service_sub_task_id) {
+            abort(403, 'A whole-job report is settled by the project team, not on site.');
+        }
+
+        // Nobody rules on their own work — a lead who also holds a sub-task
+        // still goes to the project team for that one.
+        if ((int) $progressReport->technician_id === (int) $technician->id) {
+            abort(403, 'Your own sub-task progress is settled by the project team, not by you.');
+        }
+
+        return $technician;
     }
 }

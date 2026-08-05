@@ -117,13 +117,22 @@ class ProgressService
     /**
      * PM validates a progress report.
      */
+    /**
+     * $releaseBilling is false for an on-site sign-off by a lead technician:
+     * their approval moves the sub-task and the job's percentage, but raising
+     * a bill against the client stays an office decision. The milestones are
+     * not lost — triggerBillingMilestones is idempotent and catches up on
+     * everything the job's progress has passed the next time a PM or admin
+     * validates, which approved_by_lead_at keeps in their queue.
+     */
     public function validate(
         ProgressReport $report,
         int $pmId,
         array $data,
-        array $adminPhotos = []
+        array $adminPhotos = [],
+        bool $releaseBilling = true
     ): ProgressReport {
-        return DB::transaction(function () use ($report, $pmId, $data, $adminPhotos) {
+        return DB::transaction(function () use ($report, $pmId, $data, $adminPhotos, $releaseBilling) {
             // Default client_visible_notes to the technician's original notes
             // if admin didn't override — preserves the report even when admin
             // doesn't edit. The technician's `notes` stay untouched.
@@ -158,6 +167,14 @@ class ProgressService
                 'validated_percent' => $data['validated_percent'] ?? $report->percent_complete,
                 'validation_notes' => $newValidationNotes,
                 'client_visible_notes' => $clientNotes,
+                // An office validation settles whatever the lead signed off,
+                // so the report leaves the "billing not released" queue. A
+                // lead's own approval sets this immediately after.
+                'approved_by_lead_at' => $releaseBilling ? null : $report->approved_by_lead_at,
+                // Approving clears any earlier rejection.
+                'rejected_at' => null,
+                'rejected_by' => null,
+                'rejection_reason' => null,
             ]);
 
             // Handle photo removals. Scoped through the report's own relation
@@ -178,7 +195,7 @@ class ProgressService
             // headline figure is then recomputed from all of them.
             $this->syncSubTaskFromReport($report->fresh());
             $serviceRequest = $report->serviceRequest;
-            $this->updateServiceRequestProgress($serviceRequest->fresh());
+            $this->updateServiceRequestProgress($serviceRequest->fresh(), $releaseBilling);
 
             AuditLog::log(AuditLog::ACTION_APPROVAL, $report, null, [
                 'validated_percent' => $data['validated_percent'] ?? $report->percent_complete,
@@ -281,7 +298,7 @@ class ProgressService
      * A job that was never split still reads its latest validated report;
      * there, that report *is* the whole job.
      */
-    private function updateServiceRequestProgress(ServiceRequest $serviceRequest): void
+    private function updateServiceRequestProgress(ServiceRequest $serviceRequest, bool $releaseBilling = true): void
     {
         $effectivePercent = $serviceRequest->isSplitIntoSubTasks()
             ? $this->aggregateSubTaskProgress($serviceRequest)
@@ -300,7 +317,38 @@ class ProgressService
         }
 
         $serviceRequest->update($updateData);
-        $this->triggerBillingMilestones($serviceRequest->fresh(), (float) $effectivePercent);
+
+        if ($releaseBilling) {
+            $this->triggerBillingMilestones($serviceRequest->fresh(), (float) $effectivePercent);
+        }
+    }
+
+    /**
+     * A lead sends a claim back. The report is kept — the argument about what
+     * was really done is part of the job's record — but it stops counting and
+     * the technician sees why.
+     */
+    public function reject(ProgressReport $report, int $userId, string $reason): ProgressReport
+    {
+        return DB::transaction(function () use ($report, $userId, $reason) {
+            $report->update([
+                'is_validated' => false,
+                'validated_by' => null,
+                'validated_at' => null,
+                'validated_percent' => null,
+                'approved_by_lead_at' => null,
+                'rejected_at' => now(),
+                'rejected_by' => $userId,
+                'rejection_reason' => $reason,
+            ]);
+
+            AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, [
+                'rejected' => true,
+                'reason' => $reason,
+            ]);
+
+            return $report->fresh();
+        });
     }
 
     private function aggregateSubTaskProgress(ServiceRequest $serviceRequest): int

@@ -24,6 +24,10 @@ class ProgressReport extends Model
         'validation_notes',
         'client_visible_notes',
         'is_pm_authored',
+        'approved_by_lead_at',
+        'rejected_at',
+        'rejected_by',
+        'rejection_reason',
     ];
 
     protected $casts = [
@@ -33,7 +37,29 @@ class ProgressReport extends Model
         'is_pm_authored' => 'boolean',
         'percent_complete' => 'integer',
         'validated_percent' => 'integer',
+        'approved_by_lead_at' => 'datetime',
+        'rejected_at' => 'datetime',
     ];
+
+    /**
+     * Still on the office's desk: never validated, or validated on site by a
+     * lead — which moves progress but deliberately does not release billing,
+     * so a PM still has to look at it. Reports a lead has sent back are not
+     * here; they were resolved on site and are the technician's to redo.
+     */
+    public function scopeNeedsOfficeAction($query)
+    {
+        return $query->where(function ($q) {
+            $q->where(function ($unvalidated) {
+                $unvalidated->where('is_validated', false)->whereNull('rejected_at');
+            })->orWhereNotNull('approved_by_lead_at');
+        });
+    }
+
+    public function isRejected(): bool
+    {
+        return $this->rejected_at !== null;
+    }
 
     public function serviceRequest(): BelongsTo
     {
@@ -58,6 +84,11 @@ class ProgressReport extends Model
     public function validator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'validated_by');
+    }
+
+    public function rejector(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'rejected_by');
     }
 
     /**

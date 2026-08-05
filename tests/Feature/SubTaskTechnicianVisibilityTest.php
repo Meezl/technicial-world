@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\JobAssignment;
+use App\Models\ReqBillingMilestone;
 use App\Models\ProgressReport;
 use App\Models\ServiceCategory;
 use App\Models\ServiceRequest;
@@ -509,6 +510,217 @@ class SubTaskTechnicianVisibilityTest extends TestCase
         $this->assertSame(70, $job->fresh()->progress_percentage);
     }
 
+    /**
+     * The lead's word moves the work, not the money. Their sign-off must not
+     * raise a bill against the client, and the report has to stay in the
+     * office's queue so a PM still releases it.
+     */
+    public function test_lead_approval_moves_progress_without_releasing_billing(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $pm = User::factory()->create(['role' => User::ROLE_PROJECT_MANAGER]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'assigned_pm_id' => $pm->id,
+            'has_sub_tasks' => true,
+            'quote_amount' => 400000,
+        ]);
+
+        ServiceRequestBudget::create([
+            'service_request_id' => $job->id,
+            'labor_budget' => 100000,
+            'materials_budget' => 0,
+            'other_budget' => 0,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        // Bill the client 200,000 once the job passes 50%.
+        $milestone = ReqBillingMilestone::create([
+            'service_request_id' => $job->id,
+            'label' => 'Halfway',
+            'progress_pct' => 50,
+            'amount' => 200000,
+            'sort_order' => 1,
+        ]);
+
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 60]);
+
+        $report = ProgressReport::where('service_sub_task_id', $subTask->id)->firstOrFail();
+
+        $billsBefore = \App\Models\PaymentRequest::count();
+
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.approve', $report))
+            ->assertSessionHasNoErrors();
+
+        // Work moved.
+        $this->assertSame(60, $subTask->fresh()->progress_percentage);
+        $this->assertSame(60, $job->fresh()->progress_percentage);
+
+        // Money did not.
+        $this->assertSame($billsBefore, \App\Models\PaymentRequest::count(),
+            'a lead sign-off must not raise a bill against the client');
+        $this->assertNull($milestone->fresh()->triggered_at);
+
+        // And it is still the office's to settle, so billing is not lost.
+        $this->assertNotNull($report->fresh()->approved_by_lead_at);
+        $this->assertTrue(
+            ProgressReport::needsOfficeAction()->whereKey($report->id)->exists(),
+            'a lead-approved report must stay in the PM queue'
+        );
+    }
+
+    public function test_office_validation_after_a_lead_sign_off_releases_the_milestone(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $pm = User::factory()->create(['role' => User::ROLE_PROJECT_MANAGER]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'assigned_pm_id' => $pm->id,
+            'has_sub_tasks' => true,
+            'quote_amount' => 400000,
+        ]);
+
+        ServiceRequestBudget::create([
+            'service_request_id' => $job->id,
+            'labor_budget' => 100000,
+            'materials_budget' => 0,
+            'other_budget' => 0,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        // Bill the client 200,000 once the job passes 50%.
+        $milestone = ReqBillingMilestone::create([
+            'service_request_id' => $job->id,
+            'label' => 'Halfway',
+            'progress_pct' => 50,
+            'amount' => 200000,
+            'sort_order' => 1,
+        ]);
+
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 60]);
+        $report = ProgressReport::where('service_sub_task_id', $subTask->id)->firstOrFail();
+
+        $this->actingAs($lead->user)->post(route('technician.progress-report.approve', $report));
+        $this->assertNull($milestone->fresh()->triggered_at);
+
+        // The office settles it and the milestone the progress already passed
+        // is raised then — nothing was lost by the lead's sign-off.
+        app(\App\Services\ProgressService::class)->validate($report->fresh(), $pm->id, [
+            'validated_percent' => 60,
+        ]);
+
+        $this->assertNotNull($milestone->fresh()->triggered_at,
+            'the milestone the progress had already passed is raised then');
+        $this->assertNull($report->fresh()->approved_by_lead_at,
+            'settled by the office, so it leaves the billing-not-released queue');
+    }
+
+    public function test_the_lead_sends_a_claim_back_with_a_reason(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 80]);
+        $report = ProgressReport::where('service_sub_task_id', $subTask->id)->firstOrFail();
+
+        // A reason is the point of sending it back.
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.reject', $report), ['rejection_reason' => ''])
+            ->assertSessionHasErrors('rejection_reason');
+
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.reject', $report), [
+                'rejection_reason' => 'Only four of the eight diffusers are actually fitted.',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $rejected = $report->fresh();
+        $this->assertNotNull($rejected->rejected_at);
+        $this->assertSame('Only four of the eight diffusers are actually fitted.', $rejected->rejection_reason);
+        $this->assertFalse($rejected->is_validated);
+        $this->assertSame(0, $subTask->fresh()->progress_percentage, 'a rejected claim banks nothing');
+
+        // Sent back is resolved, not sitting in the office queue.
+        $this->assertFalse(ProgressReport::needsOfficeAction()->whereKey($report->id)->exists());
+
+        // The technician can put it right and submit again.
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 50])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(2, ProgressReport::where('service_sub_task_id', $subTask->id)->count());
+    }
+
+    public function test_a_crew_member_cannot_send_back_their_own_claim(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 80]);
+        $report = ProgressReport::where('service_sub_task_id', $subTask->id)->firstOrFail();
+
+        $this->actingAs($crew->user)
+            ->post(route('technician.progress-report.reject', $report), [
+                'rejection_reason' => 'Changed my mind about this one.',
+            ])
+            ->assertForbidden();
+
+        $this->assertNull($report->fresh()->rejected_at);
+    }
+
     public function test_a_lead_cannot_approve_their_own_sub_task_claim(): void
     {
         $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
@@ -536,7 +748,7 @@ class SubTaskTechnicianVisibilityTest extends TestCase
 
         $this->actingAs($lead->user)
             ->post(route('technician.progress-report.approve', $report))
-            ->assertRedirect();
+            ->assertForbidden();
 
         $this->assertFalse($report->fresh()->is_validated);
         $this->assertSame(0, $subTask->fresh()->progress_percentage);

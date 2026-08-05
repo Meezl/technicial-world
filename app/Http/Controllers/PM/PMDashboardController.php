@@ -46,7 +46,7 @@ class PMDashboardController extends Controller
                 ->whereIn('status', ['assigned', 'in_progress', 'queued'])->count(),
             'pendingValidation' => ProgressReport::whereHas('serviceRequest', function ($q) use ($pmId) {
                 $q->where('assigned_pm_id', $pmId);
-            })->where('is_validated', false)->count(),
+            })->needsOfficeAction()->count(),
             'completionRate' => $this->calculateCompletionRate($pmId),
         ];
 
@@ -361,7 +361,7 @@ class PMDashboardController extends Controller
 
         $summary = [
             'total' => (clone $summaryQuery)->count(),
-            'pending' => (clone $summaryQuery)->where('is_validated', false)->count(),
+            'pending' => (clone $summaryQuery)->needsOfficeAction()->count(),
             'validated' => (clone $summaryQuery)->where('is_validated', true)->count(),
             'pm_authored' => (clone $summaryQuery)->where('is_pm_authored', true)->count(),
             'with_photos' => (clone $summaryQuery)->whereHas('photos')->count(),
@@ -371,7 +371,7 @@ class PMDashboardController extends Controller
                 $q->where('assigned_pm_id', $pmId);
             })
             ->with(['serviceRequest:id,request_id,job_reference', 'technician.user', 'submitter', 'photos'])
-            ->when($request->boolean('pending_only', true), fn($q) => $q->where('is_validated', false))
+            ->when($request->boolean('pending_only', true), fn($q) => $q->needsOfficeAction())
             ->orderBy('report_date', 'desc')
             ->paginate(12)
             ->withQueryString();

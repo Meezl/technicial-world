@@ -268,20 +268,65 @@
                             <i class="fas fa-hourglass-half"></i>
                             {{ pendingClaimFor(task).percent_complete }}% submitted by
                             {{ pendingClaimFor(task).technician?.user?.name || 'the technician' }} —
-                            <template v-if="canApproveClaim(pendingClaimFor(task))">awaiting your approval.</template>
+                            <template v-if="canSignOffClaim(pendingClaimFor(task))">awaiting your approval.</template>
                             <template v-else-if="isLeadTechnician">awaiting the project team.</template>
                             <template v-else>awaiting approval.</template>
                         </p>
 
-                        <button
-                            v-if="canApproveClaim(pendingClaimFor(task))"
-                            class="btn btn-primary btn-approve"
-                            :disabled="approvingReportId === pendingClaimFor(task).id"
-                            @click="approveClaim(pendingClaimFor(task))"
-                        >
-                            <i class="fas fa-check"></i>
-                            {{ approvingReportId === pendingClaimFor(task).id ? 'Approving…' : 'Approve this progress' }}
-                        </button>
+                        <!-- Sent back: the technician needs to know why, not
+                             just that their bar never moved. -->
+                        <p v-else-if="rejectedClaimFor(task)" class="subtask-rejected">
+                            <i class="fas fa-rotate-left"></i>
+                            {{ rejectedClaimFor(task).percent_complete }}% was sent back<span
+                                v-if="rejectedClaimFor(task).rejector?.name"
+                            > by {{ rejectedClaimFor(task).rejector.name }}</span>:
+                            <strong>{{ rejectedClaimFor(task).rejection_reason }}</strong>
+                            <span v-if="isMyTask(task)"> Put it right and submit again.</span>
+                        </p>
+
+                        <div v-if="canSignOffClaim(pendingClaimFor(task))" class="signoff-actions">
+                            <button
+                                class="btn btn-primary"
+                                :disabled="busyReportId === pendingClaimFor(task).id"
+                                @click="approveClaim(pendingClaimFor(task))"
+                            >
+                                <i class="fas fa-check"></i>
+                                {{ busyReportId === pendingClaimFor(task).id ? 'Working…' : 'Approve' }}
+                            </button>
+                            <button
+                                class="btn btn-outline btn-reject"
+                                :disabled="busyReportId === pendingClaimFor(task).id"
+                                @click="openReject(pendingClaimFor(task))"
+                            >
+                                <i class="fas fa-rotate-left"></i>
+                                Send back
+                            </button>
+                        </div>
+
+                        <!-- Reason is required: sending work back without one
+                             leaves the technician nothing to act on. -->
+                        <div v-if="rejectingClaim && rejectingClaim.id === pendingClaimFor(task)?.id" class="reject-box">
+                            <label class="form-field">
+                                <span>Why is this being sent back?</span>
+                                <textarea
+                                    v-model="rejectReason"
+                                    rows="3"
+                                    class="input textarea"
+                                    placeholder="e.g. Only four of the eight diffusers are actually fitted."
+                                ></textarea>
+                            </label>
+                            <p v-if="rejectError" class="reject-error">{{ rejectError }}</p>
+                            <div class="signoff-actions">
+                                <button
+                                    class="btn btn-primary"
+                                    :disabled="busyReportId === rejectingClaim.id"
+                                    @click="confirmReject()"
+                                >
+                                    {{ busyReportId === rejectingClaim.id ? 'Sending…' : 'Send back' }}
+                                </button>
+                                <button class="btn btn-outline" @click="cancelReject()">Cancel</button>
+                            </div>
+                        </div>
                     </article>
                 </div>
             </section>
@@ -592,17 +637,28 @@ function canUpdateTask(task) {
     return props.isLeadTechnician || isMyTask(task)
 }
 
-// The newest unapproved claim against a sub-task. Until it is signed off the
-// sub-task's own percentage is still the banked figure.
-function pendingClaimFor(task) {
+function claimsFor(task) {
     return progressReports.value
-        .filter((report) => report.service_sub_task_id === task.id && !report.is_validated)
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]
+        .filter((report) => report.service_sub_task_id === task.id)
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
 }
 
-// The lead signs off the crew. Their own claims go to the project team, so
-// nobody approves their own work.
-function canApproveClaim(claim) {
+// The newest claim still waiting on somebody. Until it is signed off the
+// sub-task's own percentage is still the banked figure. A claim that was sent
+// back is not waiting — it is the technician's to redo.
+function pendingClaimFor(task) {
+    return claimsFor(task).find((report) => !report.is_validated && !report.rejected_at)
+}
+
+// Shown only when the most recent word on the sub-task was a rejection.
+function rejectedClaimFor(task) {
+    const latest = claimsFor(task)[0]
+    return latest?.rejected_at ? latest : undefined
+}
+
+// The lead settles the crew's claims. Their own go to the project team, so
+// nobody rules on their own work.
+function canSignOffClaim(claim) {
     return Boolean(
         claim &&
         props.isLeadTechnician &&
@@ -610,14 +666,49 @@ function canApproveClaim(claim) {
     )
 }
 
-const approvingReportId = ref(null)
+const busyReportId = ref(null)
+const rejectingClaim = ref(null)
+const rejectReason = ref('')
+const rejectError = ref('')
 
 function approveClaim(claim) {
     if (!claim) return
-    approvingReportId.value = claim.id
+    busyReportId.value = claim.id
     router.post(`/technician/progress-reports/${claim.id}/approve`, {}, {
         preserveScroll: true,
-        onFinish: () => { approvingReportId.value = null },
+        onFinish: () => { busyReportId.value = null },
+    })
+}
+
+function openReject(claim) {
+    rejectingClaim.value = claim
+    rejectReason.value = ''
+    rejectError.value = ''
+}
+
+function cancelReject() {
+    rejectingClaim.value = null
+    rejectReason.value = ''
+    rejectError.value = ''
+}
+
+function confirmReject() {
+    const claim = rejectingClaim.value
+    if (!claim) return
+
+    if (rejectReason.value.trim().length < 5) {
+        rejectError.value = 'Give the technician something to act on — a few words at least.'
+        return
+    }
+
+    busyReportId.value = claim.id
+    router.post(`/technician/progress-reports/${claim.id}/reject`, {
+        rejection_reason: rejectReason.value.trim(),
+    }, {
+        preserveScroll: true,
+        onSuccess: () => cancelReject(),
+        onError: (errors) => { rejectError.value = errors.rejection_reason || 'Could not send that back.' },
+        onFinish: () => { busyReportId.value = null },
     })
 }
 
@@ -985,9 +1076,44 @@ defineOptions({ layout: null })
     padding: .5rem .6rem;
 }
 
-.btn-approve {
+.subtask-rejected {
+    margin: .5rem 0 0;
+    font-size: .8rem;
+    line-height: 1.45;
+    color: #9f1239;
+    background: #fff1f2;
+    border: 1px solid #fecdd3;
+    border-radius: .45rem;
+    padding: .5rem .6rem;
+}
+
+.signoff-actions {
+    display: flex;
+    gap: .5rem;
     margin-top: .6rem;
-    width: 100%;
+}
+
+.signoff-actions .btn {
+    flex: 1;
+}
+
+.btn-reject {
+    border-color: #fecdd3;
+    color: #9f1239;
+}
+
+.reject-box {
+    margin-top: .6rem;
+    padding: .7rem;
+    border: 1px dashed #cbd5e1;
+    border-radius: .5rem;
+    background: #f8fafc;
+}
+
+.reject-error {
+    margin: .4rem 0 0;
+    font-size: .78rem;
+    color: #b91c1c;
 }
 
 .field-hint {
