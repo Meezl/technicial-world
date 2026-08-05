@@ -196,7 +196,16 @@
                         </div>
                     </div>
 
-                    <div v-if="!report.is_validated" class="validation-form">
+                    <!-- Already with the lead: nothing for the PM to do until
+                         they answer, so say that rather than showing a form
+                         that looks actionable. Checked first because a
+                         returned report is unvalidated too. -->
+                    <div v-if="isWithLead(report)" class="returned-banner">
+                        <i class="fas fa-hourglass-half"></i>
+                        With the lead technician<span v-if="report.rejection_reason">: {{ report.rejection_reason }}</span>
+                    </div>
+
+                    <div v-else-if="!report.is_validated" class="validation-form">
                         <div class="validation-head">
                             <div>
                                 <span class="notes-label">Validation decision</span>
@@ -225,10 +234,38 @@
                             </div>
                         </div>
 
-                        <button class="btn btn-primary btn-sm validate-button" @click="validateReport(report)" :disabled="submitting">
-                            <i class="fas fa-check-circle"></i>
-                            {{ submitting ? 'Validating...' : 'Validate Progress' }}
-                        </button>
+                        <div class="decision-actions">
+                            <button class="btn btn-primary btn-sm validate-button" @click="validateReport(report)" :disabled="submitting">
+                                <i class="fas fa-check-circle"></i>
+                                {{ submitting ? 'Validating...' : 'Validate Progress' }}
+                            </button>
+                            <!-- Not every report is a yes or a no. Often the
+                                 figure needs a second look on site, and the
+                                 lead is the one who can do that. -->
+                            <button
+                                class="btn btn-outline btn-sm return-button"
+                                @click="openReturn(report)"
+                                :disabled="submitting"
+                            >
+                                <i class="fas fa-reply"></i> Send back to lead
+                            </button>
+                        </div>
+
+                        <div v-if="returningId === report.id" class="return-box">
+                            <label>What do you need the lead to look at?</label>
+                            <textarea
+                                v-model="returnReason"
+                                rows="3"
+                                placeholder="e.g. Photos show six panels but the report claims eight — please recount before I validate."
+                            ></textarea>
+                            <p v-if="returnError" class="return-error">{{ returnError }}</p>
+                            <div class="decision-actions">
+                                <button class="btn btn-primary btn-sm" @click="submitReturn(report)" :disabled="submitting">
+                                    {{ submitting ? 'Sending...' : 'Send back' }}
+                                </button>
+                                <button class="btn btn-outline btn-sm" @click="cancelReturn()">Cancel</button>
+                            </div>
+                        </div>
                     </div>
 
                     <div v-if="report.validation_notes" class="validation-notes">
@@ -343,6 +380,47 @@ function validateReport(report) {
         onError: () => {
             submitting.value = false
         },
+    })
+}
+
+// Sent back to the lead and awaiting their answer. Mirrors
+// ProgressReport::isReturnedToLead.
+const OFFICE_CAPACITIES = ['project_manager', 'admin']
+const isWithLead = (report) =>
+    Boolean(report.rejected_at && OFFICE_CAPACITIES.includes(report.rejected_as))
+
+const returningId = ref(null)
+const returnReason = ref('')
+const returnError = ref('')
+
+function openReturn(report) {
+    returningId.value = report.id
+    returnReason.value = ''
+    returnError.value = ''
+}
+
+function cancelReturn() {
+    returningId.value = null
+    returnReason.value = ''
+    returnError.value = ''
+}
+
+function submitReturn(report) {
+    if (returnReason.value.trim().length < 5) {
+        returnError.value = 'Give the lead something to act on — a few words at least.'
+        return
+    }
+
+    submitting.value = true
+    router.post(`/pm/progress-reports/${report.id}/return`, {
+        rejection_reason: returnReason.value.trim(),
+    }, {
+        preserveScroll: true,
+        onSuccess: () => cancelReturn(),
+        onError: (errors) => {
+            returnError.value = errors.rejection_reason || 'Could not send that back.'
+        },
+        onFinish: () => { submitting.value = false },
     })
 }
 
@@ -775,6 +853,69 @@ defineOptions({ layout: null })
     display: inline-flex;
     align-items: center;
     gap: 0.45rem;
+}
+
+.decision-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    align-items: center;
+}
+
+.return-button {
+    margin-top: 1rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    border-color: #bae6fd;
+    color: #075985;
+}
+
+.return-box {
+    margin-top: 0.9rem;
+    padding: 0.85rem;
+    border: 1px dashed #bae6fd;
+    border-radius: 0.6rem;
+    background: #f0f9ff;
+}
+
+.return-box label {
+    display: block;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #075985;
+    margin-bottom: 0.4rem;
+}
+
+.return-box textarea {
+    width: 100%;
+    padding: 0.6rem 0.7rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 0.45rem;
+    font: inherit;
+    font-size: 0.88rem;
+    resize: vertical;
+    margin-bottom: 0.6rem;
+}
+
+.return-error {
+    margin: 0 0 0.6rem;
+    font-size: 0.8rem;
+    color: #b91c1c;
+}
+
+.returned-banner {
+    margin-top: 1rem;
+    padding: 0.8rem 0.9rem;
+    border: 1px solid #bae6fd;
+    border-radius: 0.6rem;
+    background: #f0f9ff;
+    color: #075985;
+    font-size: 0.86rem;
+    line-height: 1.45;
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
 }
 
 .validation-notes {
