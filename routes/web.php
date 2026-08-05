@@ -145,6 +145,7 @@ Route::middleware(['auth', 'role:project_manager'])->prefix('pm')->group(functio
     // Progress Validation
     Route::get('/progress-reports', [PMDashboardController::class, 'progressReports'])->name('pm.progress-reports');
     Route::post('/progress-reports/{progressReport}/validate', [PMDashboardController::class, 'validateProgress'])->name('pm.progress.validate');
+    Route::post('/progress-reports/{progressReport}/return', [PMDashboardController::class, 'returnProgressReport'])->name('pm.progress.return');
     Route::post('/jobs/{serviceRequest}/progress-on-behalf', [PMDashboardController::class, 'createProgressOnBehalf'])->name('pm.progress.on-behalf');
 
     // Technician Payment Sheets
@@ -203,6 +204,8 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::post('/jobs/{serviceRequest}/assign-lead', [AdminDashboardController::class, 'assignLeadTechnician'])->name('admin.jobs.assign-lead');
     Route::post('/jobs/{serviceRequest}/assignment-fee', [AdminDashboardController::class, 'updateAssignmentCompensation'])->name('admin.jobs.assignment.fee');
     Route::post('/progress-reports/{progressReport}/validate', [AdminDashboardController::class, 'validateProgress'])->name('admin.progress.validate');
+    // Back to the lead to edit or answer, rather than a flat refusal.
+    Route::post('/progress-reports/{progressReport}/return', [AdminDashboardController::class, 'returnProgressReport'])->name('admin.progress.return');
     // Office counterpart of a lead covering for their crew — files the report
     // and says on its face that an admin wrote it.
     Route::post('/jobs/{serviceRequest}/progress-on-behalf', [AdminDashboardController::class, 'createProgressOnBehalf'])->name('admin.progress.on-behalf');
@@ -413,6 +416,8 @@ Route::middleware(['auth', 'role:technician'])->group(function () {
     // back with a reason. Neither releases billing — that stays with ops.
     Route::post('/technician/progress-reports/{progressReport}/approve', [\App\Http\Controllers\TechnicianController::class, 'approveSubTaskReport'])->name('technician.progress-report.approve');
     Route::post('/technician/progress-reports/{progressReport}/reject', [\App\Http\Controllers\TechnicianController::class, 'rejectSubTaskReport'])->name('technician.progress-report.reject');
+    // The lead answers a report the office sent back and puts it up again.
+    Route::post('/technician/progress-reports/{progressReport}/revise', [\App\Http\Controllers\TechnicianController::class, 'reviseReturnedReport'])->name('technician.progress-report.revise');
 
     // Progress reports
     Route::post('/technician/jobs/{serviceRequest}/progress-report', [\App\Http\Controllers\TechnicianController::class, 'submitProgressReport'])->name('technician.progress-report');

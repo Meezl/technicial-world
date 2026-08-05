@@ -29,7 +29,9 @@ class ProgressReport extends Model
         'approved_by_lead_at',
         'rejected_at',
         'rejected_by',
+        'rejected_as',
         'rejection_reason',
+        'revised_by_lead_at',
     ];
 
     /**
@@ -54,6 +56,7 @@ class ProgressReport extends Model
         'validated_percent' => 'integer',
         'approved_by_lead_at' => 'datetime',
         'rejected_at' => 'datetime',
+        'revised_by_lead_at' => 'datetime',
     ];
 
     /**
@@ -74,6 +77,27 @@ class ProgressReport extends Model
     public function isRejected(): bool
     {
         return $this->rejected_at !== null;
+    }
+
+    /**
+     * Sent back by the office, so it is the lead's to edit or comment on
+     * before it goes back up. A lead's own rejection lands on the crew member
+     * instead, who redoes the work and files afresh.
+     */
+    public function isReturnedToLead(): bool
+    {
+        return $this->rejected_at !== null
+            && in_array($this->rejected_as, self::OFFICE_CAPACITIES, true);
+    }
+
+    /**
+     * Waiting on the lead to revise it. Distinct from needsOfficeAction —
+     * these are off the office's desk until the lead sends them back up.
+     */
+    public function scopeAwaitingLeadRevision($query)
+    {
+        return $query->whereNotNull('rejected_at')
+            ->whereIn('rejected_as', self::OFFICE_CAPACITIES);
     }
 
     /**

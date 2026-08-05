@@ -351,6 +351,32 @@ class AdminDashboardController extends Controller
     }
 
     /**
+     * Send a report back to the lead technician with a reason.
+     *
+     * The office's counterpart of a lead returning work to their crew. Often
+     * a question rather than a verdict — the lead can correct the figure,
+     * rewrite the notes, or answer with a comment and put it up again.
+     */
+    public function returnProgressReport(Request $request, ProgressReport $progressReport)
+    {
+        $data = $request->validate([
+            'rejection_reason' => 'required|string|min:5|max:1000',
+        ], [
+            'rejection_reason.required' => 'Tell the lead what you need looking at.',
+            'rejection_reason.min' => 'Give the lead something to act on — a few words at least.',
+        ]);
+
+        app(ProgressService::class)->reject(
+            $progressReport,
+            auth()->id(),
+            $data['rejection_reason'],
+            \App\Models\ProgressReport::AS_ADMIN
+        );
+
+        return back()->with('success', 'Sent back to the lead technician.');
+    }
+
+    /**
      * Admin files a progress report on a technician's behalf.
      *
      * The counterpart of the PM's route and of a lead covering for their crew:

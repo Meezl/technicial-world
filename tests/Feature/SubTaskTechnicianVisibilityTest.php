@@ -1033,6 +1033,183 @@ class SubTaskTechnicianVisibilityTest extends TestCase
     }
 
     /**
+     * The office can put a report back to the lead rather than settling or
+     * refusing it outright — often a query, not a verdict. The lead answers
+     * it and it comes back up; it never counts on their own say-so.
+     */
+    public function test_the_office_sends_a_report_back_for_the_lead_to_answer(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 70]);
+        $report = ProgressReport::latest('id')->first();
+        $this->actingAs($lead->user)->post(route('technician.progress-report.approve', $report));
+
+        $this->assertSame(70, $subTask->fresh()->progress_percentage);
+
+        // A reason is required.
+        $this->actingAs($admin)
+            ->post(route('admin.progress.return', $report), ['rejection_reason' => ''])
+            ->assertSessionHasErrors('rejection_reason');
+
+        $this->actingAs($admin)
+            ->post(route('admin.progress.return', $report), [
+                'rejection_reason' => 'Photos show six panels, the report claims eight.',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $returned = $report->fresh();
+        $this->assertTrue($returned->isReturnedToLead());
+        $this->assertSame(ProgressReport::AS_ADMIN, $returned->rejected_as);
+        $this->assertFalse($returned->is_validated);
+        $this->assertNull($returned->approved_by_lead_at);
+
+        // It is with the lead, so off the office's queue until answered.
+        $this->assertFalse(ProgressReport::needsOfficeAction()->whereKey($report->id)->exists());
+        $this->assertTrue(ProgressReport::awaitingLeadRevision()->whereKey($report->id)->exists());
+
+        // Sending it up unchanged tells the office nothing.
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.revise', $report), [])
+            ->assertSessionHasErrors('comment');
+
+        // The lead answers with a corrected figure and a comment.
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.revise', $report), [
+                'percent_complete' => 60,
+                'comment' => 'Recount: six panels up, two still on the ground. Corrected.',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $revised = $report->fresh();
+        $this->assertNull($revised->rejected_at);
+        $this->assertSame(60, $revised->percent_complete);
+        $this->assertStringContainsString('Recount: six panels up', $revised->notes);
+        $this->assertFalse($revised->is_validated, 'the answer goes back to the office, not straight through');
+        $this->assertTrue(ProgressReport::needsOfficeAction()->whereKey($report->id)->exists());
+
+        // The previous notes are kept, so the exchange is traceable.
+        $this->assertDatabaseHas('progress_report_note_versions', [
+            'progress_report_id' => $report->id,
+            'field_name' => 'notes',
+        ]);
+
+        // Having answered the query — and corrected the figure — the lead
+        // cannot then ratify their own correction on site.
+        $this->assertNotNull($revised->revised_by_lead_at);
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.approve', $report))
+            ->assertForbidden();
+
+        // The office settles it, and the sub-task lands on the corrected 60%.
+        $this->actingAs($admin)
+            ->post(route('admin.progress.validate', $report), ['validated_percent' => 60])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(60, $subTask->fresh()->progress_percentage);
+    }
+
+    public function test_only_the_lead_can_answer_a_returned_report(): void
+    {
+        $pm = User::factory()->create(['role' => User::ROLE_PROJECT_MANAGER]);
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'assigned_pm_id' => $pm->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 70]);
+        $report = ProgressReport::latest('id')->first();
+
+        $this->actingAs($pm)
+            ->post(route('pm.progress.return', $report), [
+                'rejection_reason' => 'Need a photo of the completed run before I sign this.',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(ProgressReport::AS_PROJECT_MANAGER, $report->fresh()->rejected_as);
+
+        // The crew member whose work it is cannot answer for the lead.
+        $this->actingAs($crew->user)
+            ->post(route('technician.progress-report.revise', $report), ['comment' => 'It is fine.'])
+            ->assertForbidden();
+
+        $this->assertNotNull($report->fresh()->rejected_at);
+    }
+
+    /**
+     * A report the lead sent back to their crew is a different thing from one
+     * the office sent back to the lead, and must not be answered as one.
+     */
+    public function test_a_lead_cannot_revise_a_report_they_sent_back_to_the_crew(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 70]);
+        $report = ProgressReport::latest('id')->first();
+
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.reject', $report), [
+                'rejection_reason' => 'Only four panels are actually up.',
+            ]);
+
+        $this->assertSame(ProgressReport::AS_LEAD, $report->fresh()->rejected_as);
+
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.revise', $report), ['comment' => 'Actually it is fine.'])
+            ->assertRedirect();
+
+        // Still sent back — the crew member redoes it.
+        $this->assertNotNull($report->fresh()->rejected_at);
+    }
+
+    /**
      * The technician needs the scope and the programme to do the job, and the
      * amount agreed for their own work. They must not receive the client's
      * price or the job's margin — which the page used to ship in its props

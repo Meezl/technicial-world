@@ -339,9 +339,13 @@ class ProgressService
      * was really done is part of the job's record — but it stops counting and
      * the technician sees why.
      */
-    public function reject(ProgressReport $report, int $userId, string $reason): ProgressReport
-    {
-        return DB::transaction(function () use ($report, $userId, $reason) {
+    public function reject(
+        ProgressReport $report,
+        int $userId,
+        string $reason,
+        string $rejectedAs = ProgressReport::AS_LEAD
+    ): ProgressReport {
+        return DB::transaction(function () use ($report, $userId, $reason, $rejectedAs) {
             $report->update([
                 'is_validated' => false,
                 'validated_by' => null,
@@ -350,12 +354,60 @@ class ProgressService
                 'approved_by_lead_at' => null,
                 'rejected_at' => now(),
                 'rejected_by' => $userId,
+                'rejected_as' => $rejectedAs,
                 'rejection_reason' => $reason,
             ]);
 
             AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, [
                 'rejected' => true,
+                'rejected_as' => $rejectedAs,
                 'reason' => $reason,
+            ]);
+
+            return $report->fresh();
+        });
+    }
+
+    /**
+     * The lead answers a report the office sent back, then puts it up again.
+     *
+     * They may correct the percentage, rewrite the notes, or simply add a
+     * comment explaining why it stands as filed — a returned report is often
+     * a question rather than a verdict. Either way the previous text is kept
+     * as a version, so the argument is traceable, and the report goes back to
+     * the office rather than counting on the lead's own say-so.
+     */
+    public function reviseByLead(ProgressReport $report, int $userId, array $data): ProgressReport
+    {
+        return DB::transaction(function () use ($report, $userId, $data) {
+            $previousNotes = $report->notes;
+            $notes = $data['notes'] ?? $previousNotes;
+
+            if (!empty($data['comment'])) {
+                $stamp = now()->format('d M Y H:i');
+                $notes = trim(($notes ? $notes . "\n\n" : '') . "[Lead, {$stamp}] " . $data['comment']);
+            }
+
+            $this->recordNoteVersionIfChanged($report, $userId, 'notes', $previousNotes, $notes);
+
+            $report->update([
+                'percent_complete' => $data['percent_complete'] ?? $report->percent_complete,
+                'notes' => $notes,
+                // Answered — back on the office's desk, not counting yet.
+                'rejected_at' => null,
+                'rejected_by' => null,
+                'rejected_as' => null,
+                'rejection_reason' => null,
+                'is_validated' => false,
+                'approved_by_lead_at' => null,
+                // The office asked, the lead answered — so the office settles
+                // it. Without this the lead could correct the figure and then
+                // ratify their own correction on site.
+                'revised_by_lead_at' => now(),
+            ]);
+
+            AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, [
+                'revised_by_lead' => true,
             ]);
 
             return $report->fresh();

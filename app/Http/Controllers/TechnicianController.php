@@ -1080,9 +1080,53 @@ class TechnicianController extends Controller
                 'That report has been validated by the project team — ask them to reopen it.');
         }
 
-        app(ProgressService::class)->reject($progressReport, auth()->id(), $data['rejection_reason']);
+        app(ProgressService::class)->reject(
+            $progressReport,
+            auth()->id(),
+            $data['rejection_reason'],
+            \App\Models\ProgressReport::AS_LEAD
+        );
 
         return back()->with('success', 'Sent back to the technician with your reason.');
+    }
+
+    /**
+     * The lead answers a report the office sent back.
+     *
+     * They can correct the percentage, rewrite the notes, or just add a
+     * comment saying why it stands — a returned report is often a question,
+     * not a verdict. Either way it goes back to the office to settle, never
+     * onto the lead's own authority.
+     */
+    public function reviseReturnedReport(Request $request, \App\Models\ProgressReport $progressReport)
+    {
+        $technician = auth()->user()->technician;
+        $serviceRequest = $progressReport->serviceRequest;
+
+        if (!$technician || !$serviceRequest || !$serviceRequest->isLeadTechnician($technician->id)) {
+            abort(403, 'Only the lead technician can answer a report sent back on this job.');
+        }
+
+        if (!$progressReport->isReturnedToLead()) {
+            return back()->with('error', 'That report has not been sent back to you.');
+        }
+
+        $data = $request->validate([
+            'percent_complete' => 'nullable|integer|min:0|max:100',
+            'notes' => 'nullable|string|max:2000',
+            'comment' => 'nullable|string|max:1000',
+        ]);
+
+        // Sending it back up unchanged tells the office nothing.
+        if (!$request->filled('comment') && !$request->filled('notes') && !$request->filled('percent_complete')) {
+            return back()->withErrors([
+                'comment' => 'Change the figure, edit the notes, or add a comment before sending it back.',
+            ]);
+        }
+
+        app(ProgressService::class)->reviseByLead($progressReport, auth()->id(), $data);
+
+        return back()->with('success', 'Sent back to the project team.');
     }
 
     /**
@@ -1112,6 +1156,13 @@ class TechnicianController extends Controller
 
         if ((int) $progressReport->submitted_by === (int) auth()->id()) {
             abort(403, 'You wrote this report, so the project team ratifies it rather than you.');
+        }
+
+        // Once the office has sent a report back and the lead has answered it,
+        // settling it is the office's — otherwise the lead could correct the
+        // figure and then ratify their own correction on site.
+        if ($progressReport->revised_by_lead_at !== null) {
+            abort(403, 'You answered this one, so the project team settles it rather than you.');
         }
 
         return $technician;

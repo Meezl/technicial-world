@@ -256,8 +256,8 @@
                             min="0"
                             max="100"
                             step="10"
-                            :value="pendingClaimFor(task)?.percent_complete ?? task.progress_percentage ?? 0"
-                            :disabled="!canUpdateTask(task) || !!pendingClaimFor(task)"
+                            :value="claimInFlightFor(task)?.percent_complete ?? task.progress_percentage ?? 0"
+                            :disabled="!canUpdateTask(task) || !!claimInFlightFor(task)"
                             @change="(event) => updateTaskProgress(task, event.target.value)"
                         >
 
@@ -268,6 +268,9 @@
                             <i class="fas fa-hourglass-half"></i>
                             {{ claimAuthorLine(pendingClaimFor(task)) }} —
                             <template v-if="canSignOffClaim(pendingClaimFor(task))">awaiting your approval.</template>
+                            <template v-else-if="pendingClaimFor(task).revised_by_lead_at && isLeadTechnician">
+                                you answered the project team's query; it is back with them.
+                            </template>
                             <template v-else-if="pendingClaimFor(task).submitted_by === technician.user_id">
                                 you wrote this, so the project team ratifies it.
                             </template>
@@ -275,8 +278,61 @@
                             <template v-else>awaiting approval.</template>
                         </p>
 
-                        <!-- Sent back: the technician needs to know why, not
-                             just that their bar never moved. -->
+                        <!-- Returned by the office. It is the lead's to answer
+                             — correct the figure, edit the notes, or say why
+                             it stands — and it goes back up, not straight
+                             into the banked total. -->
+                        <div v-else-if="returnedToLeadFor(task)" class="subtask-returned">
+                            <p>
+                                <i class="fas fa-reply"></i>
+                                {{ returnedToLeadFor(task).percent_complete }}% sent back by
+                                {{ returnedToLeadFor(task).rejector?.name || 'the project team' }}:
+                                <strong>{{ returnedToLeadFor(task).rejection_reason }}</strong>
+                            </p>
+                            <p v-if="!isLeadTechnician" class="returned-owner">
+                                Your lead is answering this.
+                            </p>
+
+                            <div v-else-if="revisingClaim?.id !== returnedToLeadFor(task).id">
+                                <button class="btn btn-primary btn-full" @click="openRevise(returnedToLeadFor(task))">
+                                    <i class="fas fa-pen"></i> Edit or comment
+                                </button>
+                            </div>
+
+                            <div v-else class="revise-box">
+                                <label class="form-field">
+                                    <span>Progress %</span>
+                                    <input v-model.number="reviseForm.percent_complete" type="number" min="0" max="100" class="input">
+                                </label>
+                                <label class="form-field">
+                                    <span>Notes</span>
+                                    <textarea v-model="reviseForm.notes" rows="3" class="input textarea"></textarea>
+                                </label>
+                                <label class="form-field">
+                                    <span>Add a comment</span>
+                                    <textarea
+                                        v-model="reviseForm.comment"
+                                        rows="2"
+                                        class="input textarea"
+                                        placeholder="Answer the query — e.g. the figure is right, the extra panels went in after the photos."
+                                    ></textarea>
+                                </label>
+                                <p v-if="reviseError" class="reject-error">{{ reviseError }}</p>
+                                <div class="signoff-actions">
+                                    <button
+                                        class="btn btn-primary"
+                                        :disabled="busyReportId === revisingClaim.id"
+                                        @click="submitRevision()"
+                                    >
+                                        {{ busyReportId === revisingClaim.id ? 'Sending…' : 'Send back up' }}
+                                    </button>
+                                    <button class="btn btn-outline" @click="cancelRevise()">Cancel</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Sent back to the crew member: they need to know
+                             why, not just that their bar never moved. -->
                         <p v-else-if="rejectedClaimFor(task)" class="subtask-rejected">
                             <i class="fas fa-rotate-left"></i>
                             {{ rejectedClaimFor(task).percent_complete }}% was sent back<span
@@ -693,6 +749,7 @@ function authorLine(report) {
 }
 
 function reportStateLabel(report) {
+    if (isReturnedToLead(report)) return `With the lead · ${report.percent_complete}% claimed`
     if (report.rejected_at) return `Sent back · ${report.percent_complete}% claimed`
 
     if (!report.is_validated) return `Awaiting ratification · ${report.percent_complete}% claimed`
@@ -719,17 +776,33 @@ function claimsFor(task) {
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
 }
 
+const OFFICE_CAPACITIES = ['project_manager', 'admin']
+
+const isReturnedToLead = (report) =>
+    Boolean(report?.rejected_at && OFFICE_CAPACITIES.includes(report.rejected_as))
+
 // The newest claim still waiting on somebody. Until it is signed off the
-// sub-task's own percentage is still the banked figure. A claim that was sent
-// back is not waiting — it is the technician's to redo.
+// sub-task's own percentage is still the banked figure. A claim the lead sent
+// back to the crew is not waiting — it is theirs to redo.
 function pendingClaimFor(task) {
     return claimsFor(task).find((report) => !report.is_validated && !report.rejected_at)
 }
 
-// Shown only when the most recent word on the sub-task was a rejection.
+// Sent back by the office and sitting with the lead. Still live work on this
+// sub-task, so the slider stays shut while it is being answered.
+function returnedToLeadFor(task) {
+    const latest = claimsFor(task)[0]
+    return isReturnedToLead(latest) ? latest : undefined
+}
+
+// Shown when the lead sent the crew member's claim back to them.
 function rejectedClaimFor(task) {
     const latest = claimsFor(task)[0]
-    return latest?.rejected_at ? latest : undefined
+    return latest?.rejected_at && !isReturnedToLead(latest) ? latest : undefined
+}
+
+function claimInFlightFor(task) {
+    return pendingClaimFor(task) || returnedToLeadFor(task)
 }
 
 // The lead settles the crew's claims. Nobody rules on their own account —
@@ -740,7 +813,10 @@ function canSignOffClaim(claim) {
         claim &&
         props.isLeadTechnician &&
         claim.technician_id !== props.technician.id &&
-        claim.submitted_by !== props.technician.user_id,
+        claim.submitted_by !== props.technician.user_id &&
+        // Answered a query from the office — theirs to settle now, not the
+        // lead's to re-sign on their own corrected figure.
+        !claim.revised_by_lead_at,
     )
 }
 
@@ -767,6 +843,54 @@ function approveClaim(claim) {
     busyReportId.value = claim.id
     router.post(`/technician/progress-reports/${claim.id}/approve`, {}, {
         preserveScroll: true,
+        onFinish: () => { busyReportId.value = null },
+    })
+}
+
+const revisingClaim = ref(null)
+const reviseForm = ref({ percent_complete: 0, notes: '', comment: '' })
+const reviseError = ref('')
+
+function openRevise(claim) {
+    revisingClaim.value = claim
+    reviseError.value = ''
+    reviseForm.value = {
+        percent_complete: claim.percent_complete,
+        notes: claim.notes || '',
+        comment: '',
+    }
+}
+
+function cancelRevise() {
+    revisingClaim.value = null
+    reviseError.value = ''
+}
+
+function submitRevision() {
+    const claim = revisingClaim.value
+    if (!claim) return
+
+    const unchanged =
+        Number(reviseForm.value.percent_complete) === Number(claim.percent_complete) &&
+        (reviseForm.value.notes || '') === (claim.notes || '') &&
+        !reviseForm.value.comment.trim()
+
+    if (unchanged) {
+        reviseError.value = 'Change the figure, edit the notes, or add a comment before sending it back.'
+        return
+    }
+
+    busyReportId.value = claim.id
+    router.post(`/technician/progress-reports/${claim.id}/revise`, {
+        percent_complete: reviseForm.value.percent_complete,
+        notes: reviseForm.value.notes,
+        comment: reviseForm.value.comment,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => cancelRevise(),
+        onError: (errors) => {
+            reviseError.value = errors.comment || errors.percent_complete || 'Could not send that back.'
+        },
         onFinish: () => { busyReportId.value = null },
     })
 }
@@ -1182,6 +1306,28 @@ defineOptions({ layout: null })
     font-size: .82rem;
     line-height: 1.45;
     color: #9f1239;
+}
+
+.subtask-returned {
+    margin-top: .5rem;
+    font-size: .8rem;
+    line-height: 1.45;
+    color: #075985;
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-radius: .45rem;
+    padding: .6rem;
+}
+
+.subtask-returned p { margin: 0 0 .5rem; }
+.subtask-returned p:last-child { margin-bottom: 0; }
+.returned-owner { font-style: italic; opacity: .85; }
+.btn-full { width: 100%; }
+
+.revise-box {
+    margin-top: .5rem;
+    padding-top: .5rem;
+    border-top: 1px dashed #bae6fd;
 }
 
 .subtask-rejected {

@@ -402,6 +402,31 @@ class PMDashboardController extends Controller
     }
 
     /**
+     * Send a report back to the lead technician with a reason, for them to
+     * edit or answer with a comment before it comes back up.
+     */
+    public function returnProgressReport(Request $request, ProgressReport $progressReport)
+    {
+        $this->authorizeForPm($progressReport->serviceRequest);
+
+        $data = $request->validate([
+            'rejection_reason' => 'required|string|min:5|max:1000',
+        ], [
+            'rejection_reason.required' => 'Tell the lead what you need looking at.',
+            'rejection_reason.min' => 'Give the lead something to act on — a few words at least.',
+        ]);
+
+        $this->progressService->reject(
+            $progressReport,
+            auth()->id(),
+            $data['rejection_reason'],
+            \App\Models\ProgressReport::AS_PROJECT_MANAGER
+        );
+
+        return redirect()->back()->with('success', 'Sent back to the lead technician.');
+    }
+
+    /**
      * Create progress report on behalf of technician.
      */
     public function createProgressOnBehalf(Request $request, ServiceRequest $serviceRequest)
