@@ -338,14 +338,58 @@ class AdminDashboardController extends Controller
 
         $adminPhotos = $request->hasFile('admin_photos') ? $request->file('admin_photos') : [];
 
+        // Recorded as an admin ratification so the report can say who settled
+        // it, and releases billing — the office decision it has always been.
         app(ProgressService::class)->validate($progressReport, auth()->id(), $request->only([
             'validated_percent',
             'validation_notes',
             'client_visible_notes',
             'remove_photo_ids',
-        ]), $adminPhotos);
+        ]), $adminPhotos, validatedAs: \App\Models\ProgressReport::AS_ADMIN);
 
         return back()->with('success', 'Progress validated.');
+    }
+
+    /**
+     * Admin files a progress report on a technician's behalf.
+     *
+     * The counterpart of the PM's route and of a lead covering for their crew:
+     * when nobody on site got the report in, the office can put the record
+     * straight. The report is about the named technician's work and says on
+     * its face that an admin wrote it.
+     */
+    public function createProgressOnBehalf(Request $request, ServiceRequest $serviceRequest)
+    {
+        $data = $request->validate([
+            'percent_complete'    => 'required|integer|min:0|max:100',
+            'notes'               => 'nullable|string|max:2000',
+            'report_date'         => 'nullable|date',
+            'technician_id'       => 'nullable|integer|exists:technicians,id',
+            'service_sub_task_id' => 'nullable|integer|exists:service_sub_tasks,id',
+            'photos'              => 'nullable|array|max:6',
+            'photos.*'            => 'nullable|file|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
+        ]);
+
+        if (!empty($data['service_sub_task_id'])) {
+            $subTask = $serviceRequest->subTasks()->find($data['service_sub_task_id']);
+            if (!$subTask) {
+                return back()->withErrors([
+                    'service_sub_task_id' => 'That sub-task does not belong to this job.',
+                ]);
+            }
+            // Attribute to whoever holds the sub-task unless told otherwise.
+            $data['technician_id'] = $data['technician_id'] ?? $subTask->technician_id;
+        }
+
+        app(ProgressService::class)->createOnBehalf(
+            $serviceRequest,
+            auth()->id(),
+            $data,
+            $request->file('photos', []),
+            authoredAs: \App\Models\ProgressReport::AS_ADMIN
+        );
+
+        return back()->with('success', 'Progress report filed on the technician\'s behalf.');
     }
 
     /**

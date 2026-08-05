@@ -34,8 +34,12 @@ class ProgressService
             // the same technician submitted an identical report (same %,
             // same date, same SR/sub-task) in the last 90 seconds, treat
             // the second submission as a no-op and return the original.
+            // Keyed on the author as well as the subject: a lead filing on
+            // behalf of a crew member carries that member's technician_id, and
+            // must not be mistaken for the member's own double-tap.
             $existing = ProgressReport::where('service_request_id', $serviceRequest->id)
                 ->where('technician_id', $technicianId)
+                ->where('submitted_by', $submittedBy)
                 ->where('service_sub_task_id', $data['service_sub_task_id'] ?? null)
                 ->where('percent_complete', (int) $data['percent_complete'])
                 ->where('created_at', '>=', now()->subSeconds(90))
@@ -55,8 +59,10 @@ class ProgressService
             $report = ProgressReport::create([
                 'service_request_id' => $serviceRequest->id,
                 'service_sub_task_id' => $data['service_sub_task_id'] ?? null,
+                // Whose work this is about — not necessarily who wrote it.
                 'technician_id' => $technicianId,
                 'submitted_by' => $submittedBy,
+                'authored_as' => $data['authored_as'] ?? ProgressReport::AS_TECHNICIAN,
                 'report_date' => $data['report_date'] ?? now()->toDateString(),
                 'percent_complete' => $data['percent_complete'],
                 'notes' => $data['notes'] ?? null,
@@ -81,20 +87,23 @@ class ProgressService
         ServiceRequest $serviceRequest,
         int $pmId,
         array $data,
-        array $photos = []
+        array $photos = [],
+        string $authoredAs = ProgressReport::AS_PROJECT_MANAGER
     ): ProgressReport {
-        return DB::transaction(function () use ($serviceRequest, $pmId, $data, $photos) {
+        return DB::transaction(function () use ($serviceRequest, $pmId, $data, $photos, $authoredAs) {
             $report = ProgressReport::create([
                 'service_request_id' => $serviceRequest->id,
                 'service_sub_task_id' => $data['service_sub_task_id'] ?? null,
                 'technician_id' => $data['technician_id'] ?? null,
                 'submitted_by' => $pmId,
+                'authored_as' => $authoredAs,
                 'report_date' => $data['report_date'] ?? now()->toDateString(),
                 'percent_complete' => $data['percent_complete'],
                 'notes' => $data['notes'] ?? null,
                 'is_pm_authored' => true,
-                'is_validated' => true, // PM-authored reports are auto-validated
+                'is_validated' => true, // Office-authored reports carry their own authority
                 'validated_by' => $pmId,
+                'validated_as' => $authoredAs,
                 'validated_at' => now(),
                 'validated_percent' => $data['percent_complete'],
             ]);
@@ -130,9 +139,10 @@ class ProgressService
         int $pmId,
         array $data,
         array $adminPhotos = [],
-        bool $releaseBilling = true
+        bool $releaseBilling = true,
+        string $validatedAs = ProgressReport::AS_PROJECT_MANAGER
     ): ProgressReport {
-        return DB::transaction(function () use ($report, $pmId, $data, $adminPhotos, $releaseBilling) {
+        return DB::transaction(function () use ($report, $pmId, $data, $adminPhotos, $releaseBilling, $validatedAs) {
             // Default client_visible_notes to the technician's original notes
             // if admin didn't override — preserves the report even when admin
             // doesn't edit. The technician's `notes` stay untouched.
@@ -163,6 +173,7 @@ class ProgressService
             $report->update([
                 'is_validated' => true,
                 'validated_by' => $pmId,
+                'validated_as' => $validatedAs,
                 'validated_at' => now(),
                 'validated_percent' => $data['validated_percent'] ?? $report->percent_complete,
                 'validation_notes' => $newValidationNotes,

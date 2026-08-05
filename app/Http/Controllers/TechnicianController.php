@@ -764,6 +764,7 @@ class TechnicianController extends Controller
         ]);
 
         $isLead = $serviceRequest->isLeadTechnician($technician->id);
+        $subTask = null;
 
         if ($request->filled('service_sub_task_id')) {
             $subTask = $serviceRequest->subTasks()->where('id', $request->service_sub_task_id)->first();
@@ -792,15 +793,43 @@ class TechnicianController extends Controller
             ]);
         }
 
+        // A lead may file for a crew member who never got their report in.
+        // The report is about that member's work, so it carries their
+        // technician_id, while authored_as records that the lead wrote it —
+        // otherwise it would read as the member's own account of themselves.
+        [$subjectTechnicianId, $authoredAs] = $this->attributeReport($technician, $subTask, $isLead);
+
         app(ProgressService::class)->submitReport(
             $serviceRequest,
-            $technician->id,
+            $subjectTechnicianId,
             $user->id,
-            $request->only(['percent_complete', 'notes', 'report_date', 'service_sub_task_id']),
+            $request->only(['percent_complete', 'notes', 'report_date', 'service_sub_task_id'])
+                + ['authored_as' => $authoredAs],
             $request->file('photos', [])
         );
 
-        return back()->with('success', 'Progress report submitted successfully.');
+        return back()->with('success', $authoredAs === \App\Models\ProgressReport::AS_LEAD
+            ? 'Report filed on the technician\'s behalf. It goes to the project team to ratify.'
+            : 'Progress report submitted successfully.');
+    }
+
+    /**
+     * Whose work a report is about, and in what capacity it was written.
+     *
+     * They are the same person in the ordinary case. They come apart when a
+     * lead covers for a crew member: the work is still the crew member's, so
+     * their sub-task and their bar are what move, but the account of it is the
+     * lead's and is labelled as such.
+     */
+    private function attributeReport(Technician $author, ?ServiceSubTask $subTask, bool $isLead): array
+    {
+        $subjectId = $subTask?->technician_id ?? $author->id;
+        $onBehalf = $isLead && (int) $subjectId !== (int) $author->id;
+
+        return [
+            (int) $subjectId,
+            $onBehalf ? \App\Models\ProgressReport::AS_LEAD : \App\Models\ProgressReport::AS_TECHNICIAN,
+        ];
     }
 
     /**
@@ -975,18 +1004,27 @@ class TechnicianController extends Controller
         // the billing milestones that key off it — with nobody approving the
         // claim. It now files the same kind of progress report the form does,
         // and only counts once approved.
+        [$subjectTechnicianId, $authoredAs] = $this->attributeReport(
+            $technician,
+            $serviceSubTask,
+            $serviceRequest->isLeadTechnician($technician->id)
+        );
+
         app(ProgressService::class)->submitReport(
             $serviceRequest,
-            $technician->id,
+            $subjectTechnicianId,
             $user->id,
             [
                 'percent_complete' => $request->progress_percentage,
                 'service_sub_task_id' => $serviceSubTask->id,
                 'notes' => $request->input('notes'),
+                'authored_as' => $authoredAs,
             ]
         );
 
-        return back()->with('success', 'Progress submitted for approval.');
+        return back()->with('success', $authoredAs === \App\Models\ProgressReport::AS_LEAD
+            ? 'Filed on the technician\'s behalf. It goes to the project team to ratify.'
+            : 'Progress submitted for approval.');
     }
 
     /**
@@ -1012,7 +1050,8 @@ class TechnicianController extends Controller
             auth()->id(),
             ['validated_percent' => $progressReport->percent_complete],
             [],
-            releaseBilling: false
+            releaseBilling: false,
+            validatedAs: \App\Models\ProgressReport::AS_LEAD
         );
 
         $progressReport->forceFill(['approved_by_lead_at' => now()])->save();
@@ -1063,10 +1102,16 @@ class TechnicianController extends Controller
             abort(403, 'A whole-job report is settled by the project team, not on site.');
         }
 
-        // Nobody rules on their own work — a lead who also holds a sub-task
-        // still goes to the project team for that one.
+        // Nobody rules on their own account. That covers both a lead who
+        // holds a sub-task themselves, and a lead ratifying a report they
+        // wrote on someone else's behalf — the second is the whole reason
+        // on-behalf reports carry an author separate from their subject.
         if ((int) $progressReport->technician_id === (int) $technician->id) {
             abort(403, 'Your own sub-task progress is settled by the project team, not by you.');
+        }
+
+        if ((int) $progressReport->submitted_by === (int) auth()->id()) {
+            abort(403, 'You wrote this report, so the project team ratifies it rather than you.');
         }
 
         return $technician;

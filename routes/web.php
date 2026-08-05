@@ -203,6 +203,9 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::post('/jobs/{serviceRequest}/assign-lead', [AdminDashboardController::class, 'assignLeadTechnician'])->name('admin.jobs.assign-lead');
     Route::post('/jobs/{serviceRequest}/assignment-fee', [AdminDashboardController::class, 'updateAssignmentCompensation'])->name('admin.jobs.assignment.fee');
     Route::post('/progress-reports/{progressReport}/validate', [AdminDashboardController::class, 'validateProgress'])->name('admin.progress.validate');
+    // Office counterpart of a lead covering for their crew — files the report
+    // and says on its face that an admin wrote it.
+    Route::post('/jobs/{serviceRequest}/progress-on-behalf', [AdminDashboardController::class, 'createProgressOnBehalf'])->name('admin.progress.on-behalf');
 
     // Payment Milestones
     Route::post('/jobs/{serviceRequest}/milestones', [AdminDashboardController::class, 'storeMilestone'])->name('admin.milestones.store');

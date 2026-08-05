@@ -266,9 +266,11 @@
                              a bar that looks banked. -->
                         <p v-if="pendingClaimFor(task)" class="subtask-pending">
                             <i class="fas fa-hourglass-half"></i>
-                            {{ pendingClaimFor(task).percent_complete }}% submitted by
-                            {{ pendingClaimFor(task).technician?.user?.name || 'the technician' }} —
+                            {{ claimAuthorLine(pendingClaimFor(task)) }} —
                             <template v-if="canSignOffClaim(pendingClaimFor(task))">awaiting your approval.</template>
+                            <template v-else-if="pendingClaimFor(task).submitted_by === technician.user_id">
+                                you wrote this, so the project team ratifies it.
+                            </template>
                             <template v-else-if="isLeadTechnician">awaiting the project team.</template>
                             <template v-else>awaiting approval.</template>
                         </p>
@@ -379,6 +381,13 @@
                         <small v-if="!isLeadTechnician" class="field-hint">
                             Your sub-task progress counts towards the job's overall figure.
                         </small>
+                        <!-- A lead covering for someone who never got their
+                             report in. Say whose name it lands under before
+                             they submit, not after. -->
+                        <small v-else-if="onBehalfOf" class="field-hint field-hint-strong">
+                            This will be filed for {{ onBehalfOf }} with you named as the author,
+                            and goes to the project team to ratify.
+                        </small>
                     </label>
 
                     <label class="form-field">
@@ -448,17 +457,25 @@
                         <div class="report-top">
                             <div>
                                 <strong>{{ formatShortDate(report.report_date) }}</strong>
+                                <!-- Who wrote it, and whose work it is about.
+                                     Those differ whenever someone files on
+                                     another's behalf, and a report about your
+                                     work that you did not write should never
+                                     read as your own account of it. -->
                                 <p>
-                                    Submitted by {{ report.submitter?.name || report.technician?.user?.name || 'Unknown' }}
+                                    {{ authorLine(report) }}
                                     <span v-if="report.sub_task"> • {{ report.sub_task.title || report.sub_task.name }}</span>
                                 </p>
                             </div>
-                            <span :class="['status-badge', report.is_validated ? 'status-approved' : 'status-pending']">
-                                {{ report.is_validated
-                                    ? `Approved · ${report.validated_percent ?? report.percent_complete}%`
-                                    : `Awaiting PM validation · ${report.percent_complete}% submitted` }}
+                            <span :class="['status-badge', reportStateClass(report)]">
+                                {{ reportStateLabel(report) }}
                             </span>
                         </div>
+
+                        <p v-if="report.rejected_at" class="report-rejected-note">
+                            Sent back<span v-if="report.rejector?.name"> by {{ report.rejector.name }}</span>:
+                            {{ report.rejection_reason }}
+                        </p>
 
                         <p v-if="report.notes" class="report-notes">{{ report.notes }}</p>
                         <p v-if="report.validation_notes" class="report-validation-note">
@@ -577,6 +594,19 @@ const progressForm = ref({
     service_sub_task_id: defaultSubTaskId,
 })
 
+// Set when a lead has picked a sub-task that is not their own — the report
+// will be about that technician's work, authored by the lead.
+const onBehalfOf = computed(() => {
+    if (!props.isLeadTechnician || !progressForm.value.service_sub_task_id) return null
+
+    const task = (props.job.sub_tasks || [])
+        .find((t) => t.id === Number(progressForm.value.service_sub_task_id))
+
+    if (!task || task.technician_id === props.technician.id) return null
+
+    return task.technician?.user?.name || 'the assigned technician'
+})
+
 const progressReports = computed(() => props.job.progress_reports || [])
 const jobPhotos = computed(() => props.job.photos || [])
 const recentPayouts = computed(() => (props.compensationSummary?.history || []).slice(0, 3))
@@ -637,6 +667,52 @@ function canUpdateTask(task) {
     return props.isLeadTechnician || isMyTask(task)
 }
 
+const CAPACITY_LABELS = {
+    technician: 'technician',
+    lead: 'lead technician',
+    project_manager: 'project manager',
+    admin: 'admin',
+}
+
+// "Filed by X" when it is their own work; "Filed by X for Y (lead)" when
+// somebody wrote it on another's behalf. The distinction is the point: a
+// ratified crew report and a report the lead wrote for them are different
+// pieces of evidence about the same sub-task.
+function authorLine(report) {
+    const author = report.submitter?.name || 'Unknown'
+    const subject = report.technician?.user?.name
+
+    if (!report.authored_as || report.authored_as === 'technician') {
+        return `Filed by ${subject || author}`
+    }
+
+    const capacity = CAPACITY_LABELS[report.authored_as] || report.authored_as
+    return subject && subject !== author
+        ? `Filed by ${author} (${capacity}) for ${subject}`
+        : `Filed by ${author} (${capacity})`
+}
+
+function reportStateLabel(report) {
+    if (report.rejected_at) return `Sent back · ${report.percent_complete}% claimed`
+
+    if (!report.is_validated) return `Awaiting ratification · ${report.percent_complete}% claimed`
+
+    const pct = report.validated_percent ?? report.percent_complete
+    const by = CAPACITY_LABELS[report.validated_as] || 'project manager'
+
+    // A lead's ratification counts for progress but not for money, so say so
+    // rather than letting it read as fully settled.
+    return report.approved_by_lead_at
+        ? `Ratified on site · ${pct}%`
+        : `Ratified by ${by} · ${pct}%`
+}
+
+function reportStateClass(report) {
+    if (report.rejected_at) return 'status-rejected'
+    if (!report.is_validated) return 'status-pending'
+    return report.approved_by_lead_at ? 'status-onsite' : 'status-approved'
+}
+
 function claimsFor(task) {
     return progressReports.value
         .filter((report) => report.service_sub_task_id === task.id)
@@ -656,14 +732,29 @@ function rejectedClaimFor(task) {
     return latest?.rejected_at ? latest : undefined
 }
 
-// The lead settles the crew's claims. Their own go to the project team, so
-// nobody rules on their own work.
+// The lead settles the crew's claims. Nobody rules on their own account —
+// which means both their own sub-task and anything they wrote themselves on
+// somebody else's behalf. Mirrors authorizeLeadSignOff on the server.
 function canSignOffClaim(claim) {
     return Boolean(
         claim &&
         props.isLeadTechnician &&
-        claim.technician_id !== props.technician.id,
+        claim.technician_id !== props.technician.id &&
+        claim.submitted_by !== props.technician.user_id,
     )
+}
+
+// Who is waiting on whom, in the claim's own terms.
+function claimAuthorLine(claim) {
+    const subject = claim.technician?.user?.name || 'the technician'
+
+    if (!claim.authored_as || claim.authored_as === 'technician') {
+        return `${claim.percent_complete}% submitted by ${subject}`
+    }
+
+    const author = claim.submitter?.name || 'someone else'
+    const capacity = CAPACITY_LABELS[claim.authored_as] || claim.authored_as
+    return `${claim.percent_complete}% filed for ${subject} by ${author} (${capacity})`
 }
 
 const busyReportId = ref(null)
@@ -1076,6 +1167,23 @@ defineOptions({ layout: null })
     padding: .5rem .6rem;
 }
 
+.status-onsite {
+    background: #ecfeff;
+    color: #0e7490;
+}
+
+.status-rejected {
+    background: #fff1f2;
+    color: #9f1239;
+}
+
+.report-rejected-note {
+    margin: .4rem 0 .5rem;
+    font-size: .82rem;
+    line-height: 1.45;
+    color: #9f1239;
+}
+
 .subtask-rejected {
     margin: .5rem 0 0;
     font-size: .8rem;
@@ -1121,6 +1229,11 @@ defineOptions({ layout: null })
     margin-top: .35rem;
     font-size: .78rem;
     color: var(--text-muted, #64748b);
+}
+
+.field-hint-strong {
+    color: #0e7490;
+    font-weight: 600;
 }
 
 .scope-notes {

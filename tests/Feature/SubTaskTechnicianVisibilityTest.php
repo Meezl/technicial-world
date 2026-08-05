@@ -863,6 +863,176 @@ class SubTaskTechnicianVisibilityTest extends TestCase
     }
 
     /**
+     * A crew member who never gets their report in must not stall the job.
+     * The lead files it for them: the work is still the crew member's, so
+     * their sub-task moves, but the account of it is the lead's and says so.
+     */
+    public function test_a_lead_can_file_a_report_for_a_crew_member_who_did_not(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report', $job), [
+                'percent_complete' => 55,
+                'notes' => 'Crew went home; recording what I saw on site.',
+                'service_sub_task_id' => $subTask->id,
+            ])
+            ->assertSessionHasNoErrors();
+
+        $report = ProgressReport::where('service_sub_task_id', $subTask->id)->firstOrFail();
+
+        // About the crew member's work, written by the lead.
+        $this->assertSame($crew->id, $report->technician_id);
+        $this->assertSame($lead->user->id, $report->submitted_by);
+        $this->assertSame(ProgressReport::AS_LEAD, $report->authored_as);
+        $this->assertTrue($report->isOnBehalf());
+
+        // And it is not theirs to ratify — they wrote it.
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.approve', $report))
+            ->assertForbidden();
+
+        $this->assertFalse($report->fresh()->is_validated);
+        $this->assertSame(0, $subTask->fresh()->progress_percentage);
+    }
+
+    /**
+     * The two routes to the same sub-task percentage must stay tellable
+     * apart: the crew member's own claim ratified by the lead, versus the
+     * lead's own account of that work.
+     */
+    public function test_a_crew_authored_report_and_a_lead_authored_one_are_distinguishable(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $pm = User::factory()->create(['role' => User::ROLE_PROJECT_MANAGER]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        // (a) crew authored, lead ratified
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 40]);
+        $crewReport = ProgressReport::latest('id')->first();
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.approve', $crewReport));
+
+        $crewReport->refresh();
+        $this->assertSame(ProgressReport::AS_TECHNICIAN, $crewReport->authored_as);
+        $this->assertSame(ProgressReport::AS_LEAD, $crewReport->validated_as);
+        $this->assertNotNull($crewReport->approved_by_lead_at);
+        $this->assertFalse($crewReport->isOnBehalf());
+
+        // (b) lead authored on the crew member's behalf, office ratified
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report', $job), [
+                'percent_complete' => 60,
+                'service_sub_task_id' => $subTask->id,
+            ]);
+        $leadReport = ProgressReport::latest('id')->first();
+
+        app(\App\Services\ProgressService::class)->validate($leadReport, $pm->id, [
+            'validated_percent' => 60,
+        ]);
+
+        $leadReport->refresh();
+        $this->assertSame(ProgressReport::AS_LEAD, $leadReport->authored_as);
+        $this->assertSame(ProgressReport::AS_PROJECT_MANAGER, $leadReport->validated_as);
+        $this->assertNull($leadReport->approved_by_lead_at);
+        $this->assertTrue($leadReport->isOnBehalf());
+
+        // Both are about the crew member's work.
+        $this->assertSame($crew->id, $crewReport->technician_id);
+        $this->assertSame($crew->id, $leadReport->technician_id);
+        $this->assertNotSame($crewReport->submitted_by, $leadReport->submitted_by);
+    }
+
+    public function test_admin_can_file_on_behalf_and_the_report_names_them(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        $this->actingAs($admin)
+            ->post(route('admin.progress.on-behalf', $job), [
+                'percent_complete' => 75,
+                'notes' => 'Verified against site photos.',
+                'service_sub_task_id' => $subTask->id,
+            ])
+            ->assertSessionHasNoErrors();
+
+        $report = ProgressReport::where('service_sub_task_id', $subTask->id)->firstOrFail();
+
+        $this->assertSame(ProgressReport::AS_ADMIN, $report->authored_as);
+        $this->assertSame(ProgressReport::AS_ADMIN, $report->validated_as);
+        $this->assertSame($admin->id, $report->submitted_by);
+        // Attributed to whoever holds the sub-task, not to the admin.
+        $this->assertSame($crew->id, $report->technician_id);
+        $this->assertTrue($report->is_validated);
+        $this->assertSame(75, $subTask->fresh()->progress_percentage);
+    }
+
+    public function test_an_office_validation_records_the_capacity_that_settled_it(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $tech = $this->makeTechnician();
+
+        $job = $this->makeJob($client, ['technician_id' => $tech->id]);
+
+        $this->actingAs($tech->user)
+            ->post(route('technician.progress-report', $job), ['percent_complete' => 30]);
+        $report = ProgressReport::latest('id')->first();
+
+        $this->actingAs($admin)
+            ->post(route('admin.progress.validate', $report), ['validated_percent' => 30])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(ProgressReport::AS_ADMIN, $report->fresh()->validated_as);
+        $this->assertSame(ProgressReport::AS_TECHNICIAN, $report->fresh()->authored_as);
+    }
+
+    /**
      * The technician needs the scope and the programme to do the job, and the
      * amount agreed for their own work. They must not receive the client's
      * price or the job's margin — which the page used to ship in its props
@@ -1018,7 +1188,8 @@ class SubTaskTechnicianVisibilityTest extends TestCase
         ]);
 
         // A lead may also report against someone else's sub-task — normal on
-        // site, and the old rule allowed it only via lead_technician_id.
+        // site when the crew member has not filed. The work stays theirs, so
+        // the report carries their technician_id with the lead as author.
         $this->actingAs($lead->user)
             ->post(route('technician.progress-report', $job), [
                 'percent_complete' => 60,
@@ -1029,7 +1200,9 @@ class SubTaskTechnicianVisibilityTest extends TestCase
 
         $this->assertDatabaseHas('progress_reports', [
             'service_request_id' => $job->id,
-            'technician_id' => $lead->id,
+            'technician_id' => $subTaskHolder->id,
+            'submitted_by' => $lead->user->id,
+            'authored_as' => ProgressReport::AS_LEAD,
             'percent_complete' => 60,
         ]);
     }

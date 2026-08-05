@@ -24,11 +24,26 @@ class ProgressReport extends Model
         'validation_notes',
         'client_visible_notes',
         'is_pm_authored',
+        'authored_as',
+        'validated_as',
         'approved_by_lead_at',
         'rejected_at',
         'rejected_by',
         'rejection_reason',
     ];
+
+    /**
+     * The standing someone had when they wrote or ratified a report. Distinct
+     * from technician_id, which says whose work the report is about — the two
+     * differ whenever one person files on another's behalf.
+     */
+    const AS_TECHNICIAN = 'technician';
+    const AS_LEAD = 'lead';
+    const AS_PROJECT_MANAGER = 'project_manager';
+    const AS_ADMIN = 'admin';
+
+    /** Capacities that mean "the office", as opposed to on site. */
+    const OFFICE_CAPACITIES = [self::AS_PROJECT_MANAGER, self::AS_ADMIN];
 
     protected $casts = [
         'report_date' => 'date',
@@ -59,6 +74,31 @@ class ProgressReport extends Model
     public function isRejected(): bool
     {
         return $this->rejected_at !== null;
+    }
+
+    /**
+     * True when the person whose work this is did not write it — a lead
+     * covering for a crew member, or the office catching a job up. Worth
+     * saying out loud on screen: a report about someone's work that they did
+     * not write is a different kind of evidence.
+     */
+    public function isOnBehalf(): bool
+    {
+        return $this->authored_as !== null
+            && $this->authored_as !== self::AS_TECHNICIAN;
+    }
+
+    /**
+     * Map a user's role onto the capacity they act in. The lead capacity is
+     * per-job rather than a role, so callers pass that one explicitly.
+     */
+    public static function capacityForRole(?string $role): string
+    {
+        return match ($role) {
+            User::ROLE_ADMIN => self::AS_ADMIN,
+            User::ROLE_PROJECT_MANAGER => self::AS_PROJECT_MANAGER,
+            default => self::AS_TECHNICIAN,
+        };
     }
 
     public function serviceRequest(): BelongsTo
