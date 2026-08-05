@@ -162,6 +162,15 @@
                         </div>
                     </div>
 
+                    <!-- Which part of a multi-trade job is actually theirs. -->
+                    <div v-if="mySubTasks(job).length" class="my-subtasks">
+                        <span class="my-subtasks-label">Your work on this job</span>
+                        <div v-for="task in mySubTasks(job)" :key="task.id" class="my-subtask-row">
+                            <span class="my-subtask-title">{{ task.title }}</span>
+                            <span class="my-subtask-progress">{{ task.progress_percentage || 0 }}%</span>
+                        </div>
+                    </div>
+
                     <div style="background: #F9FAFB; padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem;">
                         <div style="display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 0.5rem;">
                             <span>Progress</span>
@@ -187,9 +196,11 @@
                         >
                             Arrived On Site
                         </button>
-                        <button 
-                            v-else 
-                            class="btn btn-outline" 
+                        <!-- Closing the job is the lead's call; a crew member
+                             finishes their own sub-task instead. -->
+                        <button
+                            v-else-if="leadsJob(job)"
+                            class="btn btn-outline"
                             style="border-color: var(--success-color); color: var(--success-color);"
                             @click.stop="updateStatus(job, 'completed')"
                         >
@@ -245,6 +256,17 @@ const startJob = (job) => {
     updateStatus(job, 'en_route');
 };
 
+// The sub-tasks on this job that belong to the technician looking at it.
+const mySubTasks = (job) =>
+    (job.sub_tasks || []).filter((task) => task.technician_id === props.technician?.id);
+
+// Mirrors ServiceRequest::isLeadTechnician — lead_technician_id wherever it
+// is set, falling back to technician_id on a job that was never split.
+const leadsJob = (job) =>
+    job.lead_technician_id
+        ? job.lead_technician_id === props.technician?.id
+        : job.technician_id === props.technician?.id;
+
 const updateStatus = (job, action) => {
     if (confirm(`Are you sure you want to update status to: ${action.replace('_', ' ')}?`)) {
         router.post(`/technician/jobs/${job.id}/status`, { action }, {
@@ -272,4 +294,42 @@ defineOptions({ layout: null });
 </script>
 
 <style>
+.my-subtasks {
+    margin-bottom: 1rem;
+    padding: .65rem .75rem;
+    background: #F8FAFC;
+    border-left: 3px solid var(--primary-color);
+    border-radius: 8px;
+}
+
+.my-subtasks-label {
+    display: block;
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--primary-color);
+    margin-bottom: .4rem;
+}
+
+.my-subtask-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: .75rem;
+    font-size: .82rem;
+    padding: .2rem 0;
+}
+
+.my-subtask-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.my-subtask-progress {
+    white-space: nowrap;
+    font-weight: 600;
+    color: var(--light-text);
+}
 </style>

@@ -451,6 +451,185 @@ class SubTaskTechnicianVisibilityTest extends TestCase
     }
 
     /**
+     * The slider used to write straight to the sub-task, so a technician
+     * could move the job's headline percentage — and the billing milestones
+     * that key off it — with nobody approving the claim. It now files the
+     * same kind of report the form does.
+     */
+    public function test_the_sub_task_slider_files_a_claim_rather_than_banking_progress(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+            'progress_percentage' => 0,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+            'progress_percentage' => 0,
+        ]);
+
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 70])
+            ->assertSessionHasNoErrors();
+
+        // Claimed, not banked.
+        $this->assertSame(0, $subTask->fresh()->progress_percentage);
+        $this->assertSame(0, $job->fresh()->progress_percentage);
+        $this->assertDatabaseHas('progress_reports', [
+            'service_sub_task_id' => $subTask->id,
+            'technician_id' => $crew->id,
+            'percent_complete' => 70,
+            'is_validated' => false,
+        ]);
+
+        $report = ProgressReport::where('service_sub_task_id', $subTask->id)->firstOrFail();
+
+        // A crew member cannot sign off their own claim.
+        $this->actingAs($crew->user)
+            ->post(route('technician.progress-report.approve', $report))
+            ->assertForbidden();
+        $this->assertSame(0, $subTask->fresh()->progress_percentage);
+
+        // The lead can.
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.approve', $report))
+            ->assertSessionHasNoErrors();
+
+        $this->assertTrue($report->fresh()->is_validated);
+        $this->assertSame(70, $subTask->fresh()->progress_percentage);
+        $this->assertSame(70, $job->fresh()->progress_percentage);
+    }
+
+    public function test_a_lead_cannot_approve_their_own_sub_task_claim(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Roof strengthening',
+            'technician_id' => $lead->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+            'progress_percentage' => 0,
+        ]);
+
+        $this->actingAs($lead->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 90])
+            ->assertSessionHasNoErrors();
+
+        $report = ProgressReport::where('service_sub_task_id', $subTask->id)->firstOrFail();
+
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.approve', $report))
+            ->assertRedirect();
+
+        $this->assertFalse($report->fresh()->is_validated);
+        $this->assertSame(0, $subTask->fresh()->progress_percentage);
+    }
+
+    /**
+     * Approval is the lead's own crew, not anyone wearing a technician login.
+     */
+    public function test_a_technician_from_another_job_cannot_approve(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+        $outsider = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 50]);
+
+        $report = ProgressReport::where('service_sub_task_id', $subTask->id)->firstOrFail();
+
+        $this->actingAs($outsider->user)
+            ->post(route('technician.progress-report.approve', $report))
+            ->assertForbidden();
+
+        $this->assertFalse($report->fresh()->is_validated);
+    }
+
+    /**
+     * Each technician's own sub-tasks travel with the job on the list and
+     * dashboard, so they can see the part of a multi-trade job that is theirs
+     * without opening every one.
+     */
+    public function test_assigned_technicians_see_their_sub_tasks_on_the_jobs_list(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_IN_PROGRESS,
+            'progress_percentage' => 40,
+        ]);
+
+        ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Roof strengthening',
+            'technician_id' => $lead->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        $this->actingAs($crew->user)
+            ->get(route('technician.jobs'))
+            ->assertOk()
+            ->assertInertia(function ($page) use ($crew) {
+                $page->has('jobs.0.sub_tasks', 2);
+
+                $mine = collect($page->toArray()['props']['jobs'][0]['sub_tasks'])
+                    ->firstWhere('technician_id', $crew->id);
+
+                $this->assertNotNull($mine, 'the technician cannot see which item is theirs');
+                $this->assertSame('Solar Installation Works', $mine['title']);
+                $this->assertSame(40, $mine['progress_percentage']);
+            });
+
+        $this->actingAs($crew->user)
+            ->get(route('technician.dashboard'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->has('activeJobs.0.sub_tasks', 2));
+    }
+
+    /**
      * A job that was never split still reads its latest validated report —
      * there, that report is the whole job.
      */

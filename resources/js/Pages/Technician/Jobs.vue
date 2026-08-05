@@ -56,6 +56,24 @@
                             <i class="far fa-calendar" style="margin-right: 5px;"></i> {{ formatDate(job.created_at) }}
                         </p>
 
+                        <!-- On a project split between trades, the card named
+                             the job but never the part of it that is yours.
+                             Show the technician their own sub-tasks here so
+                             they know what they are being called to without
+                             opening every job. -->
+                        <div v-if="mySubTasks(job).length" class="my-subtasks">
+                            <span class="my-subtasks-label">Your work on this job</span>
+                            <div v-for="task in mySubTasks(job)" :key="task.id" class="my-subtask-row">
+                                <span class="my-subtask-title">{{ task.title }}</span>
+                                <span class="my-subtask-progress">
+                                    <span class="my-subtask-bar">
+                                        <span :style="`width:${task.progress_percentage || 0}%`"></span>
+                                    </span>
+                                    {{ task.progress_percentage || 0 }}%
+                                </span>
+                            </div>
+                        </div>
+
                         <div v-if="job.compensation_summary" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem; margin-top: 0.85rem;">
                             <div style="background: #F8FAFC; padding: 0.65rem; border-radius: 10px;">
                                 <span style="display: block; font-size: 0.7rem; color: var(--light-text); margin-bottom: 0.2rem;">Agreed</span>
@@ -115,6 +133,10 @@ const sortedJobs = computed(() => {
 const viewJobDetails = (job) => {
     router.visit(`/technician/jobs/${job.id}`);
 };
+
+// The sub-tasks on this job that belong to the technician looking at it.
+const mySubTasks = (job) =>
+    (job.sub_tasks || []).filter((task) => task.technician_id === props.technician?.id);
 
 const getStatusClass = (status) => {
     switch (status) {
@@ -183,6 +205,63 @@ defineOptions({ layout: null });
 </script>
 
 <style>
+
+.my-subtasks {
+    margin-top: .85rem;
+    padding: .65rem .75rem;
+    background: #F8FAFC;
+    border-left: 3px solid var(--primary-color);
+    border-radius: 8px;
+}
+
+.my-subtasks-label {
+    display: block;
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--primary-color);
+    margin-bottom: .4rem;
+}
+
+.my-subtask-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: .75rem;
+    font-size: .82rem;
+    padding: .2rem 0;
+}
+
+.my-subtask-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.my-subtask-progress {
+    display: flex;
+    align-items: center;
+    gap: .45rem;
+    white-space: nowrap;
+    font-weight: 600;
+    color: var(--light-text);
+}
+
+.my-subtask-bar {
+    display: inline-block;
+    width: 54px;
+    height: 5px;
+    border-radius: 999px;
+    background: #e2e8f0;
+    overflow: hidden;
+}
+
+.my-subtask-bar > span {
+    display: block;
+    height: 100%;
+    background: var(--primary-color);
+}
 
 .category-icon {
     width: 40px;

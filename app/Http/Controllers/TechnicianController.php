@@ -39,25 +39,25 @@ class TechnicianController extends Controller
             // ServiceRequest::scopeForTechnician.
             $incomingJobs = ServiceRequest::forTechnician($technician->id)
                 ->where('status', 'assigned')
-                ->with(['user', 'serviceCategory'])
+                ->with(['user', 'serviceCategory', 'subTasks'])
                 ->latest()
                 ->get();
 
             $activeJobs = ServiceRequest::forTechnician($technician->id)
                 ->where('status', 'in_progress')
-                ->with(['user', 'serviceCategory'])
+                ->with(['user', 'serviceCategory', 'subTasks'])
                 ->latest()
                 ->get();
 
-            $incomingJobs = $incomingJobs->map(function ($job) use ($jobEarnings) {
+            // Same commercial redaction as the job page — these cards carry
+            // the whole model too.
+            $decorate = function ($job) use ($jobEarnings, $technician) {
                 $job->setAttribute('compensation_summary', $jobEarnings->get($job->id));
-                return $job;
-            })->values();
+                return $this->technicianSafeJob($job, $technician->id);
+            };
 
-            $activeJobs = $activeJobs->map(function ($job) use ($jobEarnings) {
-                $job->setAttribute('compensation_summary', $jobEarnings->get($job->id));
-                return $job;
-            })->values();
+            $incomingJobs = $incomingJobs->map($decorate)->values();
+            $activeJobs = $activeJobs->map($decorate)->values();
         }
 
         return Inertia::render('Technician/Dashboard', [
@@ -114,9 +114,9 @@ class TechnicianController extends Controller
                     ];
                     return $statusOrder[$job->status] ?? 5;
                 })
-                ->map(function ($job) use ($jobEarnings) {
+                ->map(function ($job) use ($jobEarnings, $technician) {
                     $job->setAttribute('compensation_summary', $jobEarnings->get($job->id));
-                    return $job;
+                    return $this->technicianSafeJob($job, $technician->id);
                 })
                 ->values();
         }
@@ -965,49 +965,66 @@ class TechnicianController extends Controller
             abort(403, 'Unauthorized');
         }
 
-        $updateData = [
-            'progress_percentage' => $request->progress_percentage,
-        ];
-
-        if ($request->status) {
-            $updateData['status'] = $request->status;
+        if ($serviceRequest->status === ServiceRequest::STATUS_COMPLETED) {
+            return back()->with('error', 'This job is already completed.');
         }
 
-        // Auto-set status based on progress
-        if ($request->progress_percentage === 100) {
-            $updateData['status'] = ServiceSubTask::STATUS_COMPLETED;
-            $updateData['completed_at'] = now();
-        } elseif ($request->progress_percentage > 0 && $serviceSubTask->status === ServiceSubTask::STATUS_ASSIGNED) {
-            $updateData['status'] = ServiceSubTask::STATUS_IN_PROGRESS;
+        // The slider used to write straight to the sub-task, which meant a
+        // technician could move the job's headline percentage — and, through
+        // the billing milestones that key off it — with nobody approving the
+        // claim. It now files the same kind of progress report the form does,
+        // and only counts once approved.
+        app(ProgressService::class)->submitReport(
+            $serviceRequest,
+            $technician->id,
+            $user->id,
+            [
+                'percent_complete' => $request->progress_percentage,
+                'service_sub_task_id' => $serviceSubTask->id,
+                'notes' => $request->input('notes'),
+            ]
+        );
+
+        return back()->with('success', 'Progress submitted for approval.');
+    }
+
+    /**
+     * The lead signs off a crew member's sub-task claim.
+     *
+     * Sub-task progress is the crew's own account of their work; the lead is
+     * the person on site who can say whether it is true. Approving it moves
+     * the sub-task and, through it, the job's overall figure.
+     */
+    public function approveSubTaskReport(\App\Models\ProgressReport $progressReport)
+    {
+        $user = auth()->user();
+        $technician = $user->technician;
+        $serviceRequest = $progressReport->serviceRequest;
+
+        if (!$technician || !$serviceRequest || !$serviceRequest->isLeadTechnician($technician->id)) {
+            abort(403, 'Only the lead technician can approve sub-task progress on this job.');
         }
 
-        $serviceSubTask->update($updateData);
-
-        \Illuminate\Support\Facades\Log::info('Recalculating progress for ServiceRequest: ' . $serviceRequest->id);
-        // Recalculate parent service request progress using fresh instance
-        $serviceRequest->fresh()->recalculateProgress();
-
-        \Illuminate\Support\Facades\Log::info('ServiceRequest ' . $serviceRequest->id . ' new progress: ' . $serviceRequest->fresh()->progress_percentage);
-
-        // If service request was assigned, move to in_progress
-        if ($serviceRequest->status === 'assigned' && $request->progress_percentage > 0) {
-            $serviceRequest->update([
-                'status' => 'in_progress',
-                'started_at' => $serviceRequest->started_at ?? now(),
-            ]);
+        if (!$progressReport->service_sub_task_id) {
+            return back()->with('error',
+                'A whole-job report is validated by the project team, not on site.');
         }
 
-        // Update main job progress based on average of subtasks? 
-        // For now, let's assume subtasks don't auto-update main job progress percentage unless logic added.
-        // But if they DO, we should check milestones.
+        if ($progressReport->is_validated) {
+            return back()->with('error', 'That report has already been approved.');
+        }
 
-        // Example: if we wanted to update main job progress:
-        // $totalSubTasks = $serviceSubTask->serviceRequest->subTasks()->count();
-        // $completedSubTasks = $serviceSubTask->serviceRequest->subTasks()->where('status', 'completed')->count();
-        // $newProgress = ($completedSubTasks / $totalSubTasks) * 100;
-        // $serviceSubTask->serviceRequest->update(['progress_percentage' => $newProgress]);
-        // $this->checkMilestones($serviceSubTask->serviceRequest);
+        // No signing off your own work — a lead who also holds a sub-task
+        // still goes to the project team for that one.
+        if ((int) $progressReport->technician_id === (int) $technician->id) {
+            return back()->with('error',
+                'Your own sub-task progress is approved by the project team, not by you.');
+        }
 
-        return back()->with('success', 'Sub-task progress updated');
+        app(ProgressService::class)->validate($progressReport, $user->id, [
+            'validated_percent' => $progressReport->percent_complete,
+        ]);
+
+        return back()->with('success', 'Sub-task progress approved.');
     }
 }

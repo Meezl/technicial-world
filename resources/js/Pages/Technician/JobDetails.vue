@@ -218,10 +218,19 @@
                 </div>
 
                 <div class="subtask-list">
-                    <article v-for="task in job.sub_tasks" :key="task.id" class="subtask-card">
+                    <article
+                        v-for="task in job.sub_tasks"
+                        :key="task.id"
+                        class="subtask-card"
+                        :class="{ 'subtask-mine': isMyTask(task) }"
+                    >
                         <div class="subtask-top">
                             <div>
                                 <strong>{{ task.title || task.name }}</strong>
+                                <!-- On a job with several trades, which item is
+                                     actually yours was left to be inferred from
+                                     the name underneath. -->
+                                <span v-if="isMyTask(task)" class="mine-pill">Your task</span>
                                 <p>{{ task.description || 'No sub-task description.' }}</p>
                             </div>
                             <span class="status-badge" :class="getStatusClass(task.status)">
@@ -247,10 +256,32 @@
                             min="0"
                             max="100"
                             step="10"
-                            :value="task.progress_percentage || 0"
-                            :disabled="!canUpdateTask(task)"
+                            :value="pendingClaimFor(task)?.percent_complete ?? task.progress_percentage ?? 0"
+                            :disabled="!canUpdateTask(task) || !!pendingClaimFor(task)"
                             @change="(event) => updateTaskProgress(task, event.target.value)"
                         >
+
+                        <!-- A claim counts only once someone signs it off, so
+                             say plainly that it is waiting rather than showing
+                             a bar that looks banked. -->
+                        <p v-if="pendingClaimFor(task)" class="subtask-pending">
+                            <i class="fas fa-hourglass-half"></i>
+                            {{ pendingClaimFor(task).percent_complete }}% submitted by
+                            {{ pendingClaimFor(task).technician?.user?.name || 'the technician' }} —
+                            <template v-if="canApproveClaim(pendingClaimFor(task))">awaiting your approval.</template>
+                            <template v-else-if="isLeadTechnician">awaiting the project team.</template>
+                            <template v-else>awaiting approval.</template>
+                        </p>
+
+                        <button
+                            v-if="canApproveClaim(pendingClaimFor(task))"
+                            class="btn btn-primary btn-approve"
+                            :disabled="approvingReportId === pendingClaimFor(task).id"
+                            @click="approveClaim(pendingClaimFor(task))"
+                        >
+                            <i class="fas fa-check"></i>
+                            {{ approvingReportId === pendingClaimFor(task).id ? 'Approving…' : 'Approve this progress' }}
+                        </button>
                     </article>
                 </div>
             </section>
@@ -553,14 +584,46 @@ function formatCurrency(amount) {
     })
 }
 
+function isMyTask(task) {
+    return props.technician.id === task.technician_id
+}
+
 function canUpdateTask(task) {
-    return props.isLeadTechnician || props.technician.id === task.technician_id
+    return props.isLeadTechnician || isMyTask(task)
+}
+
+// The newest unapproved claim against a sub-task. Until it is signed off the
+// sub-task's own percentage is still the banked figure.
+function pendingClaimFor(task) {
+    return progressReports.value
+        .filter((report) => report.service_sub_task_id === task.id && !report.is_validated)
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0]
+}
+
+// The lead signs off the crew. Their own claims go to the project team, so
+// nobody approves their own work.
+function canApproveClaim(claim) {
+    return Boolean(
+        claim &&
+        props.isLeadTechnician &&
+        claim.technician_id !== props.technician.id,
+    )
+}
+
+const approvingReportId = ref(null)
+
+function approveClaim(claim) {
+    if (!claim) return
+    approvingReportId.value = claim.id
+    router.post(`/technician/progress-reports/${claim.id}/approve`, {}, {
+        preserveScroll: true,
+        onFinish: () => { approvingReportId.value = null },
+    })
 }
 
 function updateTaskProgress(task, value) {
     router.post(`/technician/sub-tasks/${task.id}/progress`, {
         progress_percentage: parseInt(value, 10),
-        status: parseInt(value, 10) === 100 ? 'completed' : 'in_progress',
     }, {
         preserveScroll: true,
     })
@@ -893,6 +956,38 @@ defineOptions({ layout: null })
 
 .complete-btn {
     background: var(--success-color);
+}
+
+.subtask-mine {
+    border-left: 3px solid var(--primary-color);
+}
+
+.mine-pill {
+    display: inline-block;
+    margin-left: .45rem;
+    padding: .1rem .45rem;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: .68rem;
+    font-weight: 700;
+    vertical-align: middle;
+}
+
+.subtask-pending {
+    margin: .5rem 0 0;
+    font-size: .8rem;
+    line-height: 1.4;
+    color: #92400e;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: .45rem;
+    padding: .5rem .6rem;
+}
+
+.btn-approve {
+    margin-top: .6rem;
+    width: 100%;
 }
 
 .field-hint {

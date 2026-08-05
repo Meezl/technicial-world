@@ -406,6 +406,8 @@ Route::middleware(['auth', 'role:technician'])->group(function () {
     Route::post('/technician/tool-requests', [\App\Http\Controllers\TechnicianController::class, 'storeToolRequest'])->name('technician.tool-requests.store');
     Route::post('/technician/tool-requests/{toolRequest}/cancel', [\App\Http\Controllers\TechnicianController::class, 'cancelToolRequest'])->name('technician.tool-requests.cancel');
     Route::post('/technician/sub-tasks/{serviceSubTask}/progress', [\App\Http\Controllers\TechnicianController::class, 'updateSubTaskProgress'])->name('technician.sub-tasks.progress');
+    // The lead signs off their crew's sub-task claims on site.
+    Route::post('/technician/progress-reports/{progressReport}/approve', [\App\Http\Controllers\TechnicianController::class, 'approveSubTaskReport'])->name('technician.progress-report.approve');
 
     // Progress reports
     Route::post('/technician/jobs/{serviceRequest}/progress-report', [\App\Http\Controllers\TechnicianController::class, 'submitProgressReport'])->name('technician.progress-report');
