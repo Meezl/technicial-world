@@ -2,11 +2,14 @@
 
 namespace App\Services;
 
+use App\Mail\RefundUpdate;
 use App\Models\AuditLog;
 use App\Models\Refund;
 use App\Models\ServiceRequest;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use RuntimeException;
 
 /**
@@ -112,6 +115,8 @@ class RefundService
             'amount'     => (float) $refund->amount,
         ]);
 
+        $this->notifyClient($refund->fresh());
+
         return $refund->fresh();
     }
 
@@ -164,7 +169,39 @@ class RefundService
             'settled_by' => $actor->id,
         ]);
 
+        $this->notifyClient($refund->fresh());
+
         return $refund->fresh();
+    }
+
+    /**
+     * Tell the client, after the response has gone out so SMTP latency never
+     * blocks the admin who pressed the button.
+     *
+     * Rejections are deliberately silent: turning down a refund internally is
+     * a decision to discuss with someone, not to deliver by automated email.
+     */
+    private function notifyClient(Refund $refund): void
+    {
+        $refundId = $refund->id;
+
+        app()->terminating(function () use ($refundId) {
+            try {
+                $refund = Refund::with('serviceRequest.user')->find($refundId);
+                $client = $refund?->serviceRequest?->user;
+
+                if (!$client?->email) {
+                    return;
+                }
+
+                Mail::to($client->email)->send(new RefundUpdate($refund));
+            } catch (\Throwable $e) {
+                Log::warning('Refund notification failed', [
+                    'refund_id' => $refundId,
+                    'error'     => $e->getMessage(),
+                ]);
+            }
+        });
     }
 
     /**
