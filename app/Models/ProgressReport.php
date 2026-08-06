@@ -145,6 +145,11 @@ class ProgressReport extends Model
         };
     }
 
+    public function deletedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'deleted_by');
+    }
+
     public function serviceRequest(): BelongsTo
     {
         return $this->belongsTo(ServiceRequest::class);

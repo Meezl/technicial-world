@@ -295,6 +295,10 @@ class AdminDashboardController extends Controller
             'progressReports.photos',
             // Ops-only edit history for each report's notes fields.
             'progressReports.noteVersions.editor:id,name',
+            // Removed reports, so the office can see what was taken out and
+            // put it back. Soft deletes hide them from the relation above.
+            'removedProgressReports.technician.user:id,name',
+            'removedProgressReports.deletedBy:id,name',
             // Job-level photos: client evidence and anything ops attached
             // outside a formal progress report.
             'photos.uploader:id,name',
