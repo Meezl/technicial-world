@@ -325,15 +325,20 @@ class VariationOrderService
 
         $sr = $vo->serviceRequest;
 
+        // A deduction that drops the contract below what the client has paid
+        // used to be refused outright — with no way to give money back, such
+        // a job could never reconcile. Now that refunds exist it is a
+        // legitimate thing to do: descoping work someone has already paid for
+        // leaves them in credit, and that credit is visible on the job and in
+        // RefundService::jobsInUnhandledCredit(). Refusing it would just push
+        // the descope off the system entirely, which is worse.
         if ($vo->isDeduction()) {
-            $settled = $billing->settled($sr);
             $projected = $billing->contractValue($sr) + (float) $vo->net_amount;
 
-            if ($projected + 0.001 < $settled) {
+            if ($projected < -0.001) {
                 throw new RuntimeException(sprintf(
-                    'This deduction would put the contract (KES %s) below what the client has already paid (KES %s).',
-                    number_format($projected, 2),
-                    number_format($settled, 2)
+                    'This deduction would take the contract below zero (KES %s). Check the figures.',
+                    number_format($projected, 2)
                 ));
             }
         }

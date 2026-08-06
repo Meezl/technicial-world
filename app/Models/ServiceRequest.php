@@ -256,6 +256,22 @@ class ServiceRequest extends Model
         return $this->hasMany(VariationOrder::class)->orderBy('id');
     }
 
+    /**
+     * Reports taken out of circulation. Separate from progressReports(),
+     * which soft deletes hide, so the office can review and restore them
+     * without removed rows leaking into every progress calculation.
+     */
+    public function removedProgressReports()
+    {
+        return $this->hasMany(ProgressReport::class)->onlyTrashed()->orderByDesc('deleted_at');
+    }
+
+    /** Money owed back to the client on this job. */
+    public function refunds()
+    {
+        return $this->hasMany(Refund::class)->orderByDesc('created_at');
+    }
+
     /** Tickets raised under this job — site visits, samples, callbacks. */
     public function tickets()
     {

@@ -798,12 +798,16 @@
                                         Already paid up to this approved progress level.
                                     </span>
                                 </div>
+
+                                <ProgressReportActions :report="report" :is-admin="isAdmin" />
                             </article>
                         </div>
 
                         <div v-else class="empty-state">
                             <p>No progress reports submitted for this job yet.</p>
                         </div>
+
+                        <RemovedReportsPanel :job="job" />
                     </article>
 
                     <article class="job-shell-card">
@@ -816,6 +820,18 @@
                         </div>
 
                         <VariationOrdersPanel :job="job" :ledger="variationLedger" />
+                    </article>
+
+                    <article class="job-shell-card">
+                        <div class="job-card-header">
+                            <div>
+                                <span class="section-kicker">Finance</span>
+                                <h3>Refunds</h3>
+                                <p>Money owed back to the client, and whether it has actually gone.</p>
+                            </div>
+                        </div>
+
+                        <RefundsPanel :job="job" :billing="billingSummary" />
                     </article>
 
                     <article class="job-shell-card">
@@ -1894,7 +1910,10 @@
 import AdminSidebar from '../../Components/AdminSidebar.vue'
 import ImageLightbox from '../../Components/ImageLightbox.vue'
 import VariationOrdersPanel from '../../Components/VariationOrdersPanel.vue'
-import { Link } from '@inertiajs/vue3'
+import RefundsPanel from '../../Components/RefundsPanel.vue'
+import ProgressReportActions from '../../Components/ProgressReportActions.vue'
+import RemovedReportsPanel from '../../Components/RemovedReportsPanel.vue'
+import { Link, usePage } from '@inertiajs/vue3'
 import { ref, computed, reactive } from 'vue'
 import { router } from '@inertiajs/vue3'
 
@@ -2276,6 +2295,11 @@ const milestoneLaborReleasedTotal = computed(() => {
         return sum + Number(milestone.labor_release_amount || 0)
     }, 0)
 })
+// Overruling a lead is admin-only; the server refuses it for anyone else, so
+// this only decides whether the control is worth showing.
+const page = usePage()
+const isAdmin = computed(() => page.props.auth?.user?.role === 'admin')
+
 const progressReports = computed(() => props.job.progress_reports || [])
 const jobPhotos = computed(() => props.job.photos || [])
 

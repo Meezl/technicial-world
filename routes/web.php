@@ -490,4 +490,40 @@ Route::middleware(['auth'])->group(function () {
         ->name('client.variations.decline');
 });
 
+// ==================== PROGRESS REPORT REMOVAL ====================
+// Duplicates happen — a technician taps submit twice on a poor connection and
+// the 90-second guard only catches the fast case. Admin and PM can take a
+// report out of circulation; it stays in the record, and a report a
+// technician has been paid against is refused.
+Route::middleware(['auth', 'role:admin,project_manager'])->group(function () {
+    Route::delete('/progress-reports/{progressReport}', [\App\Http\Controllers\Admin\ProgressReportController::class, 'destroy'])
+        ->name('progress-reports.destroy');
+    Route::post('/progress-reports/{progressReport}/restore', [\App\Http\Controllers\Admin\ProgressReportController::class, 'restore'])
+        ->withTrashed()
+        ->name('progress-reports.restore');
+});
+
+// Overruling a lead technician's on-site sign-off is admin territory. A PM
+// who disagrees sends the report back instead.
+Route::middleware(['auth', 'role:admin'])->group(function () {
+    Route::post('/progress-reports/{progressReport}/override-lead', [\App\Http\Controllers\Admin\ProgressReportController::class, 'overrideLead'])
+        ->name('progress-reports.override-lead');
+});
+
+// ==================== REFUNDS ====================
+// Money owed back to a client. Raising is open to admin and PM; approving is
+// admin-only and enforced in RefundService, so the rule holds wherever a
+// refund is raised from. Nothing here moves money — settling records that a
+// person did, and under what reference.
+Route::middleware(['auth', 'role:admin,project_manager'])->group(function () {
+    Route::post('/jobs/{serviceRequest}/refunds', [\App\Http\Controllers\Admin\RefundController::class, 'store'])
+        ->name('refunds.store');
+    Route::post('/refunds/{refund}/approve', [\App\Http\Controllers\Admin\RefundController::class, 'approve'])
+        ->name('refunds.approve');
+    Route::post('/refunds/{refund}/reject', [\App\Http\Controllers\Admin\RefundController::class, 'reject'])
+        ->name('refunds.reject');
+    Route::post('/refunds/{refund}/settle', [\App\Http\Controllers\Admin\RefundController::class, 'settle'])
+        ->name('refunds.settle');
+});
+
 require __DIR__ . '/auth.php';

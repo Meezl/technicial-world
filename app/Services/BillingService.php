@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\PaymentRequest;
+use App\Models\Refund;
 use App\Models\ReqBillingMilestone;
 use App\Models\ServiceRequest;
 use App\Models\VariationOrder;
@@ -66,13 +67,44 @@ class BillingService
             ->sum('amount'), 2);
     }
 
-    /** Contract money actually received. */
+    /**
+     * Contract money the client is treated as having paid — what came in,
+     * less anything owed back.
+     *
+     * An approved refund reduces this immediately, before the money has
+     * physically moved. Waiting for settlement would leave a job showing the
+     * client as fully paid while we owe them money, which is precisely the
+     * state that produces the next complaint.
+     */
     public function settled(ServiceRequest $sr): float
+    {
+        return round($this->grossSettled($sr) - $this->refunded($sr), 2);
+    }
+
+    /** Money received, before refunds. */
+    public function grossSettled(ServiceRequest $sr): float
     {
         return round((float) $sr->paymentRequests()
             ->whereNull('ticket_id')
             ->where('status', PaymentRequest::STATUS_PAID)
             ->sum('amount'), 2);
+    }
+
+    /** Owed back to the client — approved and settled refunds both count. */
+    public function refunded(ServiceRequest $sr): float
+    {
+        return round((float) $sr->refunds()
+            ->whereIn('status', Refund::REDUCES_SETTLED)
+            ->sum('amount'), 2);
+    }
+
+    /**
+     * How much the client has paid beyond what the job is worth. Positive
+     * means we owe them — the state a deduction creates and nobody notices.
+     */
+    public function creditBalance(ServiceRequest $sr): float
+    {
+        return round($this->settled($sr) - $this->contractValue($sr), 2);
     }
 
     /** Attendance fees asked for — pending plus paid. Uncapped. */
@@ -127,6 +159,11 @@ class BillingService
             'attendance_billed'   => $attBilled,
             'attendance_settled'  => $attSettled,
             'attendance_due'      => round($attBilled - $attSettled, 2),
+
+            // Money owed back. Surfaced separately so a job in credit is
+            // visible rather than hiding inside a netted total.
+            'refunded'            => $this->refunded($sr),
+            'credit_balance'      => round($settled - $contract, 2),
 
             // Reporting only.
             'total_billed'        => round($billed + $attBilled, 2),

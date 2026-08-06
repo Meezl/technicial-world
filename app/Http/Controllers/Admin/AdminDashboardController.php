@@ -295,6 +295,10 @@ class AdminDashboardController extends Controller
             'progressReports.photos',
             // Ops-only edit history for each report's notes fields.
             'progressReports.noteVersions.editor:id,name',
+            // Removed reports, so the office can see what was taken out and
+            // put it back. Soft deletes hide them from the relation above.
+            'removedProgressReports.technician.user:id,name',
+            'removedProgressReports.deletedBy:id,name',
             // Job-level photos: client evidence and anything ops attached
             // outside a formal progress report.
             'photos.uploader:id,name',
@@ -313,6 +317,9 @@ class AdminDashboardController extends Controller
             // Both halves of the click-through: from a variation to the fee
             // changes it authorised, and from a fee change back to it.
             'variationOrders.compensationAmendments.technician.user:id,name',
+            // Money owed back on this job.
+            'refunds.requester:id,name',
+            'refunds.approver:id,name',
             'compensationAmendments.variationOrder:id,vo_number,net_amount',
             'compensationAmendments.technician.user:id,name',
         ]);

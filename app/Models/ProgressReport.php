@@ -6,9 +6,17 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class ProgressReport extends Model
 {
+    /**
+     * Removed reports are kept, not destroyed — job_photos still cascades
+     * from this table and technician_payments points at it. See the
+     * add_soft_deletes_to_progress_reports migration.
+     */
+    use SoftDeletes;
+
     protected $fillable = [
         'service_request_id',
         'service_sub_task_id',
@@ -32,6 +40,15 @@ class ProgressReport extends Model
         'rejected_as',
         'rejection_reason',
         'revised_by_lead_at',
+        'deleted_by',
+        'deletion_reason',
+        'restored_at',
+        'restored_by',
+        'restore_reason',
+        'lead_override_at',
+        'lead_overridden_by',
+        'lead_override_reason',
+        'lead_approved_percent',
     ];
 
     /**
@@ -57,6 +74,9 @@ class ProgressReport extends Model
         'approved_by_lead_at' => 'datetime',
         'rejected_at' => 'datetime',
         'revised_by_lead_at' => 'datetime',
+        'restored_at' => 'datetime',
+        'lead_override_at' => 'datetime',
+        'lead_approved_percent' => 'integer',
     ];
 
     /**
@@ -123,6 +143,11 @@ class ProgressReport extends Model
             User::ROLE_PROJECT_MANAGER => self::AS_PROJECT_MANAGER,
             default => self::AS_TECHNICIAN,
         };
+    }
+
+    public function deletedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'deleted_by');
     }
 
     public function serviceRequest(): BelongsTo
