@@ -7,6 +7,7 @@ use App\Models\ProgressReport;
 use App\Models\ProgressReportNoteVersion;
 use App\Models\JobPhoto;
 use App\Models\ServiceRequest;
+use App\Models\ServiceSubTask;
 use App\Models\User;
 use App\Models\AuditLog;
 use Illuminate\Http\UploadedFile;
@@ -33,8 +34,12 @@ class ProgressService
             // the same technician submitted an identical report (same %,
             // same date, same SR/sub-task) in the last 90 seconds, treat
             // the second submission as a no-op and return the original.
+            // Keyed on the author as well as the subject: a lead filing on
+            // behalf of a crew member carries that member's technician_id, and
+            // must not be mistaken for the member's own double-tap.
             $existing = ProgressReport::where('service_request_id', $serviceRequest->id)
                 ->where('technician_id', $technicianId)
+                ->where('submitted_by', $submittedBy)
                 ->where('service_sub_task_id', $data['service_sub_task_id'] ?? null)
                 ->where('percent_complete', (int) $data['percent_complete'])
                 ->where('created_at', '>=', now()->subSeconds(90))
@@ -54,8 +59,10 @@ class ProgressService
             $report = ProgressReport::create([
                 'service_request_id' => $serviceRequest->id,
                 'service_sub_task_id' => $data['service_sub_task_id'] ?? null,
+                // Whose work this is about — not necessarily who wrote it.
                 'technician_id' => $technicianId,
                 'submitted_by' => $submittedBy,
+                'authored_as' => $data['authored_as'] ?? ProgressReport::AS_TECHNICIAN,
                 'report_date' => $data['report_date'] ?? now()->toDateString(),
                 'percent_complete' => $data['percent_complete'],
                 'notes' => $data['notes'] ?? null,
@@ -80,20 +87,23 @@ class ProgressService
         ServiceRequest $serviceRequest,
         int $pmId,
         array $data,
-        array $photos = []
+        array $photos = [],
+        string $authoredAs = ProgressReport::AS_PROJECT_MANAGER
     ): ProgressReport {
-        return DB::transaction(function () use ($serviceRequest, $pmId, $data, $photos) {
+        return DB::transaction(function () use ($serviceRequest, $pmId, $data, $photos, $authoredAs) {
             $report = ProgressReport::create([
                 'service_request_id' => $serviceRequest->id,
                 'service_sub_task_id' => $data['service_sub_task_id'] ?? null,
                 'technician_id' => $data['technician_id'] ?? null,
                 'submitted_by' => $pmId,
+                'authored_as' => $authoredAs,
                 'report_date' => $data['report_date'] ?? now()->toDateString(),
                 'percent_complete' => $data['percent_complete'],
                 'notes' => $data['notes'] ?? null,
                 'is_pm_authored' => true,
-                'is_validated' => true, // PM-authored reports are auto-validated
+                'is_validated' => true, // Office-authored reports carry their own authority
                 'validated_by' => $pmId,
+                'validated_as' => $authoredAs,
                 'validated_at' => now(),
                 'validated_percent' => $data['percent_complete'],
             ]);
@@ -102,8 +112,10 @@ class ProgressService
                 $this->addPhoto($report, $photo, $pmId);
             }
 
-            // Update service request progress
-            $this->updateServiceRequestProgress($serviceRequest);
+            // A PM-authored report is validated on arrival, so it moves the
+            // sub-task the same way a technician's validated one does.
+            $this->syncSubTaskFromReport($report);
+            $this->updateServiceRequestProgress($serviceRequest->fresh());
 
             AuditLog::log(AuditLog::ACTION_CREATED, $report, null, ['pm_authored' => true]);
 
@@ -114,13 +126,23 @@ class ProgressService
     /**
      * PM validates a progress report.
      */
+    /**
+     * $releaseBilling is false for an on-site sign-off by a lead technician:
+     * their approval moves the sub-task and the job's percentage, but raising
+     * a bill against the client stays an office decision. The milestones are
+     * not lost — triggerBillingMilestones is idempotent and catches up on
+     * everything the job's progress has passed the next time a PM or admin
+     * validates, which approved_by_lead_at keeps in their queue.
+     */
     public function validate(
         ProgressReport $report,
         int $pmId,
         array $data,
-        array $adminPhotos = []
+        array $adminPhotos = [],
+        bool $releaseBilling = true,
+        string $validatedAs = ProgressReport::AS_PROJECT_MANAGER
     ): ProgressReport {
-        return DB::transaction(function () use ($report, $pmId, $data, $adminPhotos) {
+        return DB::transaction(function () use ($report, $pmId, $data, $adminPhotos, $releaseBilling, $validatedAs) {
             // Default client_visible_notes to the technician's original notes
             // if admin didn't override — preserves the report even when admin
             // doesn't edit. The technician's `notes` stay untouched.
@@ -151,10 +173,19 @@ class ProgressService
             $report->update([
                 'is_validated' => true,
                 'validated_by' => $pmId,
+                'validated_as' => $validatedAs,
                 'validated_at' => now(),
                 'validated_percent' => $data['validated_percent'] ?? $report->percent_complete,
                 'validation_notes' => $newValidationNotes,
                 'client_visible_notes' => $clientNotes,
+                // An office validation settles whatever the lead signed off,
+                // so the report leaves the "billing not released" queue. A
+                // lead's own approval sets this immediately after.
+                'approved_by_lead_at' => $releaseBilling ? null : $report->approved_by_lead_at,
+                // Approving clears any earlier rejection.
+                'rejected_at' => null,
+                'rejected_by' => null,
+                'rejection_reason' => null,
             ]);
 
             // Handle photo removals. Scoped through the report's own relation
@@ -171,9 +202,11 @@ class ProgressService
                 $this->addPhoto($report, $photo, $pmId, 'Added by admin during validation');
             }
 
-            // Update service request progress based on validated value
+            // A validated sub-task report moves that sub-task, and the job's
+            // headline figure is then recomputed from all of them.
+            $this->syncSubTaskFromReport($report->fresh());
             $serviceRequest = $report->serviceRequest;
-            $this->updateServiceRequestProgress($serviceRequest);
+            $this->updateServiceRequestProgress($serviceRequest->fresh(), $releaseBilling);
 
             AuditLog::log(AuditLog::ACTION_APPROVAL, $report, null, [
                 'validated_percent' => $data['validated_percent'] ?? $report->percent_complete,
@@ -234,22 +267,170 @@ class ProgressService
     /**
      * Update the service request's progress based on latest validated reports.
      */
-    private function updateServiceRequestProgress(ServiceRequest $serviceRequest): void
+    /**
+     * Push a validated sub-task report onto the sub-task itself, so the
+     * report and the sub-task cannot disagree about how far along that piece
+     * of work is. Reporting is the technician's route to moving their own
+     * bar; the slider on the job page is the same thing by hand.
+     */
+    private function syncSubTaskFromReport(ProgressReport $report): void
+    {
+        $subTask = $report->subTask;
+
+        if (!$subTask) {
+            return;
+        }
+
+        $percent = (int) ($report->validated_percent ?? $report->percent_complete);
+
+        $update = ['progress_percentage' => $percent];
+
+        if ($percent >= 100) {
+            $update['status'] = ServiceSubTask::STATUS_COMPLETED;
+            $update['completed_at'] = $subTask->completed_at ?? now();
+        } elseif ($percent > 0 && $subTask->status === ServiceSubTask::STATUS_ASSIGNED) {
+            $update['status'] = ServiceSubTask::STATUS_IN_PROGRESS;
+        }
+
+        $subTask->update($update);
+    }
+
+    /**
+     * The job's headline percentage.
+     *
+     * On a project with sub-tasks this is the average across them, so each
+     * technician's report contributes their share and nobody's slice can
+     * stand in for the whole. It used to take the most recent validated
+     * report of any kind and assign its percentage to the job, which meant
+     * the figure swung to whichever trade reported last — and a single
+     * sub-task reaching 100% completed the entire job and fired its billing
+     * milestones.
+     *
+     * A job that was never split still reads its latest validated report;
+     * there, that report *is* the whole job.
+     */
+    private function updateServiceRequestProgress(ServiceRequest $serviceRequest, bool $releaseBilling = true): void
+    {
+        $effectivePercent = $serviceRequest->isSplitIntoSubTasks()
+            ? $this->aggregateSubTaskProgress($serviceRequest)
+            : $this->latestValidatedPercent($serviceRequest);
+
+        if ($effectivePercent === null) {
+            return;
+        }
+
+        $updateData = ['progress_percentage' => $effectivePercent];
+
+        // Only a job that is wholly done closes itself. With sub-tasks that
+        // means every one of them is at 100%, not just the one just reported.
+        if ($effectivePercent >= 100 && $serviceRequest->status !== ServiceRequest::STATUS_COMPLETED) {
+            $updateData['status'] = ServiceRequest::STATUS_COMPLETED;
+        }
+
+        $serviceRequest->update($updateData);
+
+        if ($releaseBilling) {
+            $this->triggerBillingMilestones($serviceRequest->fresh(), (float) $effectivePercent);
+        }
+    }
+
+    /**
+     * A lead sends a claim back. The report is kept — the argument about what
+     * was really done is part of the job's record — but it stops counting and
+     * the technician sees why.
+     */
+    public function reject(
+        ProgressReport $report,
+        int $userId,
+        string $reason,
+        string $rejectedAs = ProgressReport::AS_LEAD
+    ): ProgressReport {
+        return DB::transaction(function () use ($report, $userId, $reason, $rejectedAs) {
+            $report->update([
+                'is_validated' => false,
+                'validated_by' => null,
+                'validated_at' => null,
+                'validated_percent' => null,
+                'approved_by_lead_at' => null,
+                'rejected_at' => now(),
+                'rejected_by' => $userId,
+                'rejected_as' => $rejectedAs,
+                'rejection_reason' => $reason,
+            ]);
+
+            AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, [
+                'rejected' => true,
+                'rejected_as' => $rejectedAs,
+                'reason' => $reason,
+            ]);
+
+            return $report->fresh();
+        });
+    }
+
+    /**
+     * The lead answers a report the office sent back, then puts it up again.
+     *
+     * They may correct the percentage, rewrite the notes, or simply add a
+     * comment explaining why it stands as filed — a returned report is often
+     * a question rather than a verdict. Either way the previous text is kept
+     * as a version, so the argument is traceable, and the report goes back to
+     * the office rather than counting on the lead's own say-so.
+     */
+    public function reviseByLead(ProgressReport $report, int $userId, array $data): ProgressReport
+    {
+        return DB::transaction(function () use ($report, $userId, $data) {
+            $previousNotes = $report->notes;
+            $notes = $data['notes'] ?? $previousNotes;
+
+            if (!empty($data['comment'])) {
+                $stamp = now()->format('d M Y H:i');
+                $notes = trim(($notes ? $notes . "\n\n" : '') . "[Lead, {$stamp}] " . $data['comment']);
+            }
+
+            $this->recordNoteVersionIfChanged($report, $userId, 'notes', $previousNotes, $notes);
+
+            $report->update([
+                'percent_complete' => $data['percent_complete'] ?? $report->percent_complete,
+                'notes' => $notes,
+                // Answered — back on the office's desk, not counting yet.
+                'rejected_at' => null,
+                'rejected_by' => null,
+                'rejected_as' => null,
+                'rejection_reason' => null,
+                'is_validated' => false,
+                'approved_by_lead_at' => null,
+                // The office asked, the lead answered — so the office settles
+                // it. Without this the lead could correct the figure and then
+                // ratify their own correction on site.
+                'revised_by_lead_at' => now(),
+            ]);
+
+            AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, [
+                'revised_by_lead' => true,
+            ]);
+
+            return $report->fresh();
+        });
+    }
+
+    private function aggregateSubTaskProgress(ServiceRequest $serviceRequest): int
+    {
+        return (int) round($serviceRequest->subTasks()->avg('progress_percentage') ?? 0);
+    }
+
+    private function latestValidatedPercent(ServiceRequest $serviceRequest): ?int
     {
         $latestValidated = $serviceRequest->progressReports()
             ->where('is_validated', true)
             ->orderBy('report_date', 'desc')
             ->first();
 
-        if ($latestValidated) {
-            $effectivePercent = $latestValidated->validated_percent ?? $latestValidated->percent_complete;
-            $updateData = ['progress_percentage' => $effectivePercent];
-            if ((int) $effectivePercent >= 100 && $serviceRequest->status !== ServiceRequest::STATUS_COMPLETED) {
-                $updateData['status'] = ServiceRequest::STATUS_COMPLETED;
-            }
-            $serviceRequest->update($updateData);
-            $this->triggerBillingMilestones($serviceRequest->fresh(), (float) $effectivePercent);
+        if (!$latestValidated) {
+            return null;
         }
+
+        return (int) ($latestValidated->validated_percent ?? $latestValidated->percent_complete);
     }
 
     /**

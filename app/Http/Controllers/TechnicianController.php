@@ -34,52 +34,30 @@ class TechnicianController extends Controller
             $earnings = $reportingService->getTechnicianEarnings($technician->id);
             $jobEarnings = collect($earnings['by_job'] ?? [])->keyBy('service_request_id');
 
-            // Incoming: assigned but not yet started
-            $incomingJobs = ServiceRequest::where('technician_id', $technician->id)
+            // One membership rule for every way a technician lands on a job
+            // (direct, lead, sub-task, job assignment) — see
+            // ServiceRequest::scopeForTechnician.
+            $incomingJobs = ServiceRequest::forTechnician($technician->id)
                 ->where('status', 'assigned')
-                ->with(['user', 'serviceCategory'])
+                ->with(['user', 'serviceCategory', 'subTasks'])
                 ->latest()
                 ->get();
 
-            // Active: in progress
-            $activeJobs = ServiceRequest::where('technician_id', $technician->id)
+            $activeJobs = ServiceRequest::forTechnician($technician->id)
                 ->where('status', 'in_progress')
-                ->with(['user', 'serviceCategory'])
+                ->with(['user', 'serviceCategory', 'subTasks'])
                 ->latest()
                 ->get();
 
-            // Also include sub-tasks assigned to this technician
-            $subTaskJobIds = ServiceSubTask::where('technician_id', $technician->id)
-                ->whereIn('status', ['assigned', 'in_progress'])
-                ->pluck('service_request_id')
-                ->unique();
-
-            if ($subTaskJobIds->isNotEmpty()) {
-                $subTaskIncoming = ServiceRequest::whereIn('id', $subTaskJobIds)
-                    ->where('status', 'assigned')
-                    ->where('technician_id', '!=', $technician->id)
-                    ->with(['user', 'serviceCategory'])
-                    ->get();
-
-                $subTaskActive = ServiceRequest::whereIn('id', $subTaskJobIds)
-                    ->where('status', 'in_progress')
-                    ->where('technician_id', '!=', $technician->id)
-                    ->with(['user', 'serviceCategory'])
-                    ->get();
-
-                $incomingJobs = $incomingJobs->merge($subTaskIncoming)->unique('id');
-                $activeJobs = $activeJobs->merge($subTaskActive)->unique('id');
-            }
-
-            $incomingJobs = $incomingJobs->map(function ($job) use ($jobEarnings) {
+            // Same commercial redaction as the job page — these cards carry
+            // the whole model too.
+            $decorate = function ($job) use ($jobEarnings, $technician) {
                 $job->setAttribute('compensation_summary', $jobEarnings->get($job->id));
-                return $job;
-            })->values();
+                return $this->technicianSafeJob($job, $technician->id);
+            };
 
-            $activeJobs = $activeJobs->map(function ($job) use ($jobEarnings) {
-                $job->setAttribute('compensation_summary', $jobEarnings->get($job->id));
-                return $job;
-            })->values();
+            $incomingJobs = $incomingJobs->map($decorate)->values();
+            $activeJobs = $activeJobs->map($decorate)->values();
         }
 
         return Inertia::render('Technician/Dashboard', [
@@ -100,25 +78,11 @@ class TechnicianController extends Controller
         if (!$technician)
             return 0;
 
-        // Direct completed jobs
-        $directCompletedCount = ServiceRequest::where('technician_id', $technician->id)
+        // Counted off the single membership rule, so a job can't be tallied
+        // twice when the technician is both lead and sub-task holder.
+        return ServiceRequest::forTechnician($technician->id)
             ->where('status', 'completed')
             ->count();
-
-        // Sub-task related completed jobs
-        $subTaskJobIds = ServiceSubTask::where('technician_id', $technician->id)
-            ->pluck('service_request_id')
-            ->unique();
-
-        $subTaskCompletedCount = 0;
-        if ($subTaskJobIds->isNotEmpty()) {
-            $subTaskCompletedCount = ServiceRequest::whereIn('id', $subTaskJobIds)
-                ->where('technician_id', '!=', $technician->id) // Avoid double counting if tech is both lead and sub (unlikely but safe)
-                ->where('status', 'completed')
-                ->count();
-        }
-
-        return $directCompletedCount + $subTaskCompletedCount;
     }
 
     /**
@@ -137,22 +101,9 @@ class TechnicianController extends Controller
             $earnings = $reportingService->getTechnicianEarnings($technician->id);
             $jobEarnings = collect($earnings['by_job'] ?? [])->keyBy('service_request_id');
 
-            // Direct assignments
-            $directJobs = ServiceRequest::where('technician_id', $technician->id)
-                ->with(['user', 'serviceCategory', 'subTasks'])
-                ->get();
-
-            // Sub-task assignments (jobs where technician has assigned sub-tasks but isn't the main technician)
-            $subTaskJobIds = ServiceSubTask::where('technician_id', $technician->id)
-                ->pluck('service_request_id')
-                ->unique();
-
-            $subTaskJobs = ServiceRequest::whereIn('id', $subTaskJobIds)
-                ->where('technician_id', '!=', $technician->id)
-                ->with(['user', 'serviceCategory', 'subTasks'])
-                ->get();
-
-            $jobs = $directJobs->merge($subTaskJobs)->unique('id')
+            $jobs = ServiceRequest::forTechnician($technician->id)
+                ->with(['user', 'serviceCategory', 'subTasks.technician.user'])
+                ->get()
                 ->sortBy(function ($job) {
                     $statusOrder = [
                         'in_progress' => 0,
@@ -163,9 +114,9 @@ class TechnicianController extends Controller
                     ];
                     return $statusOrder[$job->status] ?? 5;
                 })
-                ->map(function ($job) use ($jobEarnings) {
+                ->map(function ($job) use ($jobEarnings, $technician) {
                     $job->setAttribute('compensation_summary', $jobEarnings->get($job->id));
-                    return $job;
+                    return $this->technicianSafeJob($job, $technician->id);
                 })
                 ->values();
         }
@@ -193,11 +144,7 @@ class TechnicianController extends Controller
             abort(403, 'Unauthorized action.');
         }
 
-        // Check if technician is assigned or is a sub-task assignee
-        $isAssigned = $serviceRequest->technician_id === $technician->id;
-        $isSubTaskAssignee = $serviceRequest->subTasks()->where('technician_id', $technician->id)->exists();
-
-        if (!$isAssigned && !$isSubTaskAssignee) {
+        if (!$serviceRequest->hasTechnician($technician->id)) {
             abort(403, 'Unauthorized action.');
         }
 
@@ -209,11 +156,15 @@ class TechnicianController extends Controller
             'progressReports.technician.user',
             'progressReports.submitter',
             'progressReports.validator',
+            'progressReports.rejector:id,name',
             'progressReports.subTask',
             'progressReports.photos',
             // Job-level photos — the client's evidence of a snag, so the
             // technician sees it before going back to site.
             'photos.uploader:id,name',
+            // Only documents ops deliberately shared. Case analyses and
+            // margin thinking default to internal and stay there.
+            'documents' => fn ($q) => $q->clientVisible(),
         ]);
 
         $reportingService = app(ReportingService::class);
@@ -223,9 +174,102 @@ class TechnicianController extends Controller
 
         return Inertia::render('Technician/JobDetails', [
             'technician' => $technician,
-            'job' => $serviceRequest,
+            'job' => $this->technicianSafeJob($serviceRequest, $technician->id),
             'compensationSummary' => $compensationSummary,
+            // Job-wide actions (closing the job) belong to whoever carries
+            // the job; a sub-task holder gets the sub-task controls instead.
+            'isLeadTechnician' => $serviceRequest->isLeadTechnician($technician->id),
+            'scope' => $this->jobScopeForTechnician($serviceRequest),
+            'assignmentFiles' => $this->assignmentFilesFor($serviceRequest, $technician->id),
         ]);
+    }
+
+    /**
+     * Commercial fields a technician must never receive.
+     *
+     * The whole model used to be serialised into the page props, so the
+     * client's price, the job's margin and the billing schedule were being
+     * shipped to every technician's browser — invisible on screen, one
+     * devtools tab away in practice. A technician is owed their own agreed
+     * fee, which travels separately in compensationSummary.
+     */
+    private const COMMERCIAL_FIELDS = [
+        'quote_amount',
+        'quote_materials',
+        'quote_labor_cost',
+        'quote_transport_cost',
+        'quote_down_payment',
+        'quoted_amount',
+        'final_amount',
+        'revenue_generated',
+        'technician_payout',
+        'quote_materials_file_path',
+        'quote_materials_file_paths',
+        'billing_milestones',
+        'billingSchedule',
+    ];
+
+    private function technicianSafeJob(ServiceRequest $serviceRequest, int $technicianId): ServiceRequest
+    {
+        $serviceRequest->makeHidden(self::COMMERCIAL_FIELDS);
+
+        // A crew member's fee is between them and the office — hide the
+        // figure on sub-tasks that are not this technician's own.
+        $serviceRequest->subTasks->each(function ($subTask) use ($technicianId) {
+            if ((int) $subTask->technician_id !== $technicianId) {
+                $subTask->makeHidden(['agreed_compensation', 'compensation_notes']);
+            }
+        });
+
+        return $serviceRequest;
+    }
+
+    /**
+     * What the technician needs to actually do the job: the scope as quoted,
+     * what to install, and the dates they are being held to. Materials carry
+     * name and quantity but never unit_price — that is the client's costing,
+     * not a packing list.
+     */
+    private function jobScopeForTechnician(ServiceRequest $serviceRequest): array
+    {
+        $materials = collect($serviceRequest->quote_materials ?? [])
+            ->map(fn ($material) => [
+                'name' => $material['name'] ?? 'Unnamed item',
+                'quantity' => $material['quantity'] ?? null,
+            ])
+            ->filter(fn ($material) => $material['name'] !== 'Unnamed item' || $material['quantity'])
+            ->values()
+            ->all();
+
+        return [
+            'notes' => $serviceRequest->quote_notes,
+            'materials' => $materials,
+            'expected_duration_days' => $serviceRequest->expected_duration_days,
+            'commencement_at' => $serviceRequest->commencement_at,
+            'target_completion_at' => $serviceRequest->target_completion_at,
+            'contact_time_minutes' => $serviceRequest->contact_time_minutes,
+        ];
+    }
+
+    /**
+     * Drawings and briefs ops attached when handing this technician the work.
+     * Scoped to their own live assignments — another technician's brief is
+     * not theirs to open.
+     */
+    private function assignmentFilesFor(ServiceRequest $serviceRequest, int $technicianId): array
+    {
+        return $serviceRequest->jobAssignments()
+            ->where('technician_id', $technicianId)
+            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
+            ->get()
+            ->flatMap(fn ($assignment) => collect($assignment->attachments ?? [])
+                ->map(fn ($file) => [
+                    'name' => $file['name'] ?? basename($file['path'] ?? ''),
+                    'path' => $file['path'] ?? null,
+                ])
+                ->filter(fn ($file) => !empty($file['path'])))
+            ->values()
+            ->all();
     }
 
     /**
@@ -261,7 +305,7 @@ class TechnicianController extends Controller
                 ->get(['id', 'name', 'serial_number', 'category', 'condition', 'location']);
 
             // Active jobs the technician can attach a request to
-            $activeJobs = ServiceRequest::where('technician_id', $technician->id)
+            $activeJobs = ServiceRequest::forTechnician($technician->id)
                 ->whereIn('status', [
                     ServiceRequest::STATUS_ASSIGNED,
                     ServiceRequest::STATUS_IN_PROGRESS,
@@ -456,7 +500,7 @@ class TechnicianController extends Controller
             $technician->load(['user', 'documents']);
 
             // Job statistics
-            $assignedJobs = \App\Models\ServiceRequest::where('technician_id', $technician->id);
+            $assignedJobs = \App\Models\ServiceRequest::forTechnician($technician->id);
             $jobStats = [
                 'total' => (clone $assignedJobs)->count(),
                 'completed' => (clone $assignedJobs)->whereIn('status', ['closed', 'archived'])->count(),
@@ -466,7 +510,7 @@ class TechnicianController extends Controller
             ];
 
             // Recent jobs (last 5)
-            $recentJobs = \App\Models\ServiceRequest::where('technician_id', $technician->id)
+            $recentJobs = \App\Models\ServiceRequest::forTechnician($technician->id)
                 ->with(['serviceCategory:id,name'])
                 ->orderBy('updated_at', 'desc')
                 ->limit(5)
@@ -696,10 +740,7 @@ class TechnicianController extends Controller
             return back()->with('error', 'Technician profile not found');
         }
 
-        $isAssigned = $serviceRequest->technician_id === $technician->id;
-        $isSubTaskAssignee = $serviceRequest->subTasks()->where('technician_id', $technician->id)->exists();
-
-        if (!$isAssigned && !$isSubTaskAssignee) {
+        if (!$serviceRequest->hasTechnician($technician->id)) {
             return back()->with('error', 'Unauthorized');
         }
 
@@ -722,6 +763,9 @@ class TechnicianController extends Controller
             'photos.*' => 'nullable|file|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
         ]);
 
+        $isLead = $serviceRequest->isLeadTechnician($technician->id);
+        $subTask = null;
+
         if ($request->filled('service_sub_task_id')) {
             $subTask = $serviceRequest->subTasks()->where('id', $request->service_sub_task_id)->first();
 
@@ -731,22 +775,61 @@ class TechnicianController extends Controller
                 ]);
             }
 
-            $canReportSubTask = $subTask->technician_id === $technician->id || $serviceRequest->lead_technician_id === $technician->id;
-
-            if (!$canReportSubTask) {
-                return back()->with('error', 'Unauthorized sub-task selection.');
+            // Their own sub-task, or any of them if they lead the job — a
+            // lead reporting for the crew is normal on site.
+            if ((int) $subTask->technician_id !== (int) $technician->id && !$isLead) {
+                return back()->withErrors([
+                    'service_sub_task_id' => 'You can only report on a sub-task assigned to you.',
+                ]);
             }
+        } elseif ($serviceRequest->isSplitIntoSubTasks() && !$isLead) {
+            // The job as a whole is the lead's to speak for. Everyone else
+            // reports against their own sub-task, and those roll up into the
+            // overall figure — so a crew member cannot set the job's headline
+            // percentage from the part of it they can see.
+            return back()->withErrors([
+                'service_sub_task_id' => 'Pick the sub-task you are reporting on. '
+                    . 'Only the lead technician reports on the job as a whole.',
+            ]);
         }
+
+        // A lead may file for a crew member who never got their report in.
+        // The report is about that member's work, so it carries their
+        // technician_id, while authored_as records that the lead wrote it —
+        // otherwise it would read as the member's own account of themselves.
+        [$subjectTechnicianId, $authoredAs] = $this->attributeReport($technician, $subTask, $isLead);
 
         app(ProgressService::class)->submitReport(
             $serviceRequest,
-            $technician->id,
+            $subjectTechnicianId,
             $user->id,
-            $request->only(['percent_complete', 'notes', 'report_date', 'service_sub_task_id']),
+            $request->only(['percent_complete', 'notes', 'report_date', 'service_sub_task_id'])
+                + ['authored_as' => $authoredAs],
             $request->file('photos', [])
         );
 
-        return back()->with('success', 'Progress report submitted successfully.');
+        return back()->with('success', $authoredAs === \App\Models\ProgressReport::AS_LEAD
+            ? 'Report filed on the technician\'s behalf. It goes to the project team to ratify.'
+            : 'Progress report submitted successfully.');
+    }
+
+    /**
+     * Whose work a report is about, and in what capacity it was written.
+     *
+     * They are the same person in the ordinary case. They come apart when a
+     * lead covers for a crew member: the work is still the crew member's, so
+     * their sub-task and their bar are what move, but the account of it is the
+     * lead's and is labelled as such.
+     */
+    private function attributeReport(Technician $author, ?ServiceSubTask $subTask, bool $isLead): array
+    {
+        $subjectId = $subTask?->technician_id ?? $author->id;
+        $onBehalf = $isLead && (int) $subjectId !== (int) $author->id;
+
+        return [
+            (int) $subjectId,
+            $onBehalf ? \App\Models\ProgressReport::AS_LEAD : \App\Models\ProgressReport::AS_TECHNICIAN,
+        ];
     }
 
     /**
@@ -757,8 +840,7 @@ class TechnicianController extends Controller
         $user = auth()->user();
         $technician = $user->technician;
 
-        if (!$technician || $serviceRequest->technician_id !== $technician->id) {
-            // Allow if subtask assignee? For now restrict to main tech for job status.
+        if (!$technician || !$serviceRequest->hasTechnician($technician->id)) {
             return back()->with('error', 'Unauthorized');
         }
 
@@ -767,6 +849,22 @@ class TechnicianController extends Controller
         ]);
 
         $action = $request->action;
+
+        // Starting and arriving are per-person facts — whoever gets to site
+        // first records them. Previously only `service_requests.technician_id`
+        // could do this, so on a project with sub-tasks a technician who was
+        // not the lead could never move the job off 'assigned' — and progress
+        // reports are blocked while a job sits in 'assigned'. That deadlock is
+        // why sub-task technicians could not submit reports at all.
+        //
+        // Closing the whole job stays with the lead: one sub-task finishing
+        // is not the project finishing.
+        if ($action === 'completed' && !$serviceRequest->isLeadTechnician($technician->id)) {
+            return back()->with('error',
+                'Only the lead technician can mark the whole job complete. ' .
+                'Update your sub-task to 100% and the lead will close the job.'
+            );
+        }
 
         if ($action === 'en_route') {
             $serviceRequest->update([
@@ -789,16 +887,26 @@ class TechnicianController extends Controller
             // the latest validated progress_report still sits at the
             // previous %, which leaves the payment system unable to bill
             // the remaining balance.
-            $latestValidatedPct = (int) ($serviceRequest->progressReports()
+            //
+            // On a project with sub-tasks the lead may never file a report
+            // in their own name — the crew files them per sub-task. Scoping
+            // the check to the lead's own reports would leave such a job
+            // impossible to close, so read the job-wide validated progress
+            // there and keep the per-technician check for solo jobs.
+            $validatedQuery = $serviceRequest->progressReports()
                 ->where('is_validated', true)
-                ->where('technician_id', $technician->id)
-                ->orderBy('report_date', 'desc')
-                ->value('validated_percent') ?? 0);
+                ->orderBy('report_date', 'desc');
+
+            if (!$serviceRequest->has_sub_tasks) {
+                $validatedQuery->where('technician_id', $technician->id);
+            }
+
+            $latestValidatedPct = (int) ($validatedQuery->value('validated_percent') ?? 0);
 
             if ($latestValidatedPct < 100) {
                 return back()->with('error',
                     'Submit a 100% progress report first (and wait for admin validation) before marking the job complete. ' .
-                    'Your latest validated progress is ' . $latestValidatedPct . '%.'
+                    'The latest validated progress on this job is ' . $latestValidatedPct . '%.'
                 );
             }
 
@@ -879,57 +987,184 @@ class TechnicianController extends Controller
 
         $serviceRequest = $serviceSubTask->serviceRequest;
 
-        // Must be the sub-task's assigned technician or the lead technician
-        $isAssigned = $serviceSubTask->technician_id === $technician->id;
-        $isLead = $serviceRequest->lead_technician_id === $technician->id;
+        // Must be the sub-task's assigned technician, or carry the job as a
+        // whole (lead / sole assignee).
+        $isAssigned = (int) $serviceSubTask->technician_id === (int) $technician->id;
 
-        if (!$isAssigned && !$isLead) {
+        if (!$isAssigned && !$serviceRequest->isLeadTechnician($technician->id)) {
             abort(403, 'Unauthorized');
         }
 
-        $updateData = [
-            'progress_percentage' => $request->progress_percentage,
-        ];
-
-        if ($request->status) {
-            $updateData['status'] = $request->status;
+        if ($serviceRequest->status === ServiceRequest::STATUS_COMPLETED) {
+            return back()->with('error', 'This job is already completed.');
         }
 
-        // Auto-set status based on progress
-        if ($request->progress_percentage === 100) {
-            $updateData['status'] = ServiceSubTask::STATUS_COMPLETED;
-            $updateData['completed_at'] = now();
-        } elseif ($request->progress_percentage > 0 && $serviceSubTask->status === ServiceSubTask::STATUS_ASSIGNED) {
-            $updateData['status'] = ServiceSubTask::STATUS_IN_PROGRESS;
+        // The slider used to write straight to the sub-task, which meant a
+        // technician could move the job's headline percentage — and, through
+        // the billing milestones that key off it — with nobody approving the
+        // claim. It now files the same kind of progress report the form does,
+        // and only counts once approved.
+        [$subjectTechnicianId, $authoredAs] = $this->attributeReport(
+            $technician,
+            $serviceSubTask,
+            $serviceRequest->isLeadTechnician($technician->id)
+        );
+
+        app(ProgressService::class)->submitReport(
+            $serviceRequest,
+            $subjectTechnicianId,
+            $user->id,
+            [
+                'percent_complete' => $request->progress_percentage,
+                'service_sub_task_id' => $serviceSubTask->id,
+                'notes' => $request->input('notes'),
+                'authored_as' => $authoredAs,
+            ]
+        );
+
+        return back()->with('success', $authoredAs === \App\Models\ProgressReport::AS_LEAD
+            ? 'Filed on the technician\'s behalf. It goes to the project team to ratify.'
+            : 'Progress submitted for approval.');
+    }
+
+    /**
+     * The lead signs off a crew member's sub-task claim.
+     *
+     * Sub-task progress is the crew's own account of their work; the lead is
+     * the person on site who can say whether it is true. Approving it moves
+     * the sub-task and, through it, the job's overall figure.
+     */
+    public function approveSubTaskReport(\App\Models\ProgressReport $progressReport)
+    {
+        $technician = $this->authorizeLeadSignOff($progressReport);
+
+        if ($progressReport->is_validated) {
+            return back()->with('error', 'That report has already been approved.');
         }
 
-        $serviceSubTask->update($updateData);
+        // releaseBilling: false — the lead's word moves the work, not the
+        // money. Any milestone the new percentage passes is raised by a PM or
+        // admin, who still sees this report in their queue.
+        app(ProgressService::class)->validate(
+            $progressReport,
+            auth()->id(),
+            ['validated_percent' => $progressReport->percent_complete],
+            [],
+            releaseBilling: false,
+            validatedAs: \App\Models\ProgressReport::AS_LEAD
+        );
 
-        \Illuminate\Support\Facades\Log::info('Recalculating progress for ServiceRequest: ' . $serviceRequest->id);
-        // Recalculate parent service request progress using fresh instance
-        $serviceRequest->fresh()->recalculateProgress();
+        $progressReport->forceFill(['approved_by_lead_at' => now()])->save();
 
-        \Illuminate\Support\Facades\Log::info('ServiceRequest ' . $serviceRequest->id . ' new progress: ' . $serviceRequest->fresh()->progress_percentage);
+        return back()->with('success',
+            'Sub-task progress approved. The office will confirm any payment that follows.');
+    }
 
-        // If service request was assigned, move to in_progress
-        if ($serviceRequest->status === 'assigned' && $request->progress_percentage > 0) {
-            $serviceRequest->update([
-                'status' => 'in_progress',
-                'started_at' => $serviceRequest->started_at ?? now(),
+    /**
+     * The lead sends a claim back with a reason, so the technician knows what
+     * to put right rather than guessing why their bar never moved.
+     */
+    public function rejectSubTaskReport(Request $request, \App\Models\ProgressReport $progressReport)
+    {
+        $this->authorizeLeadSignOff($progressReport);
+
+        $data = $request->validate([
+            'rejection_reason' => 'required|string|min:5|max:1000',
+        ], [
+            'rejection_reason.required' => 'Tell the technician what needs putting right.',
+            'rejection_reason.min' => 'Give the technician something to act on — a few words at least.',
+        ]);
+
+        if ($progressReport->approved_by_lead_at === null && $progressReport->is_validated) {
+            return back()->with('error',
+                'That report has been validated by the project team — ask them to reopen it.');
+        }
+
+        app(ProgressService::class)->reject(
+            $progressReport,
+            auth()->id(),
+            $data['rejection_reason'],
+            \App\Models\ProgressReport::AS_LEAD
+        );
+
+        return back()->with('success', 'Sent back to the technician with your reason.');
+    }
+
+    /**
+     * The lead answers a report the office sent back.
+     *
+     * They can correct the percentage, rewrite the notes, or just add a
+     * comment saying why it stands — a returned report is often a question,
+     * not a verdict. Either way it goes back to the office to settle, never
+     * onto the lead's own authority.
+     */
+    public function reviseReturnedReport(Request $request, \App\Models\ProgressReport $progressReport)
+    {
+        $technician = auth()->user()->technician;
+        $serviceRequest = $progressReport->serviceRequest;
+
+        if (!$technician || !$serviceRequest || !$serviceRequest->isLeadTechnician($technician->id)) {
+            abort(403, 'Only the lead technician can answer a report sent back on this job.');
+        }
+
+        if (!$progressReport->isReturnedToLead()) {
+            return back()->with('error', 'That report has not been sent back to you.');
+        }
+
+        $data = $request->validate([
+            'percent_complete' => 'nullable|integer|min:0|max:100',
+            'notes' => 'nullable|string|max:2000',
+            'comment' => 'nullable|string|max:1000',
+        ]);
+
+        // Sending it back up unchanged tells the office nothing.
+        if (!$request->filled('comment') && !$request->filled('notes') && !$request->filled('percent_complete')) {
+            return back()->withErrors([
+                'comment' => 'Change the figure, edit the notes, or add a comment before sending it back.',
             ]);
         }
 
-        // Update main job progress based on average of subtasks? 
-        // For now, let's assume subtasks don't auto-update main job progress percentage unless logic added.
-        // But if they DO, we should check milestones.
+        app(ProgressService::class)->reviseByLead($progressReport, auth()->id(), $data);
 
-        // Example: if we wanted to update main job progress:
-        // $totalSubTasks = $serviceSubTask->serviceRequest->subTasks()->count();
-        // $completedSubTasks = $serviceSubTask->serviceRequest->subTasks()->where('status', 'completed')->count();
-        // $newProgress = ($completedSubTasks / $totalSubTasks) * 100;
-        // $serviceSubTask->serviceRequest->update(['progress_percentage' => $newProgress]);
-        // $this->checkMilestones($serviceSubTask->serviceRequest);
+        return back()->with('success', 'Sent back to the project team.');
+    }
 
-        return back()->with('success', 'Sub-task progress updated');
+    /**
+     * Shared gate for the lead's on-site sign-off: they lead this job, the
+     * report is against a sub-task, and it is not their own work.
+     */
+    private function authorizeLeadSignOff(\App\Models\ProgressReport $progressReport): Technician
+    {
+        $technician = auth()->user()->technician;
+        $serviceRequest = $progressReport->serviceRequest;
+
+        if (!$technician || !$serviceRequest || !$serviceRequest->isLeadTechnician($technician->id)) {
+            abort(403, 'Only the lead technician can sign off sub-task progress on this job.');
+        }
+
+        if (!$progressReport->service_sub_task_id) {
+            abort(403, 'A whole-job report is settled by the project team, not on site.');
+        }
+
+        // Nobody rules on their own account. That covers both a lead who
+        // holds a sub-task themselves, and a lead ratifying a report they
+        // wrote on someone else's behalf — the second is the whole reason
+        // on-behalf reports carry an author separate from their subject.
+        if ((int) $progressReport->technician_id === (int) $technician->id) {
+            abort(403, 'Your own sub-task progress is settled by the project team, not by you.');
+        }
+
+        if ((int) $progressReport->submitted_by === (int) auth()->id()) {
+            abort(403, 'You wrote this report, so the project team ratifies it rather than you.');
+        }
+
+        // Once the office has sent a report back and the lead has answered it,
+        // settling it is the office's — otherwise the lead could correct the
+        // figure and then ratify their own correction on site.
+        if ($progressReport->revised_by_lead_at !== null) {
+            abort(403, 'You answered this one, so the project team settles it rather than you.');
+        }
+
+        return $technician;
     }
 }

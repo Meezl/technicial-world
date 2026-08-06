@@ -139,6 +139,12 @@ class ServiceRequestController extends Controller
         $serviceRequest->load([
             'serviceCategory',
             'technician.user',
+            'leadTechnician.user',
+            // A project split into sub-tasks reads as one opaque job to the
+            // client without this — they see a single percentage and no idea
+            // which trade is where. Daily reports are filed per sub-task, so
+            // the breakdown is what makes them legible.
+            'subTasks.technician.user:id,name',
             'paymentRequests',
             'payments',
             // Only validated reports get photos eager-loaded; client never
@@ -150,6 +156,7 @@ class ServiceRequestController extends Controller
                 $q->where('removed_by_pm', false);
             },
             'progressReports.technician.user:id,name',
+            'progressReports.subTask:id,title',
             // Photos on the job itself — the client's own evidence plus
             // anything the team deliberately shared with them.
             'photos' => function ($q) {

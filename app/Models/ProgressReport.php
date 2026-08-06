@@ -24,7 +24,28 @@ class ProgressReport extends Model
         'validation_notes',
         'client_visible_notes',
         'is_pm_authored',
+        'authored_as',
+        'validated_as',
+        'approved_by_lead_at',
+        'rejected_at',
+        'rejected_by',
+        'rejected_as',
+        'rejection_reason',
+        'revised_by_lead_at',
     ];
+
+    /**
+     * The standing someone had when they wrote or ratified a report. Distinct
+     * from technician_id, which says whose work the report is about — the two
+     * differ whenever one person files on another's behalf.
+     */
+    const AS_TECHNICIAN = 'technician';
+    const AS_LEAD = 'lead';
+    const AS_PROJECT_MANAGER = 'project_manager';
+    const AS_ADMIN = 'admin';
+
+    /** Capacities that mean "the office", as opposed to on site. */
+    const OFFICE_CAPACITIES = [self::AS_PROJECT_MANAGER, self::AS_ADMIN];
 
     protected $casts = [
         'report_date' => 'date',
@@ -33,7 +54,76 @@ class ProgressReport extends Model
         'is_pm_authored' => 'boolean',
         'percent_complete' => 'integer',
         'validated_percent' => 'integer',
+        'approved_by_lead_at' => 'datetime',
+        'rejected_at' => 'datetime',
+        'revised_by_lead_at' => 'datetime',
     ];
+
+    /**
+     * Still on the office's desk: never validated, or validated on site by a
+     * lead — which moves progress but deliberately does not release billing,
+     * so a PM still has to look at it. Reports a lead has sent back are not
+     * here; they were resolved on site and are the technician's to redo.
+     */
+    public function scopeNeedsOfficeAction($query)
+    {
+        return $query->where(function ($q) {
+            $q->where(function ($unvalidated) {
+                $unvalidated->where('is_validated', false)->whereNull('rejected_at');
+            })->orWhereNotNull('approved_by_lead_at');
+        });
+    }
+
+    public function isRejected(): bool
+    {
+        return $this->rejected_at !== null;
+    }
+
+    /**
+     * Sent back by the office, so it is the lead's to edit or comment on
+     * before it goes back up. A lead's own rejection lands on the crew member
+     * instead, who redoes the work and files afresh.
+     */
+    public function isReturnedToLead(): bool
+    {
+        return $this->rejected_at !== null
+            && in_array($this->rejected_as, self::OFFICE_CAPACITIES, true);
+    }
+
+    /**
+     * Waiting on the lead to revise it. Distinct from needsOfficeAction —
+     * these are off the office's desk until the lead sends them back up.
+     */
+    public function scopeAwaitingLeadRevision($query)
+    {
+        return $query->whereNotNull('rejected_at')
+            ->whereIn('rejected_as', self::OFFICE_CAPACITIES);
+    }
+
+    /**
+     * True when the person whose work this is did not write it — a lead
+     * covering for a crew member, or the office catching a job up. Worth
+     * saying out loud on screen: a report about someone's work that they did
+     * not write is a different kind of evidence.
+     */
+    public function isOnBehalf(): bool
+    {
+        return $this->authored_as !== null
+            && $this->authored_as !== self::AS_TECHNICIAN;
+    }
+
+    /**
+     * Map a user's role onto the capacity they act in. The lead capacity is
+     * per-job rather than a role, so callers pass that one explicitly.
+     */
+    public static function capacityForRole(?string $role): string
+    {
+        return match ($role) {
+            User::ROLE_ADMIN => self::AS_ADMIN,
+            User::ROLE_PROJECT_MANAGER => self::AS_PROJECT_MANAGER,
+            default => self::AS_TECHNICIAN,
+        };
+    }
 
     public function serviceRequest(): BelongsTo
     {
@@ -58,6 +148,11 @@ class ProgressReport extends Model
     public function validator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'validated_by');
+    }
+
+    public function rejector(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'rejected_by');
     }
 
     /**

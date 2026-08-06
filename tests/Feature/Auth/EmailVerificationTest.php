@@ -82,6 +82,49 @@ class EmailVerificationTest extends TestCase
         Notification::assertNothingSentTo($user);
     }
 
+    /**
+     * An expired link used to render Laravel's bare "403 | Invalid
+     * signature." page — a dead end with no resend button, which is where
+     * users landed when they opened the email hours later.
+     */
+    public function test_expired_verification_link_returns_to_the_prompt_instead_of_a_403(): void
+    {
+        $user = User::factory()->unverified()->create();
+
+        $verificationUrl = URL::temporarySignedRoute(
+            'verification.verify',
+            now()->subMinute(),
+            ['id' => $user->id, 'hash' => sha1($user->email)]
+        );
+
+        $this->actingAs($user)
+            ->get($verificationUrl)
+            ->assertRedirect(route('verification.notice'))
+            ->assertSessionHas('error');
+
+        $this->assertFalse($user->fresh()->hasVerifiedEmail());
+    }
+
+    /**
+     * Other signed routes must keep failing hard — this is a targeted
+     * rescue for the verification link, not a blanket signature bypass.
+     */
+    public function test_a_tampered_signature_on_another_signed_route_still_fails(): void
+    {
+        $user = User::factory()->unverified()->create();
+
+        $url = URL::temporarySignedRoute(
+            'verification.verify',
+            now()->addMinutes(60),
+            ['id' => $user->id, 'hash' => sha1($user->email)]
+        );
+
+        // Same link with the signature mangled: still not a way in.
+        $this->actingAs($user)->get($url . 'tampered');
+
+        $this->assertFalse($user->fresh()->hasVerifiedEmail());
+    }
+
     public function test_email_is_not_verified_with_invalid_hash(): void
     {
         $user = User::factory()->unverified()->create();

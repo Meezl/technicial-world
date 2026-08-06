@@ -681,7 +681,21 @@
                                     </div>
                                 </div>
 
-                                <div v-if="!report.is_validated && progressValidationForms[report.id]" class="admin-validation-form">
+                                <!-- Already sent back and awaiting the lead's
+                                     answer. Checked before the validation form
+                                     because a returned report is unvalidated
+                                     too, and offering to approve one that is
+                                     out for a recount invites approving the
+                                     figure that was queried. -->
+                                <div v-if="isWithLead(report)" class="admin-returned-banner">
+                                    <i class="fas fa-hourglass-half"></i>
+                                    <div>
+                                        <strong>With the lead technician</strong>
+                                        <p v-if="report.rejection_reason">{{ report.rejection_reason }}</p>
+                                    </div>
+                                </div>
+
+                                <div v-else-if="!report.is_validated && progressValidationForms[report.id]" class="admin-validation-form">
                                     <div class="form-row">
                                         <div class="form-group">
                                             <label>Validated %</label>
@@ -728,10 +742,37 @@
                                             {{ progressValidationForms[report.id].admin_photo_files.length }} photo(s) selected
                                         </small>
                                     </div>
-                                    <button class="btn btn-primary btn-sm" @click="validateProgressReport(report.id)">
-                                        <i class="fas fa-check-circle"></i>
-                                        Approve Progress
-                                    </button>
+                                    <div class="admin-decision-actions">
+                                        <button class="btn btn-primary btn-sm" @click="validateProgressReport(report.id)">
+                                            <i class="fas fa-check-circle"></i>
+                                            Approve Progress
+                                        </button>
+                                        <!-- Not every report is a yes or a no.
+                                             When the figure needs a second look
+                                             on site, the lead is the one who
+                                             can do it. -->
+                                        <button class="btn btn-outline btn-sm admin-return-btn" @click="openReturnReport(report.id)">
+                                            <i class="fas fa-reply"></i>
+                                            Send back to lead
+                                        </button>
+                                    </div>
+
+                                    <div v-if="returningReportId === report.id" class="admin-return-box">
+                                        <label>What do you need the lead to look at?</label>
+                                        <textarea
+                                            v-model="returnReason"
+                                            rows="3"
+                                            class="form-control"
+                                            placeholder="e.g. Photos show six panels but the report claims eight — please recount before I approve."
+                                        ></textarea>
+                                        <p v-if="returnError" class="admin-return-error">{{ returnError }}</p>
+                                        <div class="admin-decision-actions">
+                                            <button class="btn btn-primary btn-sm" @click="submitReturnReport(report.id)">
+                                                Send back
+                                            </button>
+                                            <button class="btn btn-outline btn-sm" @click="cancelReturnReport()">Cancel</button>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div v-else-if="report.is_validated && report.technician_id" class="admin-payout-row">
@@ -2961,6 +3002,45 @@ const validateProgressReport = (reportId) => {
     }
 }
 
+// Sent back and awaiting the lead's answer. Mirrors
+// ProgressReport::isReturnedToLead.
+const OFFICE_CAPACITIES = ['project_manager', 'admin']
+const isWithLead = (report) =>
+    Boolean(report.rejected_at && OFFICE_CAPACITIES.includes(report.rejected_as))
+
+const returningReportId = ref(null)
+const returnReason = ref('')
+const returnError = ref('')
+
+const openReturnReport = (reportId) => {
+    returningReportId.value = reportId
+    returnReason.value = ''
+    returnError.value = ''
+}
+
+const cancelReturnReport = () => {
+    returningReportId.value = null
+    returnReason.value = ''
+    returnError.value = ''
+}
+
+const submitReturnReport = (reportId) => {
+    if (returnReason.value.trim().length < 5) {
+        returnError.value = 'Give the lead something to act on — a few words at least.'
+        return
+    }
+
+    router.post(`/admin/progress-reports/${reportId}/return`, {
+        rejection_reason: returnReason.value.trim(),
+    }, {
+        preserveScroll: true,
+        onSuccess: () => cancelReturnReport(),
+        onError: (errors) => {
+            returnError.value = errors.rejection_reason || 'Could not send that back.'
+        },
+    })
+}
+
 const getTechnicianAgreedCompensation = (report) => {
     // Look for the technician's agreed compensation from their direct assignment
     const directAssignment = (props.job.job_assignments || [])
@@ -4218,6 +4298,60 @@ defineOptions({
     background: #f8fbfd;
     border: 1px dashed #cbd5e1;
 }
+
+.admin-decision-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .6rem;
+    align-items: center;
+}
+
+.admin-return-btn {
+    border-color: #bae6fd;
+    color: #075985;
+}
+
+.admin-return-box {
+    margin-top: .85rem;
+    padding: .85rem;
+    border-radius: 12px;
+    background: #f0f9ff;
+    border: 1px dashed #bae6fd;
+}
+
+.admin-return-box label {
+    display: block;
+    font-size: .82rem;
+    font-weight: 600;
+    color: #075985;
+    margin-bottom: .4rem;
+}
+
+.admin-return-box textarea {
+    margin-bottom: .6rem;
+}
+
+.admin-return-error {
+    margin: 0 0 .6rem;
+    font-size: .8rem;
+    color: #b91c1c;
+}
+
+.admin-returned-banner {
+    margin-top: 1rem;
+    padding: .9rem 1rem;
+    border-radius: 16px;
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    color: #075985;
+    display: flex;
+    gap: .6rem;
+    align-items: flex-start;
+    font-size: .88rem;
+}
+
+.admin-returned-banner strong { display: block; }
+.admin-returned-banner p { margin: .2rem 0 0; line-height: 1.45; }
 
 .admin-payout-row {
     margin-top: 1rem;

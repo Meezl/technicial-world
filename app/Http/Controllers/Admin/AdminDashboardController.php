@@ -351,14 +351,84 @@ class AdminDashboardController extends Controller
 
         $adminPhotos = $request->hasFile('admin_photos') ? $request->file('admin_photos') : [];
 
+        // Recorded as an admin ratification so the report can say who settled
+        // it, and releases billing — the office decision it has always been.
         app(ProgressService::class)->validate($progressReport, auth()->id(), $request->only([
             'validated_percent',
             'validation_notes',
             'client_visible_notes',
             'remove_photo_ids',
-        ]), $adminPhotos);
+        ]), $adminPhotos, validatedAs: \App\Models\ProgressReport::AS_ADMIN);
 
         return back()->with('success', 'Progress validated.');
+    }
+
+    /**
+     * Send a report back to the lead technician with a reason.
+     *
+     * The office's counterpart of a lead returning work to their crew. Often
+     * a question rather than a verdict — the lead can correct the figure,
+     * rewrite the notes, or answer with a comment and put it up again.
+     */
+    public function returnProgressReport(Request $request, ProgressReport $progressReport)
+    {
+        $data = $request->validate([
+            'rejection_reason' => 'required|string|min:5|max:1000',
+        ], [
+            'rejection_reason.required' => 'Tell the lead what you need looking at.',
+            'rejection_reason.min' => 'Give the lead something to act on — a few words at least.',
+        ]);
+
+        app(ProgressService::class)->reject(
+            $progressReport,
+            auth()->id(),
+            $data['rejection_reason'],
+            \App\Models\ProgressReport::AS_ADMIN
+        );
+
+        return back()->with('success', 'Sent back to the lead technician.');
+    }
+
+    /**
+     * Admin files a progress report on a technician's behalf.
+     *
+     * The counterpart of the PM's route and of a lead covering for their crew:
+     * when nobody on site got the report in, the office can put the record
+     * straight. The report is about the named technician's work and says on
+     * its face that an admin wrote it.
+     */
+    public function createProgressOnBehalf(Request $request, ServiceRequest $serviceRequest)
+    {
+        $data = $request->validate([
+            'percent_complete'    => 'required|integer|min:0|max:100',
+            'notes'               => 'nullable|string|max:2000',
+            'report_date'         => 'nullable|date',
+            'technician_id'       => 'nullable|integer|exists:technicians,id',
+            'service_sub_task_id' => 'nullable|integer|exists:service_sub_tasks,id',
+            'photos'              => 'nullable|array|max:6',
+            'photos.*'            => 'nullable|file|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
+        ]);
+
+        if (!empty($data['service_sub_task_id'])) {
+            $subTask = $serviceRequest->subTasks()->find($data['service_sub_task_id']);
+            if (!$subTask) {
+                return back()->withErrors([
+                    'service_sub_task_id' => 'That sub-task does not belong to this job.',
+                ]);
+            }
+            // Attribute to whoever holds the sub-task unless told otherwise.
+            $data['technician_id'] = $data['technician_id'] ?? $subTask->technician_id;
+        }
+
+        app(ProgressService::class)->createOnBehalf(
+            $serviceRequest,
+            auth()->id(),
+            $data,
+            $request->file('photos', []),
+            authoredAs: \App\Models\ProgressReport::AS_ADMIN
+        );
+
+        return back()->with('success', 'Progress report filed on the technician\'s behalf.');
     }
 
     /**
@@ -965,8 +1035,16 @@ class AdminDashboardController extends Controller
             (float) $request->agreed_compensation
         );
 
+        // technician_id is the job's primary assignee and is read all over
+        // the app — the client's "Assigned Technician", job completion,
+        // ratings. Writing only lead_technician_id here left it NULL for the
+        // whole life of a project staffed lead-first, because
+        // assignSubTaskTechnician only backfills it when there is no lead
+        // yet. assignSubTaskTechnician already sets both together; this
+        // keeps the two staffing routes consistent.
         $serviceRequest->update([
             'lead_technician_id' => $technician->id,
+            'technician_id' => $technician->id,
         ]);
 
         // If the job isn't assigned yet, also set it as assigned

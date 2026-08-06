@@ -103,9 +103,7 @@ class JobPhotoController extends Controller
             $technicianId = $user->technician?->id;
             if (!$technicianId) return false;
 
-            return $serviceRequest->technician_id === $technicianId
-                || $serviceRequest->lead_technician_id === $technicianId
-                || $serviceRequest->subTasks()->where('technician_id', $technicianId)->exists();
+            return $serviceRequest->hasTechnician($technicianId);
         }
 
         return false;

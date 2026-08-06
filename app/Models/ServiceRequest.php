@@ -481,6 +481,104 @@ class ServiceRequest extends Model
         return $query->where('assigned_pm_id', $pmId);
     }
 
+    /**
+     * Statuses of a JobAssignment that still mean "this technician works
+     * on this job". Declined and reassigned rows are history, not access.
+     */
+    public const LIVE_ASSIGNMENT_STATUSES = [
+        JobAssignment::STATUS_PENDING,
+        JobAssignment::STATUS_ACCEPTED,
+        JobAssignment::STATUS_COMPLETED,
+    ];
+
+    /**
+     * Every job a technician is attached to, however they got there.
+     *
+     * A technician reaches a job through four different columns depending
+     * on how ops set it up: a single-technician job writes
+     * `technician_id`; a project with sub-tasks writes `lead_technician_id`
+     * plus a `service_sub_tasks` row per technician; the PM and admin
+     * assignment flows also write a `job_assignments` row, and that row is
+     * sometimes the *only* record for a technician brought onto an
+     * existing project.
+     *
+     * ReportingService has always read all four, which is why a technician
+     * could see their agreed fee on the Earnings screen while their Jobs
+     * list, dashboard and job page behaved as if they weren't on the job at
+     * all — those read only two. This scope is the one definition of
+     * membership; use it (or hasTechnician()) everywhere.
+     */
+    public function scopeForTechnician($query, int $technicianId)
+    {
+        return $query->where(function ($q) use ($technicianId) {
+            $q->where('technician_id', $technicianId)
+                ->orWhere('lead_technician_id', $technicianId)
+                ->orWhereHas('subTasks', fn ($sub) => $sub->where('technician_id', $technicianId))
+                ->orWhereHas('jobAssignments', fn ($a) => $a
+                    ->where('technician_id', $technicianId)
+                    ->whereIn('status', self::LIVE_ASSIGNMENT_STATUSES));
+        });
+    }
+
+    /**
+     * Row-level counterpart of scopeForTechnician() — the authorization
+     * check for "may this technician open / report on this job?".
+     */
+    public function hasTechnician(int $technicianId): bool
+    {
+        if ($this->isPrimaryTechnician($technicianId)) {
+            return true;
+        }
+
+        if ($this->subTasks()->where('technician_id', $technicianId)->exists()) {
+            return true;
+        }
+
+        return $this->jobAssignments()
+            ->where('technician_id', $technicianId)
+            ->whereIn('status', self::LIVE_ASSIGNMENT_STATUSES)
+            ->exists();
+    }
+
+    /**
+     * Attached to the job at job level rather than through a sub-task. Used
+     * for membership, not for authority — see isLeadTechnician().
+     */
+    public function isPrimaryTechnician(int $technicianId): bool
+    {
+        return (int) $this->technician_id === $technicianId
+            || (int) $this->lead_technician_id === $technicianId;
+    }
+
+    /**
+     * The one technician who speaks for the whole job: reporting on it as a
+     * whole, and closing it.
+     *
+     * lead_technician_id wins wherever it is set, because on a project with
+     * sub-tasks technician_id is whoever happened to be assigned first and
+     * can name a different person entirely (REQ-X6HTRO: technician_id 54,
+     * lead 28). Only a job that was never split falls back to technician_id,
+     * where the sole assignee is by definition the lead.
+     */
+    public function isLeadTechnician(int $technicianId): bool
+    {
+        if ($this->lead_technician_id) {
+            return (int) $this->lead_technician_id === $technicianId;
+        }
+
+        return (int) $this->technician_id === $technicianId;
+    }
+
+    /**
+     * A job is run as a project when it actually carries sub-tasks — the
+     * has_sub_tasks flag alone has been left set on jobs whose sub-tasks were
+     * since deleted.
+     */
+    public function isSplitIntoSubTasks(): bool
+    {
+        return $this->subTasks()->exists();
+    }
+
     public function scopeActive($query)
     {
         return $query->whereNotIn('status', [

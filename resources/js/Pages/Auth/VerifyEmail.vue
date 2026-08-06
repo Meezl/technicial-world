@@ -22,6 +22,9 @@ const verificationLinkSent = computed(
 
 const page = usePage();
 const denialReason = computed(() => page.props.flash?.verification_denied_reason);
+// Set when an expired / already-used verification link bounced the user
+// back here instead of showing the bare 403 "Invalid signature." page.
+const flashError = computed(() => page.props.flash?.error);
 </script>
 
 <template>
@@ -31,6 +34,10 @@ const denialReason = computed(() => page.props.flash?.verification_denied_reason
         <div v-if="denialReason" class="mb-4 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">
             <strong>Access paused.</strong><br />
             {{ denialReason }}
+        </div>
+
+        <div v-if="flashError" class="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            {{ flashError }}
         </div>
 
         <div class="mb-4 text-sm text-gray-600">

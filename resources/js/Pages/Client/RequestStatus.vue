@@ -561,7 +561,11 @@
                             <i class="fas fa-hard-hat"></i>
                             <div>
                                 <h4>Work In Progress</h4>
-                                <p>{{ serviceRequest.technician?.user?.name }} is currently working on your request.</p>
+                                <p v-if="hasSubTasks && crewNames.length">
+                                    {{ crewNames.join(', ') }}
+                                    {{ crewNames.length > 1 ? 'are' : 'is' }} currently working on your request<span v-if="leadTechnicianName">, led by {{ leadTechnicianName }}</span>.
+                                </p>
+                                <p v-else>{{ leadTechnicianName }} is currently working on your request.</p>
                                 <div class="progress-display">
                                     <div class="progress-bar-large">
                                         <div class="progress" :style="`width: ${displayProgressPct}%`"></div>
@@ -578,6 +582,34 @@
                         <button @click="confirmCompletion" class="btn btn-success" :disabled="processingAction">
                             <i class="fas fa-check-circle"></i> {{ processingAction ? 'Processing...' : 'Confirm Work Completed' }}
                         </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Work breakdown — only for jobs actually split into sub-tasks. -->
+            <section class="panel-section" v-if="hasSubTasks">
+                <div class="panel-card full-width">
+                    <div class="card-header">
+                        <h3>Work Breakdown</h3>
+                        <small style="color:var(--text-muted);">Each part of the job and how far along it is</small>
+                    </div>
+                    <div class="subtask-progress-list">
+                        <article v-for="task in subTasks" :key="task.id" class="subtask-progress-card">
+                            <div class="spc-top">
+                                <div>
+                                    <strong>{{ task.title }}</strong>
+                                    <p v-if="task.technician?.user?.name" class="spc-tech">
+                                        {{ task.technician.user.name }}
+                                    </p>
+                                    <p v-else class="spc-tech spc-tech-muted">Technician being assigned</p>
+                                </div>
+                                <span class="spc-status">{{ subTaskStatusLabel(task.status) }}</span>
+                            </div>
+                            <div class="spc-bar">
+                                <div :style="`width:${task.progress_percentage || 0}%`"></div>
+                            </div>
+                            <span class="spc-pct">{{ task.progress_percentage || 0 }}%</span>
+                        </article>
                     </div>
                 </div>
             </section>
@@ -599,6 +631,12 @@
                                     <div class="prc-meta">
                                         <strong>{{ formatDate(report.report_date) }}</strong>
                                         <span v-if="report.technician?.user?.name"> · {{ report.technician.user.name }}</span>
+                                        <!-- Without this a day with three
+                                             reports reads as three
+                                             contradictory percentages. -->
+                                        <span v-if="report.sub_task?.title" class="prc-subtask">
+                                            {{ report.sub_task.title }}
+                                        </span>
                                         <span class="prc-validated-at">Validated {{ formatDate(report.validated_at) }}</span>
                                     </div>
                                 </div>
@@ -967,6 +1005,35 @@ const validatedReports = computed(() => {
         .filter(r => r.is_validated)
         .sort((a, b) => new Date(b.report_date || b.created_at) - new Date(a.report_date || a.created_at))
 })
+
+// Work breakdown. A project run as sub-tasks was invisible to the client:
+// they saw one blended percentage and a single technician name, with no way
+// to tell which part of the job the day's report belonged to.
+const subTasks = computed(() => props.serviceRequest.sub_tasks || [])
+const hasSubTasks = computed(() => subTasks.value.length > 0)
+
+const crewNames = computed(() => {
+    const names = subTasks.value
+        .map((t) => t.technician?.user?.name)
+        .filter(Boolean)
+    return [...new Set(names)]
+})
+
+// Whoever the client should picture on site: the lead on a split project,
+// the sole assignee otherwise.
+const leadTechnicianName = computed(() =>
+    props.serviceRequest.lead_technician?.user?.name
+        || props.serviceRequest.technician?.user?.name
+        || null,
+)
+
+const subTaskStatusLabel = (status) =>
+    ({
+        pending: 'Not started',
+        assigned: 'Scheduled',
+        in_progress: 'In progress',
+        completed: 'Complete',
+    })[status] || 'Scheduled'
 const processingQuote = ref(false)
 const processingAction = ref(false)
 const processingPayment = ref(false)
@@ -2368,6 +2435,44 @@ defineOptions({
 .prc-meta { font-size: .85rem; color: #6b7280; display: flex; flex-direction: column; gap: .15rem; }
 .prc-meta strong { color: #111827; }
 .prc-validated-at { font-size: .75rem; opacity: .75; }
+.prc-subtask {
+    align-self: flex-start;
+    font-size: .72rem;
+    font-weight: 600;
+    color: #1d4ed8;
+    background: #eff6ff;
+    border-radius: 999px;
+    padding: .12rem .5rem;
+    margin: .15rem 0;
+}
+
+/* Work breakdown */
+.subtask-progress-list { display: flex; flex-direction: column; gap: .85rem; padding: 0 1rem 1rem; }
+.subtask-progress-card {
+    border: 1px solid #e5e7eb;
+    border-radius: .6rem;
+    padding: .75rem .85rem;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: .45rem .75rem;
+    align-items: center;
+}
+.spc-top { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: flex-start; gap: .75rem; }
+.spc-top strong { color: #111827; font-size: .95rem; }
+.spc-tech { margin: .15rem 0 0; font-size: .8rem; color: #6b7280; }
+.spc-tech-muted { font-style: italic; color: #9ca3af; }
+.spc-status {
+    white-space: nowrap;
+    font-size: .72rem;
+    font-weight: 600;
+    color: #374151;
+    background: #f3f4f6;
+    border-radius: 999px;
+    padding: .18rem .55rem;
+}
+.spc-bar { height: 6px; border-radius: 999px; background: #e5e7eb; overflow: hidden; }
+.spc-bar > div { height: 100%; background: linear-gradient(90deg, #10b981, #059669); transition: width .4s ease; }
+.spc-pct { font-size: .8rem; font-weight: 600; color: #374151; }
 .prc-progress-bar { width: 160px; height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; }
 .prc-progress-bar > div { height: 100%; background: linear-gradient(90deg,#10b981,#059669); transition: width .3s; }
 .prc-notes { white-space: pre-wrap; line-height: 1.5; color: #374151; margin: 0 0 .75rem; }
