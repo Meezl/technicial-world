@@ -219,13 +219,17 @@ const settle = (r) => {
     border-radius: 999px; background: #E5E7EB; color: #374151; font-size: .72rem;
 }
 
+/* Informational blue rather than warning amber. Owing a client money is a
+   task to pick up, not something that has gone wrong — and amber next to
+   genuine warnings elsewhere on the page would make both mean less. Matches
+   the scope note on the client's variation card. */
 .rf-credit {
     display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;
     padding: .85rem 1rem; border-radius: 8px;
-    background: #FEF3C7; border: 1px solid #F59E0B;
+    background: #E8F0FB; border: 1px solid #C7D8EE; border-left: 4px solid #053272;
 }
-.rf-credit strong { color: #92400E; font-size: .95rem; }
-.rf-credit p { margin: .25rem 0 0; font-size: .8rem; color: #92400E; line-height: 1.5; max-width: 46ch; }
+.rf-credit strong { color: #16325c; font-size: .95rem; }
+.rf-credit p { margin: .25rem 0 0; font-size: .8rem; color: #16325c; line-height: 1.5; max-width: 46ch; }
 
 .rf-form {
     border: 1px solid #E5E7EB; border-radius: 8px; padding: 1rem;
