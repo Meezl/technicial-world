@@ -565,21 +565,22 @@ class PMDashboardController extends Controller
     {
         $this->authorizeForPm($serviceRequest);
 
-        $request->validate([
+        $data = $request->validate([
             'technician_id' => 'required|exists:technicians,id',
             'original_amount' => 'required|numeric|min:0',
             'proposed_amount' => 'required|numeric|min:0',
             'justification' => 'required|string|min:20',
+            // Which scope change this fee movement relates to. Required by
+            // the service when the job has variations to cite.
+            'variation_order_id' => 'nullable|exists:variation_orders,id',
         ]);
 
-        CompensationAmendment::create([
-            'service_request_id' => $serviceRequest->id,
-            'technician_id' => $request->technician_id,
-            'requested_by' => auth()->id(),
-            'original_amount' => $request->original_amount,
-            'proposed_amount' => $request->proposed_amount,
-            'justification' => $request->justification,
-        ]);
+        try {
+            app(\App\Services\CompensationAmendmentService::class)
+                ->request($serviceRequest, $data, $request->user());
+        } catch (\RuntimeException $e) {
+            return back()->withErrors(['variation_order_id' => $e->getMessage()])->withInput();
+        }
 
         return redirect()->back()->with('success', 'Compensation amendment submitted for admin approval.');
     }

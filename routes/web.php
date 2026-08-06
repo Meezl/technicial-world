@@ -468,4 +468,26 @@ Route::middleware(['auth', 'role:admin,project_manager'])->group(function () {
         ->name('jobs.documents.destroy');
 });
 
+// ==================== VARIATION ORDERS ====================
+// Signed, numbered changes stacked on an approved quote. The client is asked
+// about the delta only — never re-sent the whole quotation.
+Route::middleware(['auth', 'role:admin,project_manager'])->group(function () {
+    Route::post('/jobs/{serviceRequest}/variations', [\App\Http\Controllers\Admin\VariationOrderController::class, 'store'])
+        ->name('variations.store');
+    Route::post('/variations/{variationOrder}/send', [\App\Http\Controllers\Admin\VariationOrderController::class, 'send'])
+        ->name('variations.send');
+    Route::post('/variations/{variationOrder}/void', [\App\Http\Controllers\Admin\VariationOrderController::class, 'void'])
+        ->name('variations.void');
+    // Zero-income only — anything the client pays for is theirs to agree to.
+    Route::post('/variations/{variationOrder}/approve-internal', [\App\Http\Controllers\Admin\VariationOrderController::class, 'approveInternal'])
+        ->name('variations.approve-internal');
+});
+
+Route::middleware(['auth'])->group(function () {
+    Route::post('/client/variations/{variationOrder}/approve', [\App\Http\Controllers\ClientVariationOrderController::class, 'approve'])
+        ->name('client.variations.approve');
+    Route::post('/client/variations/{variationOrder}/decline', [\App\Http\Controllers\ClientVariationOrderController::class, 'decline'])
+        ->name('client.variations.decline');
+});
+
 require __DIR__ . '/auth.php';

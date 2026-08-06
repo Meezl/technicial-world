@@ -809,6 +809,18 @@
                     <article class="job-shell-card">
                         <div class="job-card-header">
                             <div>
+                                <span class="section-kicker">Scope</span>
+                                <h3>Variations</h3>
+                                <p>Changes stacked on the approved quote. The client is asked about the difference, never the whole quotation again.</p>
+                            </div>
+                        </div>
+
+                        <VariationOrdersPanel :job="job" :ledger="variationLedger" />
+                    </article>
+
+                    <article class="job-shell-card">
+                        <div class="job-card-header">
+                            <div>
                                 <span class="section-kicker">Finance</span>
                                 <h3>Budget and payments</h3>
                                 <p>Track budget consumption, actual spend, and payment context without leaving the job.</p>
@@ -1881,6 +1893,7 @@
 <script setup>
 import AdminSidebar from '../../Components/AdminSidebar.vue'
 import ImageLightbox from '../../Components/ImageLightbox.vue'
+import VariationOrdersPanel from '../../Components/VariationOrdersPanel.vue'
 import { Link } from '@inertiajs/vue3'
 import { ref, computed, reactive } from 'vue'
 import { router } from '@inertiajs/vue3'
@@ -1895,6 +1908,14 @@ const props = defineProps({
         default: () => []
     },
     budgetSummary: {
+        type: Object,
+        default: null
+    },
+    billingSummary: {
+        type: Object,
+        default: null
+    },
+    variationLedger: {
         type: Object,
         default: null
     }

@@ -19,6 +19,7 @@ class ReqBillingMilestone extends Model
 {
     protected $fillable = [
         'service_request_id',
+        'variation_order_id',
         'label',
         'progress_pct',
         'amount',
@@ -41,6 +42,20 @@ class ReqBillingMilestone extends Model
     public function paymentRequest(): BelongsTo
     {
         return $this->belongsTo(PaymentRequest::class);
+    }
+
+    /**
+     * Set when this milestone bills a variation rather than the original
+     * quote. Null means it belongs to the quote itself.
+     */
+    public function variationOrder(): BelongsTo
+    {
+        return $this->belongsTo(VariationOrder::class);
+    }
+
+    public function belongsToVariation(): bool
+    {
+        return $this->variation_order_id !== null;
     }
 
     /**

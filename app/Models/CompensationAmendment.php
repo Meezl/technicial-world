@@ -9,6 +9,7 @@ class CompensationAmendment extends Model
 {
     protected $fillable = [
         'service_request_id',
+        'variation_order_id',
         'technician_id',
         'requested_by',
         'original_amount',
@@ -33,6 +34,21 @@ class CompensationAmendment extends Model
     public function serviceRequest(): BelongsTo
     {
         return $this->belongsTo(ServiceRequest::class);
+    }
+
+    /**
+     * The scope change this fee movement relates to. Null for corrections
+     * that have no variation behind them.
+     */
+    public function variationOrder(): BelongsTo
+    {
+        return $this->belongsTo(VariationOrder::class);
+    }
+
+    /** Signed movement — negative when the fee is being reduced. */
+    public function delta(): float
+    {
+        return round((float) $this->proposed_amount - (float) $this->original_amount, 2);
     }
 
     public function technician(): BelongsTo

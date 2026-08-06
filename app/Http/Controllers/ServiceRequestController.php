@@ -173,10 +173,26 @@ class ServiceRequestController extends Controller
             'tickets' => function ($q) {
                 $q->where('type', \App\Models\Ticket::TYPE_CALLOUT);
             },
+            // Variations. Internal ones are excluded at the query, not in the
+            // view — a zero-income card must never reach the client, and
+            // filtering in Blade is one forgotten condition away from a leak.
+            'variationOrders' => function ($q) {
+                $q->where('is_client_visible', true)
+                  ->whereIn('status', [
+                      \App\Models\VariationOrder::STATUS_PENDING_CLIENT,
+                      \App\Models\VariationOrder::STATUS_APPROVED,
+                      \App\Models\VariationOrder::STATUS_DECLINED,
+                  ]);
+            },
+            'variationOrders.items',
         ]);
 
         return Inertia::render('Client/RequestStatus', [
             'serviceRequest' => $serviceRequest,
+            // Quote, then every variation, then the value after each — so the
+            // client can see how the job got to its current figure instead of
+            // being handed a new total with no history.
+            'variationLedger' => app(\App\Services\VariationOrderService::class)->ledger($serviceRequest),
             // Bank details for the Bank Deposit payment method — client sees
             // where to send the money without having to hunt through emails.
             // Config-driven so we edit once (config/services.php) not per view.

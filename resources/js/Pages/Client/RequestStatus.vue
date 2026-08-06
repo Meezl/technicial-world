@@ -184,6 +184,14 @@
                             </table>
                         </div>
 
+                        <!-- Changes to the job. Placed above the payment block
+                             on purpose: a client should see what is being asked
+                             of them before they are asked to pay anything. -->
+                        <ClientVariationCards
+                            :service-request="serviceRequest"
+                            :ledger="variationLedger"
+                        />
+
                         <!-- Payment Request Section -->
                         <div v-if="pendingPaymentRequest" id="payment" ref="paymentSection" class="payment-request-section">
                             <div class="payment-request-header">
@@ -878,6 +886,7 @@ import axios from 'axios'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
 import ClientBottomNav from '../../Components/ClientBottomNav.vue'
 import JobPhotoGallery from '../../Components/JobPhotoGallery.vue'
+import ClientVariationCards from '../../Components/ClientVariationCards.vue'
 import PhotoUploader from '../../Components/PhotoUploader.vue'
 
 const props = defineProps({
@@ -888,6 +897,12 @@ const props = defineProps({
     // Bank transfer details rendered on the Bank Deposit payment form.
     // Nullable so an unset config just hides the block instead of crashing.
     bank: {
+        type: Object,
+        default: null,
+    },
+    // Original quote, every client-visible variation, and the value after
+    // each — so the client can see how the job reached its current figure.
+    variationLedger: {
         type: Object,
         default: null,
     },

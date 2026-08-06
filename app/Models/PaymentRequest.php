@@ -12,6 +12,7 @@ class PaymentRequest extends Model
         'payment_request_id',
         'service_request_id',
         'ticket_id',
+        'variation_order_id',
         'user_id',
         'requested_by',
         'percentage',
@@ -65,6 +66,12 @@ class PaymentRequest extends Model
     public function ticket(): BelongsTo
     {
         return $this->belongsTo(Ticket::class);
+    }
+
+    /** The variation this bills for, when it is not the original quote. */
+    public function variationOrder(): BelongsTo
+    {
+        return $this->belongsTo(VariationOrder::class);
     }
 
     public function serviceRequest(): BelongsTo
