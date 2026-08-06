@@ -256,6 +256,12 @@ class ServiceRequest extends Model
         return $this->hasMany(VariationOrder::class)->orderBy('id');
     }
 
+    /** Money owed back to the client on this job. */
+    public function refunds()
+    {
+        return $this->hasMany(Refund::class)->orderByDesc('created_at');
+    }
+
     /** Tickets raised under this job — site visits, samples, callbacks. */
     public function tickets()
     {

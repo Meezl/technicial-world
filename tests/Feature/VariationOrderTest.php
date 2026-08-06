@@ -173,16 +173,18 @@ class VariationOrderTest extends TestCase
     }
 
     /**
-     * A deduction may not pull the contract below money the client has
-     * already paid — the job would never reconcile.
+     * Descoping work the client has already paid for is allowed, and leaves
+     * them in credit. It used to be refused because there was no way to give
+     * money back; now that refunds exist, refusing it would only push the
+     * descope off the system. The credit has to be loudly visible instead.
      */
-    public function test_a_deduction_cannot_go_below_what_the_client_has_paid(): void
+    public function test_a_deduction_below_what_was_paid_leaves_the_client_in_credit(): void
     {
         [$sr, $client, $admin] = $this->makeJob(['quote_amount' => 100000]);
         $billing = app(BillingService::class);
 
         PaymentRequest::create([
-            'payment_request_id' => 'PAY-VO-1',
+            'payment_request_id' => 'PAY-VO-CREDIT',
             'service_request_id' => $sr->id,
             'user_id' => $client->id,
             'requested_by' => $admin->id,
@@ -197,8 +199,26 @@ class VariationOrderTest extends TestCase
             'items' => [['category' => 'labor', 'description' => 'Removed scope', 'quantity' => 1, 'unit_price' => -50000]],
         ], $admin);
 
+        $this->service()->approve($vo, $admin, $billing);
+
+        $this->assertSame(50000.0, $billing->contractValue($sr->fresh()));
+        $this->assertSame(40000.0, $billing->creditBalance($sr->fresh()), 'The client is owed 40,000.');
+        $this->assertCount(1, app(\App\Services\RefundService::class)->jobsInUnhandledCredit());
+    }
+
+    /** A deduction still cannot take the contract negative — that is a typo. */
+    public function test_a_deduction_cannot_take_the_contract_below_zero(): void
+    {
+        [$sr, , $admin] = $this->makeJob(['quote_amount' => 100000]);
+        $billing = app(BillingService::class);
+
+        $vo = $this->service()->create($sr, [
+            'reason' => 'Fat-fingered descope',
+            'items' => [['category' => 'labor', 'description' => 'Removed scope', 'quantity' => 1, 'unit_price' => -150000]],
+        ], $admin);
+
         $this->expectException(RuntimeException::class);
-        $this->expectExceptionMessage('already paid');
+        $this->expectExceptionMessage('below zero');
         $this->service()->approve($vo, $admin, $billing);
     }
 
