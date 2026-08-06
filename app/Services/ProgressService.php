@@ -8,6 +8,7 @@ use App\Models\ProgressReportNoteVersion;
 use App\Models\JobPhoto;
 use App\Models\ServiceRequest;
 use App\Models\ServiceSubTask;
+use App\Models\TechnicianPayment;
 use App\Models\User;
 use App\Models\AuditLog;
 use Illuminate\Http\UploadedFile;
@@ -332,6 +333,153 @@ class ProgressService
         if ($releaseBilling) {
             $this->triggerBillingMilestones($serviceRequest->fresh(), (float) $effectivePercent);
         }
+    }
+
+    /**
+     * Remove a report from circulation — the duplicate a technician filed by
+     * tapping twice, or a claim that should never have been made.
+     *
+     * Distinct from reject(): a rejection is an argument about what was done
+     * and stays visible to everyone. A removal is housekeeping — the report
+     * was never meant to exist and should stop cluttering the job.
+     *
+     * Three things this deliberately does NOT do:
+     *
+     *  · it does not unwind billing. A milestone that has raised a payment
+     *    request keeps it, because the client may already have paid. Progress
+     *    dropping cannot un-bill, and milestones never re-bill, so removing a
+     *    report is safe in both directions.
+     *  · it does not touch a technician payout. If someone has been paid
+     *    against this report the removal is refused outright — that is real
+     *    money out and needs unwinding deliberately, not as a side effect.
+     *  · it does not destroy the row. Photos cascade from this table and
+     *    payouts point at it.
+     */
+    public function deleteReport(ProgressReport $report, int $userId, string $reason): ProgressReport
+    {
+        if (trim($reason) === '') {
+            throw new \RuntimeException('Removing a report needs a reason.');
+        }
+
+        $paidAgainst = TechnicianPayment::where('progress_report_id', $report->id)
+            ->whereIn('status', ['processing', 'completed'])
+            ->exists();
+
+        if ($paidAgainst) {
+            throw new \RuntimeException(
+                'A technician has already been paid against this report. Reverse the payment first, '
+                . 'or send the report back instead of removing it.'
+            );
+        }
+
+        return DB::transaction(function () use ($report, $userId, $reason) {
+            $serviceRequest = $report->serviceRequest;
+            $subTask = $report->subTask;
+
+            $report->update([
+                'deleted_by'      => $userId,
+                'deletion_reason' => $reason,
+            ]);
+            $report->delete();
+
+            AuditLog::log(AuditLog::ACTION_DELETED, $report, null, [
+                'reason'           => $reason,
+                'percent_complete' => $report->percent_complete,
+                'was_validated'    => (bool) $report->is_validated,
+            ]);
+
+            // Rebuild progress from what is left. A removed report must not
+            // keep propping up a percentage it was the only evidence for.
+            if ($subTask) {
+                $this->resyncSubTask($subTask);
+            }
+
+            $this->recomputeAfterRemoval($serviceRequest->fresh());
+
+            return $report->fresh();
+        });
+    }
+
+    /**
+     * Recompute a job's percentage after a report has been taken out.
+     *
+     * Not updateServiceRequestProgress(): that treats "no validated reports"
+     * as "nothing to say" and leaves the existing figure alone, which is
+     * right when a report arrives and wrong here. Removing the only evidence
+     * for 75% has to take the job back to zero, or the number outlives the
+     * report it came from.
+     *
+     * Billing is deliberately not released. A milestone that has already
+     * raised a payment request keeps it — the client may have paid — and
+     * milestones never bill twice, so nothing re-fires when progress climbs
+     * back.
+     */
+    private function recomputeAfterRemoval(ServiceRequest $serviceRequest): void
+    {
+        $percent = $serviceRequest->isSplitIntoSubTasks()
+            ? $this->aggregateSubTaskProgress($serviceRequest)
+            : ($this->latestValidatedPercent($serviceRequest) ?? 0);
+
+        $update = ['progress_percentage' => $percent];
+
+        // A job that was closed on the strength of a report that has now gone
+        // should not stay closed.
+        if ($percent < 100 && $serviceRequest->status === ServiceRequest::STATUS_COMPLETED) {
+            $update['status'] = ServiceRequest::STATUS_IN_PROGRESS;
+        }
+
+        $serviceRequest->update($update);
+    }
+
+    /**
+     * Recompute a sub-task from its surviving validated reports. Falls back
+     * to zero when the removed report was the only one.
+     */
+    private function resyncSubTask(ServiceSubTask $subTask): void
+    {
+        $latest = ProgressReport::where('service_sub_task_id', $subTask->id)
+            ->where('is_validated', true)
+            ->orderByDesc('report_date')
+            ->orderByDesc('id')
+            ->first();
+
+        $percent = $latest
+            ? (int) ($latest->validated_percent ?? $latest->percent_complete)
+            : 0;
+
+        $update = ['progress_percentage' => $percent];
+
+        if ($percent >= 100) {
+            $update['status'] = ServiceSubTask::STATUS_COMPLETED;
+        } elseif ($percent > 0) {
+            $update['status'] = ServiceSubTask::STATUS_IN_PROGRESS;
+            $update['completed_at'] = null;
+        } else {
+            $update['status'] = ServiceSubTask::STATUS_ASSIGNED;
+            $update['completed_at'] = null;
+        }
+
+        $subTask->update($update);
+    }
+
+    /**
+     * Put a removed report back, with progress recomputed to include it again.
+     */
+    public function restoreReport(ProgressReport $report, int $userId): ProgressReport
+    {
+        return DB::transaction(function () use ($report, $userId) {
+            $report->restore();
+            $report->update(['deleted_by' => null, 'deletion_reason' => null]);
+
+            AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, ['restored_by' => $userId]);
+
+            if ($report->subTask) {
+                $this->resyncSubTask($report->subTask);
+            }
+            $this->recomputeAfterRemoval($report->serviceRequest->fresh());
+
+            return $report->fresh();
+        });
     }
 
     /**

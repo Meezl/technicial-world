@@ -490,6 +490,19 @@ Route::middleware(['auth'])->group(function () {
         ->name('client.variations.decline');
 });
 
+// ==================== PROGRESS REPORT REMOVAL ====================
+// Duplicates happen — a technician taps submit twice on a poor connection and
+// the 90-second guard only catches the fast case. Admin and PM can take a
+// report out of circulation; it stays in the record, and a report a
+// technician has been paid against is refused.
+Route::middleware(['auth', 'role:admin,project_manager'])->group(function () {
+    Route::delete('/progress-reports/{progressReport}', [\App\Http\Controllers\Admin\ProgressReportController::class, 'destroy'])
+        ->name('progress-reports.destroy');
+    Route::post('/progress-reports/{progressReport}/restore', [\App\Http\Controllers\Admin\ProgressReportController::class, 'restore'])
+        ->withTrashed()
+        ->name('progress-reports.restore');
+});
+
 // ==================== REFUNDS ====================
 // Money owed back to a client. Raising is open to admin and PM; approving is
 // admin-only and enforced in RefundService, so the rule holds wherever a
