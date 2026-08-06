@@ -164,10 +164,12 @@ class ServiceRequestController extends Controller
             },
             // Only documents deliberately shared. Case analyses, margin
             // thinking and internal notes stay internal — the flag defaults
-            // to false precisely so nothing leaks by omission.
+            // to false precisely so nothing leaks by omission. Includes the
+            // client's own PDF uploads, which are client-visible by nature.
             'documents' => function ($q) {
-                $q->clientVisible();
+                $q->clientVisible()->latest();
             },
+            'documents.uploader:id,name',
             // Site visits and samples the client was charged for, so an
             // attendance fee on their statement has something to point at.
             'tickets' => function ($q) {

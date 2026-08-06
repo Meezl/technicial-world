@@ -725,6 +725,99 @@
                 </div>
             </section>
 
+            <!-- Documents & drawings. A photo shows a snag; a PDF drawing or
+                 spec is often how the work itself is described. Same "share it
+                 on the job" affordance the client has for photos, and the
+                 place any drawing the team shared back finally shows up. -->
+            <section class="panel-section" v-if="serviceRequest.status !== 'completed' || jobDocuments.length">
+                <div class="panel-card full-width">
+                    <div class="card-header">
+                        <h3>Documents &amp; Drawings</h3>
+                        <small style="color:var(--text-muted);">
+                            Share a drawing, sketch or spec (PDF) — the team on your job will see it
+                        </small>
+                    </div>
+
+                    <ul v-if="jobDocuments.length" class="client-doc-list">
+                        <li v-for="doc in jobDocuments" :key="doc.id" class="client-doc-row">
+                            <a
+                                :href="`/storage/${doc.path}`"
+                                target="_blank"
+                                rel="noopener"
+                                class="client-doc-main"
+                            >
+                                <i class="fas fa-file-pdf client-doc-icon"></i>
+                                <span class="client-doc-text">
+                                    <strong>{{ doc.title || doc.original_name }}</strong>
+                                    <span class="client-doc-meta">
+                                        <span v-if="isMyDocument(doc)" class="client-doc-tag mine">Shared by you</span>
+                                        <span v-else class="client-doc-tag team">From the team</span>
+                                        <span v-if="doc.size_bytes"> · {{ formatFileSize(doc.size_bytes) }}</span>
+                                    </span>
+                                </span>
+                            </a>
+                            <button
+                                v-if="isMyDocument(doc)"
+                                type="button"
+                                class="client-doc-remove"
+                                title="Remove this document"
+                                @click="removeJobDocument(doc)"
+                            >
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </li>
+                    </ul>
+
+                    <p v-else class="empty-photos-note">
+                        No documents yet. Attach a PDF below and the team working on your job will see it.
+                    </p>
+
+                    <form
+                        v-if="serviceRequest.status !== 'completed'"
+                        class="client-doc-form"
+                        @submit.prevent="submitJobDocuments"
+                    >
+                        <label class="client-doc-picker">
+                            <i class="fas fa-file-pdf"></i>
+                            <span>Choose PDF{{ newDocuments.length ? ` — ${newDocuments.length} selected` : '' }}</span>
+                            <input
+                                ref="documentInput"
+                                type="file"
+                                accept="application/pdf,.pdf"
+                                multiple
+                                hidden
+                                @change="onDocumentsPicked"
+                            />
+                        </label>
+
+                        <ul v-if="newDocuments.length" class="client-doc-pending">
+                            <li v-for="(file, i) in newDocuments" :key="i">
+                                <i class="fas fa-file-pdf"></i> {{ file.name }}
+                                <span class="client-doc-meta">{{ formatFileSize(file.size) }}</span>
+                            </li>
+                        </ul>
+
+                        <p v-if="documentError" class="client-doc-error">{{ documentError }}</p>
+
+                        <button
+                            type="submit"
+                            class="btn btn-primary"
+                            style="margin-top:.75rem;"
+                            :disabled="!newDocuments.length || uploadingDocuments"
+                        >
+                            <span v-if="uploadingDocuments">
+                                <i class="fas fa-spinner fa-spin"></i> Uploading… {{ documentProgress }}%
+                            </span>
+                            <span v-else>
+                                <i class="fas fa-upload"></i>
+                                Share {{ newDocuments.length || '' }} document{{ newDocuments.length === 1 ? '' : 's' }}
+                            </span>
+                        </button>
+                        <p class="client-doc-hint">PDF only, up to 6 files, 20 MB each.</p>
+                    </form>
+                </div>
+            </section>
+
             <section class="panel-section" v-if="serviceRequest.status !== 'pending'">
                 <div class="panel-card full-width">
                     <div class="card-header">
@@ -898,7 +991,7 @@
 <script setup>
 import { Link } from '@inertiajs/vue3'
 import { reactive, ref, computed, onMounted, nextTick } from 'vue'
-import { router } from '@inertiajs/vue3'
+import { router, usePage } from '@inertiajs/vue3'
 import axios from 'axios'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
 import ClientBottomNav from '../../Components/ClientBottomNav.vue'
@@ -972,6 +1065,77 @@ function submitJobPhotos() {
             uploadingJobPhotos.value = false
         },
     })
+}
+
+// ---- Client documents (drawings, sketches, specs in PDF) -------------------
+const documentInput = ref(null)
+const newDocuments = ref([])
+const uploadingDocuments = ref(false)
+const documentProgress = ref(0)
+const documentError = ref('')
+
+const authUserId = computed(() => usePage().props.auth?.user?.id ?? null)
+
+// Everything client-visible on this job: the client's own uploads and any
+// drawing or brief the team deliberately shared. Ordered newest-first by the
+// server.
+const jobDocuments = computed(() => props.serviceRequest.documents || [])
+
+const isMyDocument = (doc) => doc.uploaded_by != null && doc.uploaded_by === authUserId.value
+
+function onDocumentsPicked(event) {
+    documentError.value = ''
+    const picked = Array.from(event.target.files || [])
+    const rejected = picked.filter((f) => f.type !== 'application/pdf')
+
+    if (rejected.length) {
+        documentError.value = 'Only PDF files can be attached here. For a photo, use the photo uploader above.'
+    }
+
+    newDocuments.value = picked.filter((f) => f.type === 'application/pdf').slice(0, 6)
+}
+
+function submitJobDocuments() {
+    if (!newDocuments.value.length) return
+
+    const formData = new FormData()
+    newDocuments.value.forEach((file, index) => formData.append(`documents[${index}]`, file))
+
+    uploadingDocuments.value = true
+    documentProgress.value = 0
+
+    router.post(`/client/service-request/${props.serviceRequest.id}/documents`, formData, {
+        forceFormData: true,
+        preserveScroll: true,
+        onProgress: (event) => {
+            if (event?.percentage != null) documentProgress.value = event.percentage
+        },
+        onSuccess: () => {
+            uploadingDocuments.value = false
+            newDocuments.value = []
+            documentError.value = ''
+            if (documentInput.value) documentInput.value.value = ''
+        },
+        onError: (errors) => {
+            uploadingDocuments.value = false
+            documentError.value = errors['documents.0'] || errors.documents || 'Could not upload that. Please try again.'
+        },
+    })
+}
+
+function removeJobDocument(doc) {
+    if (!confirm('Remove this document from the job?')) return
+
+    router.delete(`/client/service-request/${props.serviceRequest.id}/documents/${doc.id}`, {
+        preserveScroll: true,
+    })
+}
+
+function formatFileSize(bytes) {
+    if (!bytes && bytes !== 0) return ''
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 // Which bank value was just copied to the clipboard; drives the icon swap
@@ -1573,6 +1737,89 @@ defineOptions({
 </script>
 
 <style>
+
+/* Client documents & drawings */
+.client-doc-list {
+    list-style: none;
+    margin: 0 0 1rem;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+}
+.client-doc-row {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    border: 1px solid #e5e7eb;
+    border-radius: .55rem;
+    padding: .6rem .7rem;
+    background: #fff;
+}
+.client-doc-main {
+    display: flex;
+    align-items: center;
+    gap: .65rem;
+    flex: 1;
+    min-width: 0;
+    text-decoration: none;
+    color: inherit;
+}
+.client-doc-icon { color: #dc2626; font-size: 1.35rem; flex-shrink: 0; }
+.client-doc-text { min-width: 0; }
+.client-doc-text strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.client-doc-meta { font-size: .78rem; color: var(--text-muted, #6b7280); }
+.client-doc-tag {
+    font-size: .68rem;
+    font-weight: 700;
+    padding: .08rem .4rem;
+    border-radius: 999px;
+}
+.client-doc-tag.mine { color: #1d4ed8; background: #eff6ff; }
+.client-doc-tag.team { color: #047857; background: #ecfdf5; }
+.client-doc-remove {
+    border: none;
+    background: transparent;
+    color: #9ca3af;
+    cursor: pointer;
+    padding: .3rem .45rem;
+    border-radius: .4rem;
+    flex-shrink: 0;
+}
+.client-doc-remove:hover { color: #dc2626; background: #fef2f2; }
+
+.client-doc-form { margin-top: .25rem; }
+.client-doc-picker {
+    display: inline-flex;
+    align-items: center;
+    gap: .55rem;
+    padding: .6rem .9rem;
+    border: 1px dashed #cbd5e1;
+    border-radius: .55rem;
+    color: #334155;
+    cursor: pointer;
+    font-size: .9rem;
+}
+.client-doc-picker:hover { border-color: #94a3b8; background: #f8fafc; }
+.client-doc-pending {
+    list-style: none;
+    margin: .6rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: .3rem;
+    font-size: .85rem;
+    color: #334155;
+}
+.client-doc-pending li { display: flex; align-items: center; gap: .45rem; }
+.client-doc-pending i { color: #dc2626; }
+.client-doc-error { margin: .6rem 0 0; font-size: .82rem; color: #b91c1c; }
+.client-doc-hint { margin: .45rem 0 0; font-size: .76rem; color: var(--text-muted, #6b7280); }
 
 /* Top-of-page payment alert — mirrors the dashboard's payment-due
    card language so a client who came from there sees continuity. */

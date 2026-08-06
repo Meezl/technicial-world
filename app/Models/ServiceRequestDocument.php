@@ -41,6 +41,10 @@ class ServiceRequestDocument extends Model
     const KIND_PHOTO         = 'photo';
     const KIND_QUOTE_SUPPORT = 'quote_support';
     const KIND_APPROVAL      = 'approval';
+    // A drawing, sketch or document the client sent in — in construction these
+    // are often the actual brief, not an afterthought. Kept distinct from the
+    // documents ops produce so who sent a file is legible at a glance.
+    const KIND_CLIENT_UPLOAD = 'client_upload';
     const KIND_OTHER         = 'other';
 
     const KINDS = [
@@ -49,8 +53,14 @@ class ServiceRequestDocument extends Model
         self::KIND_PHOTO,
         self::KIND_QUOTE_SUPPORT,
         self::KIND_APPROVAL,
+        self::KIND_CLIENT_UPLOAD,
         self::KIND_OTHER,
     ];
+
+    public function isClientUpload(): bool
+    {
+        return $this->kind === self::KIND_CLIENT_UPLOAD;
+    }
 
     public function serviceRequest(): BelongsTo
     {

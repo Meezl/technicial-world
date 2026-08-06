@@ -98,6 +98,11 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/client/schedule-extensions/{scheduleExtension}/decide', [\App\Http\Controllers\ScheduleExtensionController::class, 'clientDecide'])->name('client.schedule-extensions.decide');
     Route::post('/client/service-request/{serviceRequest}/rate', [\App\Http\Controllers\ClientController::class, 'rateJob'])->name('client.rate-job');
 
+    // Client-attached documents (drawings, sketches, specs in PDF) — the
+    // document counterpart of the job-photo upload the client already has.
+    Route::post('/client/service-request/{serviceRequest}/documents', [\App\Http\Controllers\ClientDocumentController::class, 'store'])->name('client.documents.store');
+    Route::delete('/client/service-request/{serviceRequest}/documents/{document}', [\App\Http\Controllers\ClientDocumentController::class, 'destroy'])->name('client.documents.destroy');
+
     // Client payment routes
     Route::post('/client/payments/{paymentRequest}/mpesa', [\App\Http\Controllers\PaymentController::class, 'initiateMpesa'])->name('client.payments.mpesa');
     Route::get('/client/payments/{paymentRequest}/status', [\App\Http\Controllers\PaymentController::class, 'checkMpesaStatus'])->name('client.payments.status');
