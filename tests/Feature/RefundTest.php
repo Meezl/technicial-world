@@ -144,6 +144,97 @@ class RefundTest extends TestCase
         $this->assertSame(20000.0, $inCredit->first()['credit']);
     }
 
+    /**
+     * The credit query duplicates BillingService's arithmetic in SQL for
+     * speed. This is the guard against the two drifting apart — if anyone
+     * changes how a balance is worked out, one of these figures moves and
+     * this fails, rather than the credit report quietly going stale.
+     */
+    public function test_the_credit_query_agrees_with_the_billing_service(): void
+    {
+        Notification::fake();
+        $billing = app(BillingService::class);
+
+        // A spread of shapes: plain overpayment, a descope, a descope with a
+        // refund already owed, and a job that is square.
+        [$plain, , $adminA] = $this->makeJob(80000, 100000);
+
+        [$descoped, , $adminB] = $this->makeJob(100000, 100000);
+        $vo = app(VariationOrderService::class)->create($descoped, [
+            'reason' => 'Descope',
+            'items' => [['category' => 'labor', 'description' => 'Removed', 'quantity' => 1, 'unit_price' => -30000]],
+        ], $adminB);
+        app(VariationOrderService::class)->approve($vo, $adminB, $billing);
+
+        [$partly, , $adminC] = $this->makeJob(100000, 100000);
+        $vo2 = app(VariationOrderService::class)->create($partly, [
+            'reason' => 'Descope',
+            'items' => [['category' => 'labor', 'description' => 'Removed', 'quantity' => 1, 'unit_price' => -40000]],
+        ], $adminC);
+        app(VariationOrderService::class)->approve($vo2, $adminC, $billing);
+        $this->service()->approve(
+            $this->service()->request($partly->fresh(), $this->payload([
+                'amount' => 25000, 'category' => Refund::CATEGORY_SCOPE_REDUCTION,
+            ]), $adminC),
+            $adminC
+        );
+
+        [$square] = $this->makeJob(100000, 100000);
+
+        $rows = $this->service()->jobsInUnhandledCredit()->keyBy(fn ($r) => $r['service_request']->id);
+
+        foreach ([$plain, $descoped, $partly, $square] as $sr) {
+            $expected = $billing->creditBalance($sr->fresh());
+            $reported = $rows->get($sr->id)['credit'] ?? 0.0;
+
+            $this->assertSame(
+                $expected > 0.01 ? $expected : 0.0,
+                $reported,
+                "Credit disagrees with BillingService on {$sr->request_id}."
+            );
+        }
+
+        // The square job must not appear at all.
+        $this->assertFalse($rows->has($square->id));
+        $this->assertSame(20000.0, $rows->get($plain->id)['credit']);
+        $this->assertSame(30000.0, $rows->get($descoped->id)['credit']);
+        $this->assertSame(15000.0, $rows->get($partly->id)['credit'], '40,000 owed less 25,000 already refunded.');
+    }
+
+    /**
+     * The point of moving this into SQL: adding jobs must not add queries.
+     * Asserted by running it twice over different volumes rather than
+     * hard-coding a number, so it stays true if an eager-load is added.
+     */
+    public function test_the_credit_report_does_not_scale_with_the_number_of_jobs(): void
+    {
+        Notification::fake();
+
+        $count = function () {
+            \Illuminate\Support\Facades\DB::flushQueryLog();
+            \Illuminate\Support\Facades\DB::enableQueryLog();
+            $rows = $this->service()->jobsInUnhandledCredit();
+            $queries = count(\Illuminate\Support\Facades\DB::getQueryLog());
+            \Illuminate\Support\Facades\DB::disableQueryLog();
+
+            return [$rows->count(), $queries];
+        };
+
+        for ($i = 0; $i < 3; $i++) {
+            $this->makeJob(80000, 100000);
+        }
+        [$rowsA, $queriesA] = $count();
+
+        for ($i = 0; $i < 9; $i++) {
+            $this->makeJob(80000, 100000);
+        }
+        [$rowsB, $queriesB] = $count();
+
+        $this->assertSame(3, $rowsA);
+        $this->assertSame(12, $rowsB, 'Four times the jobs...');
+        $this->assertSame($queriesA, $queriesB, '...and the same number of queries.');
+    }
+
     public function test_a_refund_cannot_exceed_what_was_received(): void
     {
         [$sr, , , $pm] = $this->makeJob(100000, 40000);

@@ -227,19 +227,68 @@ class RefundService
     }
 
     /**
-     * Jobs where the client has paid more than the job is now worth, with no
-     * refund raised. This is the case a deduction creates and nobody notices.
+     * Jobs where the client has paid more than the job is now worth. This is
+     * the state a deduction creates and nobody notices.
+     *
+     * Done in SQL rather than by walking every job: the previous version
+     * loaded the whole table and fired three queries per row to work out the
+     * balance, which is survivable at a hundred jobs and not at ten thousand.
+     *
+     * The cost is that the arithmetic now exists twice — here, and in
+     * BillingService, which remains the source of truth. That duplication is
+     * a real risk, so RefundTest asserts the two agree on the same job; if
+     * anyone changes how a balance is computed, that test fails rather than
+     * this quietly reporting stale figures.
      */
     public function jobsInUnhandledCredit()
     {
+        $creditExpression = $this->creditBalanceSql();
+
         return ServiceRequest::query()
             ->whereNotNull('quote_amount')
+            ->select('service_requests.*')
+            ->selectRaw("ROUND({$creditExpression}, 2) as credit_balance", $this->creditBalanceBindings())
+            ->whereRaw("{$creditExpression} > 0.01", $this->creditBalanceBindings())
+            ->orderByRaw("{$creditExpression} DESC", $this->creditBalanceBindings())
+            ->with('user:id,name,email')
             ->get()
             ->map(fn ($sr) => [
                 'service_request' => $sr,
-                'credit'          => $this->billing->creditBalance($sr),
-            ])
-            ->filter(fn ($row) => $row['credit'] > 0.01)
-            ->values();
+                'credit'          => round((float) $sr->credit_balance, 2),
+            ]);
+    }
+
+    /**
+     * Credit balance as SQL: what the client has paid, less refunds already
+     * owed back, less what the job is worth (quote plus approved variations).
+     *
+     * Mirrors BillingService::creditBalance(). Kept as one string so both the
+     * select and the filter use the same expression rather than drifting.
+     */
+    private function creditBalanceSql(): string
+    {
+        return '('
+            . '  COALESCE((SELECT SUM(pr.amount) FROM payment_requests pr'
+            . '            WHERE pr.service_request_id = service_requests.id'
+            . '              AND pr.ticket_id IS NULL AND pr.status = ?), 0)'
+            . '- COALESCE((SELECT SUM(rf.amount) FROM refunds rf'
+            . '            WHERE rf.service_request_id = service_requests.id'
+            . '              AND rf.status IN (?, ?)), 0)'
+            . '- service_requests.quote_amount'
+            . '- COALESCE((SELECT SUM(vo.net_amount) FROM variation_orders vo'
+            . '            WHERE vo.service_request_id = service_requests.id'
+            . '              AND vo.status = ?), 0)'
+            . ')';
+    }
+
+    /** @return array<int, string> in the order the expression uses them. */
+    private function creditBalanceBindings(): array
+    {
+        return [
+            \App\Models\PaymentRequest::STATUS_PAID,
+            Refund::STATUS_APPROVED,
+            Refund::STATUS_SETTLED,
+            \App\Models\VariationOrder::STATUS_APPROVED,
+        ];
     }
 }
