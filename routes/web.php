@@ -503,6 +503,13 @@ Route::middleware(['auth', 'role:admin,project_manager'])->group(function () {
         ->name('progress-reports.restore');
 });
 
+// Overruling a lead technician's on-site sign-off is admin territory. A PM
+// who disagrees sends the report back instead.
+Route::middleware(['auth', 'role:admin'])->group(function () {
+    Route::post('/progress-reports/{progressReport}/override-lead', [\App\Http\Controllers\Admin\ProgressReportController::class, 'overrideLead'])
+        ->name('progress-reports.override-lead');
+});
+
 // ==================== REFUNDS ====================
 // Money owed back to a client. Raising is open to admin and PM; approving is
 // admin-only and enforced in RefundService, so the rule holds wherever a

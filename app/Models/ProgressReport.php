@@ -42,6 +42,13 @@ class ProgressReport extends Model
         'revised_by_lead_at',
         'deleted_by',
         'deletion_reason',
+        'restored_at',
+        'restored_by',
+        'restore_reason',
+        'lead_override_at',
+        'lead_overridden_by',
+        'lead_override_reason',
+        'lead_approved_percent',
     ];
 
     /**
@@ -67,6 +74,9 @@ class ProgressReport extends Model
         'approved_by_lead_at' => 'datetime',
         'rejected_at' => 'datetime',
         'revised_by_lead_at' => 'datetime',
+        'restored_at' => 'datetime',
+        'lead_override_at' => 'datetime',
+        'lead_approved_percent' => 'integer',
     ];
 
     /**

@@ -253,11 +253,31 @@ class ProgressReportRemovalTest extends TestCase
         $progress->deleteReport($report, $admin->id, 'Removed by mistake.');
         $this->assertSame(0, (int) $sr->fresh()->progress_percentage);
 
-        $progress->restoreReport($report->fresh(['serviceRequest']), $admin->id);
+        $progress->restoreReport($report->fresh(['serviceRequest']), $admin->id, 'Removed in error — it was the genuine report.');
 
         $this->assertNotSoftDeleted('progress_reports', ['id' => $report->id]);
         $this->assertSame(75, (int) $sr->fresh()->progress_percentage);
-        $this->assertNull($report->fresh()->deletion_reason);
+
+        // Both halves of the story survive: why it went, and why it came back.
+        $restored = $report->fresh();
+        $this->assertStringContainsString('mistake', $restored->deletion_reason);
+        $this->assertStringContainsString('genuine', $restored->restore_reason);
+        $this->assertSame($admin->id, $restored->restored_by);
+        $this->assertNotNull($restored->restored_at);
+    }
+
+    public function test_restoring_needs_a_reason(): void
+    {
+        Notification::fake();
+        [$sr, $tech, $admin] = $this->makeJob();
+        $progress = app(ProgressService::class);
+
+        $report = $this->report($sr, $tech, 50);
+        $progress->deleteReport($report, $admin->id, 'Duplicate.');
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Restoring a report needs a reason');
+        $progress->restoreReport($report->fresh(['serviceRequest']), $admin->id, '  ');
     }
 
     public function test_an_admin_can_remove_through_the_endpoint(): void
@@ -317,5 +337,143 @@ class ProgressReportRemovalTest extends TestCase
             ->get(route('admin.jobs.show', $sr))
             ->assertOk()
             ->assertInertia(fn ($page) => $page->has('job.progress_reports', 1));
+    }
+
+    // ==================== overruling a lead's sign-off ====================
+
+    private function leadSignedReport(ServiceRequest $sr, Technician $t, int $percent): ProgressReport
+    {
+        return ProgressReport::create([
+            'service_request_id' => $sr->id,
+            'technician_id' => $t->id,
+            'submitted_by' => $t->user_id,
+            'report_date' => now()->toDateString(),
+            'percent_complete' => $percent,
+            'is_validated' => true,
+            'validated_percent' => $percent,
+            'validated_at' => now(),
+            'validated_as' => ProgressReport::AS_LEAD,
+            'approved_by_lead_at' => now(),
+        ]);
+    }
+
+    public function test_an_admin_can_overrule_a_lead_and_the_lead_figure_survives(): void
+    {
+        Notification::fake();
+        Mail::fake();
+        [$sr, $tech, $admin] = $this->makeJob();
+
+        $report = $this->leadSignedReport($sr, $tech, 90);
+
+        app(ProgressService::class)->overrideLeadSignoff(
+            $report, $admin, 60, 'Site visit found the second fix incomplete.'
+        );
+
+        $after = $report->fresh();
+        $this->assertSame(60, (int) $after->validated_percent, 'The office figure stands.');
+        $this->assertSame(90, (int) $after->lead_approved_percent, 'What the lead signed is preserved.');
+        $this->assertSame($admin->id, $after->lead_overridden_by);
+        $this->assertNotNull($after->lead_override_at);
+        $this->assertStringContainsString('second fix', $after->lead_override_reason);
+        $this->assertSame(60, (int) $sr->fresh()->progress_percentage);
+    }
+
+    /** A PM who disagrees with a lead sends it back — they do not overrule. */
+    public function test_a_pm_cannot_overrule_a_lead(): void
+    {
+        Notification::fake();
+        [$sr, $tech, , $pm] = $this->makeJob();
+        $report = $this->leadSignedReport($sr, $tech, 90);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Only an admin may overrule a lead');
+        app(ProgressService::class)->overrideLeadSignoff($report, $pm, 60, 'Disagree.');
+    }
+
+    public function test_a_report_with_no_lead_signoff_cannot_be_overruled(): void
+    {
+        Notification::fake();
+        [$sr, $tech, $admin] = $this->makeJob();
+        $report = $this->report($sr, $tech, 50);   // office-validated, no lead
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('no lead sign-off to overrule');
+        app(ProgressService::class)->overrideLeadSignoff($report, $admin, 40, 'Reason.');
+    }
+
+    public function test_overruling_needs_a_reason(): void
+    {
+        Notification::fake();
+        [$sr, $tech, $admin] = $this->makeJob();
+        $report = $this->leadSignedReport($sr, $tech, 90);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Overruling a lead needs a reason');
+        app(ProgressService::class)->overrideLeadSignoff($report, $admin, 60, '   ');
+    }
+
+    /**
+     * Overruling consumes the lead's sign-off: the report becomes the
+     * office's, so there is nothing left to overrule and a second attempt is
+     * refused. Changing the figure again is ordinary validation, which admin
+     * already has. The lead's original number stays on the record either way.
+     */
+    public function test_overruling_consumes_the_lead_signoff(): void
+    {
+        Notification::fake();
+        Mail::fake();
+        [$sr, $tech, $admin] = $this->makeJob();
+        $report = $this->leadSignedReport($sr, $tech, 90);
+        $progress = app(ProgressService::class);
+
+        $progress->overrideLeadSignoff($report, $admin, 60, 'First correction.');
+
+        $after = $report->fresh();
+        $this->assertNull($after->approved_by_lead_at, 'The sign-off has been settled by the office.');
+        $this->assertSame(90, (int) $after->lead_approved_percent);
+
+        // A further change goes through normal validation, not another override.
+        $progress->validate($after, $admin->id, ['validated_percent' => 70], [], true, ProgressReport::AS_ADMIN);
+        $this->assertSame(70, (int) $report->fresh()->validated_percent);
+        $this->assertSame(90, (int) $report->fresh()->lead_approved_percent, 'Still the lead figure.');
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('no lead sign-off to overrule');
+        $progress->overrideLeadSignoff($report->fresh(), $admin, 80, 'Third go.');
+    }
+
+    public function test_the_override_endpoint_is_admin_only(): void
+    {
+        Notification::fake();
+        [$sr, $tech, , $pm] = $this->makeJob();
+        $report = $this->leadSignedReport($sr, $tech, 90);
+
+        $this->actingAs($pm)
+            ->post(route('progress-reports.override-lead', $report), [
+                'validated_percent' => 60,
+                'reason' => 'Disagree with the lead.',
+            ])
+            ->assertForbidden();
+
+        $this->assertNull($report->fresh()->lead_override_at);
+    }
+
+    public function test_an_admin_overrules_through_the_endpoint(): void
+    {
+        Notification::fake();
+        Mail::fake();
+        [$sr, $tech, $admin] = $this->makeJob();
+        $report = $this->leadSignedReport($sr, $tech, 90);
+
+        $this->actingAs($admin)
+            ->post(route('progress-reports.override-lead', $report), [
+                'validated_percent' => 55,
+                'reason' => 'Second fix not complete on inspection.',
+            ])
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame(55, (int) $report->fresh()->validated_percent);
+        $this->assertSame(90, (int) $report->fresh()->lead_approved_percent);
     }
 }

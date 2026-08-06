@@ -463,15 +463,97 @@ class ProgressService
     }
 
     /**
-     * Put a removed report back, with progress recomputed to include it again.
+     * Overrule a lead technician's sign-off from the office.
+     *
+     * The office could always amend a lead-approved report — validate() sets
+     * its own percentage — but it left no trace of being an override. The
+     * lead's figure was simply overwritten, so nobody could see afterwards
+     * that a decision made on site had been changed, by whom, or why.
+     *
+     * Admin only, deliberately. A PM disagreeing with a lead should send the
+     * report back and have the conversation; overruling someone who was
+     * physically on site is a heavier act and belongs with the office's
+     * final authority.
      */
-    public function restoreReport(ProgressReport $report, int $userId): ProgressReport
-    {
-        return DB::transaction(function () use ($report, $userId) {
-            $report->restore();
-            $report->update(['deleted_by' => null, 'deletion_reason' => null]);
+    public function overrideLeadSignoff(
+        ProgressReport $report,
+        User $actor,
+        int $validatedPercent,
+        string $reason,
+        array $data = []
+    ): ProgressReport {
+        if ($actor->role !== User::ROLE_ADMIN) {
+            throw new \RuntimeException(
+                'Only an admin may overrule a lead technician. Send the report back instead.'
+            );
+        }
 
-            AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, ['restored_by' => $userId]);
+        if (!$report->approved_by_lead_at) {
+            throw new \RuntimeException('This report has no lead sign-off to overrule.');
+        }
+
+        if (trim($reason) === '') {
+            throw new \RuntimeException('Overruling a lead needs a reason.');
+        }
+
+        // Capture what the lead actually signed off before validate()
+        // overwrites validated_percent with the office's figure.
+        $leadPercent = (int) ($report->validated_percent ?? $report->percent_complete);
+
+        $report->update([
+            'lead_override_at'       => now(),
+            'lead_overridden_by'     => $actor->id,
+            'lead_override_reason'   => $reason,
+            'lead_approved_percent'  => $report->lead_approved_percent ?? $leadPercent,
+        ]);
+
+        // Ratify as the office: sets the new figure, moves the sub-task and
+        // the job, and releases billing the way any admin validation does.
+        $this->validate(
+            $report->fresh(),
+            $actor->id,
+            array_merge($data, ['validated_percent' => $validatedPercent]),
+            [],
+            true,
+            ProgressReport::AS_ADMIN
+        );
+
+        AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, [
+            'lead_override'         => true,
+            'lead_approved_percent' => $leadPercent,
+            'office_percent'        => $validatedPercent,
+            'reason'                => $reason,
+        ]);
+
+        return $report->fresh();
+    }
+
+    /**
+     * Put a removed report back, with progress recomputed to include it again.
+     *
+     * Carries its own reason. Bringing a report back is as much a decision as
+     * taking it out, and "removed because X, restored because Y" is the pair
+     * worth having — which is why the deletion reason is kept rather than
+     * cleared.
+     */
+    public function restoreReport(ProgressReport $report, int $userId, string $reason): ProgressReport
+    {
+        if (trim($reason) === '') {
+            throw new \RuntimeException('Restoring a report needs a reason.');
+        }
+
+        return DB::transaction(function () use ($report, $userId, $reason) {
+            $report->restore();
+            $report->update([
+                'restored_at'    => now(),
+                'restored_by'    => $userId,
+                'restore_reason' => $reason,
+            ]);
+
+            AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, [
+                'restored_by' => $userId,
+                'reason'      => $reason,
+            ]);
 
             if ($report->subTask) {
                 $this->resyncSubTask($report->subTask);
