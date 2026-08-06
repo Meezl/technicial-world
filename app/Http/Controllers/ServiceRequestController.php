@@ -185,6 +185,14 @@ class ServiceRequestController extends Controller
                   ]);
             },
             'variationOrders.items',
+            // Money owed back — only once we have accepted we owe it. A
+            // pending internal request is not something to show a client.
+            'refunds' => function ($q) {
+                $q->whereIn('status', [
+                    \App\Models\Refund::STATUS_APPROVED,
+                    \App\Models\Refund::STATUS_SETTLED,
+                ]);
+            },
         ]);
 
         return Inertia::render('Client/RequestStatus', [

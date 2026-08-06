@@ -184,6 +184,23 @@
                             </table>
                         </div>
 
+                        <!-- Money owed back. Shown before any payment block so
+                             a client is never asked to pay while we owe them. -->
+                        <div v-if="owedBack > 0" class="refund-owed">
+                            <i class="fas fa-rotate-left"></i>
+                            <div>
+                                <strong>We owe you KSH {{ formatCurrency(owedBack) }}</strong>
+                                <p v-if="refundsPaidOut.length">
+                                    {{ formatCurrency(paidOutTotal) }} of this has already been sent
+                                    <span v-if="lastRefundReference">(ref {{ lastRefundReference }})</span>.
+                                </p>
+                                <p v-else>
+                                    This has been approved and is being processed. We will confirm
+                                    once it has been sent.
+                                </p>
+                            </div>
+                        </div>
+
                         <!-- Changes to the job. Placed above the payment block
                              on purpose: a client should see what is being asked
                              of them before they are asked to pay anything. -->
@@ -912,6 +929,14 @@ const bank = props.bank
 
 // ---- Client photo evidence -------------------------------------------------
 const jobPhotoUploader = ref(null)
+
+// Refunds reach the client only once approved — a pending internal request
+// is not something to show them.
+const refunds = computed(() => props.serviceRequest.refunds || [])
+const owedBack = computed(() => refunds.value.reduce((s, r) => s + Number(r.amount || 0), 0))
+const refundsPaidOut = computed(() => refunds.value.filter((r) => r.status === 'settled'))
+const paidOutTotal = computed(() => refundsPaidOut.value.reduce((s, r) => s + Number(r.amount || 0), 0))
+const lastRefundReference = computed(() => refundsPaidOut.value.at(-1)?.settlement_reference || null)
 const newJobPhotos = ref([])
 const jobPhotoCaption = ref('')
 const preparingJobPhotos = ref(false)
@@ -2477,5 +2502,23 @@ defineOptions({
 .prc-progress-bar > div { height: 100%; background: linear-gradient(90deg,#10b981,#059669); transition: width .3s; }
 .prc-notes { white-space: pre-wrap; line-height: 1.5; color: #374151; margin: 0 0 .75rem; }
 .prc-notes-muted { color: #9ca3af; font-style: italic; }
+
+/* Money we owe the client. Warm rather than alarming — this is good news
+   for them, and it sits above the payment block so it is never possible to
+   be asked to pay while we owe them. */
+.refund-owed {
+    display: flex;
+    gap: .75rem;
+    align-items: flex-start;
+    padding: .9rem 1rem;
+    margin: 0 0 1rem;
+    border: 1px solid #16A34A;
+    border-left-width: 4px;
+    border-radius: 8px;
+    background: #E7F6EE;
+}
+.refund-owed i { color: #15803D; margin-top: .2rem; }
+.refund-owed strong { color: #14532D; font-size: .95rem; }
+.refund-owed p { margin: .25rem 0 0; font-size: .82rem; color: #166534; line-height: 1.5; }
 </style>
 

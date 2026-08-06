@@ -822,6 +822,18 @@
                         <div class="job-card-header">
                             <div>
                                 <span class="section-kicker">Finance</span>
+                                <h3>Refunds</h3>
+                                <p>Money owed back to the client, and whether it has actually gone.</p>
+                            </div>
+                        </div>
+
+                        <RefundsPanel :job="job" :billing="billingSummary" />
+                    </article>
+
+                    <article class="job-shell-card">
+                        <div class="job-card-header">
+                            <div>
+                                <span class="section-kicker">Finance</span>
                                 <h3>Budget and payments</h3>
                                 <p>Track budget consumption, actual spend, and payment context without leaving the job.</p>
                             </div>
@@ -1894,6 +1906,7 @@
 import AdminSidebar from '../../Components/AdminSidebar.vue'
 import ImageLightbox from '../../Components/ImageLightbox.vue'
 import VariationOrdersPanel from '../../Components/VariationOrdersPanel.vue'
+import RefundsPanel from '../../Components/RefundsPanel.vue'
 import { Link } from '@inertiajs/vue3'
 import { ref, computed, reactive } from 'vue'
 import { router } from '@inertiajs/vue3'

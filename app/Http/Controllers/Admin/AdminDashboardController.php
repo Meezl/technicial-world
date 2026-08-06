@@ -313,6 +313,9 @@ class AdminDashboardController extends Controller
             // Both halves of the click-through: from a variation to the fee
             // changes it authorised, and from a fee change back to it.
             'variationOrders.compensationAmendments.technician.user:id,name',
+            // Money owed back on this job.
+            'refunds.requester:id,name',
+            'refunds.approver:id,name',
             'compensationAmendments.variationOrder:id,vo_number,net_amount',
             'compensationAmendments.technician.user:id,name',
         ]);
