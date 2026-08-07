@@ -297,24 +297,41 @@ class ProgressService
     }
 
     /**
+     * Re-read a job's percentage and status from its validated reports.
+     *
+     * Billing is left alone by default: this exists to repair jobs that the
+     * old rollup left wrong — closed at 20%, or showing one sub-task's
+     * average instead of the lead's figure — and re-firing milestones on a
+     * job the client has already paid against would be its own incident.
+     */
+    public function recalculate(ServiceRequest $serviceRequest, bool $releaseBilling = false): void
+    {
+        $this->updateServiceRequestProgress($serviceRequest, $releaseBilling);
+    }
+
+    /**
      * The job's headline percentage.
      *
-     * On a project with sub-tasks this is the average across them, so each
-     * technician's report contributes their share and nobody's slice can
-     * stand in for the whole. It used to take the most recent validated
-     * report of any kind and assign its percentage to the job, which meant
-     * the figure swung to whichever trade reported last — and a single
-     * sub-task reaching 100% completed the entire job and fired its billing
-     * milestones.
+     * Two things go into it, and the higher one wins:
      *
-     * A job that was never split still reads its latest validated report;
-     * there, that report *is* the whole job.
+     *  · the lead's view of the whole job — the highest validated report that
+     *    covers the job rather than one sub-task
+     *  · where the job is split, the average across its sub-tasks
+     *
+     * Taking the higher of the two fixes a job that had genuinely reached 85%
+     * on the lead's own report showing 20%, because the average of its single
+     * sub-task was all that counted and the lead's whole-job report was
+     * discarded.
+     *
+     * Highest rather than most-recently-validated, because validating an
+     * older 20% report after an 85% one used to drag the job backwards — the
+     * figure tracked the order an admin worked through their queue rather
+     * than the state of the site. To genuinely lower a job, remove the report
+     * that overstated it; removal recomputes from what survives.
      */
     private function updateServiceRequestProgress(ServiceRequest $serviceRequest, bool $releaseBilling = true): void
     {
-        $effectivePercent = $serviceRequest->isSplitIntoSubTasks()
-            ? $this->aggregateSubTaskProgress($serviceRequest)
-            : $this->latestValidatedPercent($serviceRequest);
+        $effectivePercent = $this->headlinePercent($serviceRequest);
 
         if ($effectivePercent === null) {
             return;
@@ -322,10 +339,20 @@ class ProgressService
 
         $updateData = ['progress_percentage' => $effectivePercent];
 
-        // Only a job that is wholly done closes itself. With sub-tasks that
-        // means every one of them is at 100%, not just the one just reported.
-        if ($effectivePercent >= 100 && $serviceRequest->status !== ServiceRequest::STATUS_COMPLETED) {
-            $updateData['status'] = ServiceRequest::STATUS_COMPLETED;
+        // Closing the job is the lead's call, not an arithmetic result. A
+        // sub-technician finishing their slice used to take the average to
+        // 100% and close the whole job — on a job split into one sub-task,
+        // one person's work ended everybody's. The job closes only once a
+        // validated whole-job report says it is done.
+        if ($this->hasLeadSignOff($serviceRequest)) {
+            if ($serviceRequest->status !== ServiceRequest::STATUS_COMPLETED) {
+                $updateData['status'] = ServiceRequest::STATUS_COMPLETED;
+            }
+        } elseif ($serviceRequest->status === ServiceRequest::STATUS_COMPLETED) {
+            // Previously closed on the old arithmetic, but nothing signs off
+            // for it now — a job showing "Completed" at 20% is worse than one
+            // showing the truth.
+            $updateData['status'] = ServiceRequest::STATUS_IN_PROGRESS;
         }
 
         $serviceRequest->update($updateData);
@@ -333,6 +360,37 @@ class ProgressService
         if ($releaseBilling) {
             $this->triggerBillingMilestones($serviceRequest->fresh(), (float) $effectivePercent);
         }
+    }
+
+    /**
+     * Highest validated progress on the job, counting the lead's whole-job
+     * reports and — where the job is split — the sub-task average.
+     */
+    private function headlinePercent(ServiceRequest $serviceRequest): ?int
+    {
+        $wholeJob = $this->highestValidatedWholeJobPercent($serviceRequest);
+
+        if (!$serviceRequest->isSplitIntoSubTasks()) {
+            return $wholeJob;
+        }
+
+        return max($this->aggregateSubTaskProgress($serviceRequest), $wholeJob ?? 0);
+    }
+
+    /**
+     * Has somebody with authority over the whole job declared it finished?
+     *
+     * A whole-job report is already the lead's to file — a sub-technician on
+     * a split job cannot submit one — so a validated 100% here is the lead's
+     * sign-off, or an admin's on their behalf.
+     */
+    private function hasLeadSignOff(ServiceRequest $serviceRequest): bool
+    {
+        return $serviceRequest->progressReports()
+            ->where('is_validated', true)
+            ->whereNull('service_sub_task_id')
+            ->get(['validated_percent', 'percent_complete'])
+            ->contains(fn ($report) => (int) ($report->validated_percent ?? $report->percent_complete) >= 100);
     }
 
     /**
@@ -416,15 +474,15 @@ class ProgressService
      */
     private function recomputeAfterRemoval(ServiceRequest $serviceRequest): void
     {
-        $percent = $serviceRequest->isSplitIntoSubTasks()
-            ? $this->aggregateSubTaskProgress($serviceRequest)
-            : ($this->latestValidatedPercent($serviceRequest) ?? 0);
+        // Same reading as everywhere else, so removing a report cannot leave
+        // the job on a different rule to the one that put it there.
+        $percent = $this->headlinePercent($serviceRequest) ?? 0;
 
         $update = ['progress_percentage' => $percent];
 
         // A job that was closed on the strength of a report that has now gone
         // should not stay closed.
-        if ($percent < 100 && $serviceRequest->status === ServiceRequest::STATUS_COMPLETED) {
+        if (!$this->hasLeadSignOff($serviceRequest) && $serviceRequest->status === ServiceRequest::STATUS_COMPLETED) {
             $update['status'] = ServiceRequest::STATUS_IN_PROGRESS;
         }
 
@@ -649,18 +707,28 @@ class ProgressService
         return (int) round($serviceRequest->subTasks()->avg('progress_percentage') ?? 0);
     }
 
-    private function latestValidatedPercent(ServiceRequest $serviceRequest): ?int
+    /**
+     * Highest validated percentage among reports covering the whole job.
+     *
+     * `report_date` is a date with no time, so ordering by it and taking the
+     * first was a coin toss between two reports filed on the same day — which
+     * is how a job could read 20% while an 85% report sat validated beside
+     * it. Nothing here depends on ordering now.
+     */
+    private function highestValidatedWholeJobPercent(ServiceRequest $serviceRequest): ?int
     {
-        $latestValidated = $serviceRequest->progressReports()
+        $reports = $serviceRequest->progressReports()
             ->where('is_validated', true)
-            ->orderBy('report_date', 'desc')
-            ->first();
+            ->whereNull('service_sub_task_id')
+            ->get(['validated_percent', 'percent_complete']);
 
-        if (!$latestValidated) {
+        if ($reports->isEmpty()) {
             return null;
         }
 
-        return (int) ($latestValidated->validated_percent ?? $latestValidated->percent_complete);
+        return (int) $reports
+            ->map(fn ($report) => (int) ($report->validated_percent ?? $report->percent_complete))
+            ->max();
     }
 
     /**
