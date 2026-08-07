@@ -46,6 +46,11 @@ COPY --from=frontend-builder /app/bootstrap/ssr /app/bootstrap/ssr
 # Copy custom Caddyfile
 COPY Caddyfile /etc/caddy/Caddyfile
 
+# Upload and execution limits. FrankenPHP does not read public/.user.ini —
+# that is an FPM/CGI feature — so these must be a real ini file or the
+# defaults apply and photo uploads time out at 30s.
+COPY docker/php.ini /usr/local/etc/php/conf.d/zz-app.ini
+
 # Copy and prepare entrypoint script
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint
 RUN chmod +x /usr/local/bin/docker-entrypoint

@@ -49,6 +49,13 @@ echo "    FILESYSTEM_DISK=${FILESYSTEM_DISK:-not set}"
 echo "    uploaded files on public disk: $(find storage/app/public -type f 2>/dev/null | wc -l | tr -d ' ')"
 echo "    storage volume mounted: $(mountpoint -q /app/storage 2>/dev/null && echo yes || echo 'no / unknown')"
 
+# Upload limits, read the way a web request sees them. Deliberately not `php
+# -i`: the CLI SAPI has its own values (no execution limit at all), so a CLI
+# reading would have shown everything healthy through the whole outage.
+# -c points at the same conf.d the server loads.
+echo "==> PHP upload limits (as a request sees them):"
+php -r 'foreach (["max_execution_time","max_input_time","memory_limit","upload_max_filesize","post_max_size","max_file_uploads"] as $k) { echo "    $k=" . ini_get($k) . "\n"; } echo "    scanned=" . (php_ini_scanned_files() ?: "(none)") . "\n";' 2>/dev/null || echo "    (could not read)"
+
 # ── 5. Queue worker (background, non-fatal) ──────────────────────────────────
 echo "==> Starting queue worker in background..."
 (php artisan queue:work --sleep=3 --tries=3 --timeout=90 2>&1 || echo "WARNING: Queue worker exited with error") &

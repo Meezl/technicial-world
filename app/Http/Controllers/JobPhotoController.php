@@ -22,6 +22,8 @@ class JobPhotoController extends Controller
 
     public function store(Request $request, ServiceRequest $serviceRequest)
     {
+        \App\Support\UploadRuntime::prepare('jobs.photos.store');
+
         $user = auth()->user();
 
         if (!$this->canUpload($user, $serviceRequest)) {

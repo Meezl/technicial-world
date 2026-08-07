@@ -13,7 +13,12 @@
 
 const MAX_DIMENSION = 1600
 const QUALITY = 0.82
-const COMPRESS_THRESHOLD_BYTES = 600 * 1024  // skip files already under 600 KB
+// Anything above this is resized. Was 600 KB, which let a six-photo report
+// leave site at ~5 MB — survivable on wifi, not on a weak 4G uplink where it
+// ran past the request budget and the technician lost the whole submission.
+// 250 KB is still comfortably above what a resized 1600px site photo lands
+// at, so this lowers the ceiling without re-compressing our own output.
+const COMPRESS_THRESHOLD_BYTES = 250 * 1024
 const COMPRESSIBLE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
 
 /**

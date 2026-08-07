@@ -731,21 +731,33 @@
                                     </div>
                                     <div class="form-group" style="margin-top:.5rem;">
                                         <label>Attach photos (optional, up to 6)</label>
-                                        <input
-                                            type="file"
-                                            accept="image/*"
-                                            multiple
-                                            class="form-control"
-                                            @change="e => progressValidationForms[report.id].admin_photo_files = Array.from(e.target.files)"
-                                        >
-                                        <small v-if="progressValidationForms[report.id].admin_photo_files?.length" style="color:var(--success-color)">
-                                            {{ progressValidationForms[report.id].admin_photo_files.length }} photo(s) selected
-                                        </small>
+                                        <!-- A raw file input shipped whatever the
+                                             camera produced: four 5MB photos was a
+                                             20MB post that ran past the request
+                                             budget and lost the whole validation.
+                                             PhotoUploader resizes before sending. -->
+                                        <PhotoUploader
+                                            v-model="progressValidationForms[report.id].admin_photo_files"
+                                            :max="6"
+                                            :disabled="validatingReportId === report.id"
+                                            hint="Resized on this device before upload, so a slow connection still gets through."
+                                            @busy="preparingAdminPhotos[report.id] = $event"
+                                        />
                                     </div>
                                     <div class="admin-decision-actions">
-                                        <button class="btn btn-primary btn-sm" @click="validateProgressReport(report.id)">
-                                            <i class="fas fa-check-circle"></i>
-                                            Approve Progress
+                                        <button
+                                            class="btn btn-primary btn-sm"
+                                            :disabled="validatingReportId === report.id || preparingAdminPhotos[report.id]"
+                                            @click="validateProgressReport(report.id)"
+                                        >
+                                            <i
+                                                :class="validatingReportId === report.id || preparingAdminPhotos[report.id]
+                                                    ? 'fas fa-spinner fa-spin'
+                                                    : 'fas fa-check-circle'"
+                                            ></i>
+                                            {{ preparingAdminPhotos[report.id]
+                                                ? 'Preparing photos…'
+                                                : validatingReportId === report.id ? 'Approving…' : 'Approve Progress' }}
                                         </button>
                                         <!-- Not every report is a yes or a no.
                                              When the figure needs a second look
@@ -1913,6 +1925,7 @@ import VariationOrdersPanel from '../../Components/VariationOrdersPanel.vue'
 import RefundsPanel from '../../Components/RefundsPanel.vue'
 import ProgressReportActions from '../../Components/ProgressReportActions.vue'
 import RemovedReportsPanel from '../../Components/RemovedReportsPanel.vue'
+import PhotoUploader from '../../Components/PhotoUploader.vue'
 import { Link, usePage } from '@inertiajs/vue3'
 import { ref, computed, reactive } from 'vue'
 import { router } from '@inertiajs/vue3'
@@ -3000,9 +3013,19 @@ const toggleReportPhotoRemoval = (reportId, photoId) => {
     }
 }
 
+// Which report is mid-submission, and which are still resizing photos. Both
+// gate the Approve button so a second tap can't fire a duplicate validation
+// or send a half-prepared set.
+const validatingReportId = ref(null)
+const preparingAdminPhotos = reactive({})
+
 const validateProgressReport = (reportId) => {
     const form = progressValidationForms[reportId]
     if (!form) return
+    if (validatingReportId.value || preparingAdminPhotos[reportId]) return
+
+    validatingReportId.value = reportId
+    const done = () => { validatingReportId.value = null }
 
     const photos = form.admin_photo_files || []
     if (photos.length > 0) {
@@ -3015,6 +3038,7 @@ const validateProgressReport = (reportId) => {
         router.post(`/admin/progress-reports/${reportId}/validate`, fd, {
             forceFormData: true,
             preserveScroll: true,
+            onFinish: done,
         })
     } else {
         router.post(`/admin/progress-reports/${reportId}/validate`, {
@@ -3022,7 +3046,7 @@ const validateProgressReport = (reportId) => {
             validation_notes: form.validation_notes,
             client_visible_notes: form.client_visible_notes,
             remove_photo_ids: form.remove_photo_ids,
-        }, { preserveScroll: true })
+        }, { preserveScroll: true, onFinish: done })
     }
 }
 

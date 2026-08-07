@@ -11,6 +11,8 @@ use App\Notifications\NewServiceRequestNotification;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 
+use App\Support\UploadRuntime;
+
 class ServiceRequestController extends Controller
 {
     /**
@@ -57,10 +59,7 @@ class ServiceRequestController extends Controller
     {
         // Mobile uploads on 4G can take time. Give the request room to
         // finish even if the user is uploading several photos.
-        @set_time_limit(120);
-        @ini_set('upload_max_filesize', '20M');
-        @ini_set('post_max_size', '60M');
-        @ini_set('memory_limit', '256M');
+        UploadRuntime::prepare('client.service-request');
 
         $validated = $request->validate([
             'service_category_id' => 'required|exists:service_categories,id',
