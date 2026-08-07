@@ -347,6 +347,10 @@ class AdminDashboardController extends Controller
 
     public function validateProgress(Request $request, ProgressReport $progressReport)
     {
+        // Validating with photos attached is an upload like any other, and
+        // this is the path the admin lost a report on.
+        \App\Support\UploadRuntime::prepare('admin.progress.validate');
+
         $request->validate([
             'validated_percent' => 'required|integer|min:0|max:100',
             'validation_notes' => 'nullable|string|max:2000',
@@ -580,38 +584,51 @@ class AdminDashboardController extends Controller
         // changes it on first sign-in from their profile screen.
         $temporaryPassword = $this->generateTemporaryPassword();
 
-        // Create user first
-        $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($temporaryPassword),
-            'phone' => $request->phone,
-            'role' => 'technician',
-        ]);
+        // Document uploads make this a slow request on a phone; give it room
+        // rather than letting the default 30s kill a half-finished onboarding.
+        @set_time_limit(180);
 
-        // Generate technician ID if not provided
-        $technicianId = $request->technician_id ?: 'TECH-' . str_pad(rand(1, 999), 3, '0', STR_PAD_LEFT);
+        // One transaction for the account and the profile. Previously the
+        // user was created first and committed on its own, so when the
+        // technician insert failed the account survived — and the admin's
+        // retry then failed validation on the now-taken email address,
+        // bouncing them back to an empty form with no way through.
+        [$user, $technician] = DB::transaction(function () use ($request, $temporaryPassword) {
+            $user = User::create([
+                'name' => $request->name,
+                'email' => $request->email,
+                'password' => Hash::make($temporaryPassword),
+                'phone' => $request->phone,
+                'role' => 'technician',
+            ]);
 
-        // Create technician
-        $technician = Technician::create([
-            'user_id' => $user->id,
-            'technician_id' => $technicianId,
-            'specialization' => $request->specialization,
-            'location' => $request->location,
-            'kra_pin' => $request->kra_pin ? strtoupper(trim($request->kra_pin)) : null,
-            'availability' => $request->availability,
-            'bio' => $request->bio,
-            'skills' => $request->skills,
-            'rating' => 0,
-            'total_jobs' => 0,
-            // Admin is the vetting authority — they've uploaded the
-            // mandatory documents at creation, so mark approved. Without
-            // this the PM Assign Technician dropdown filters them out
-            // (#16).
-            'vetting_status' => Technician::VETTING_APPROVED,
-            'vetted_by' => auth()->id(),
-            'vetted_at' => now(),
-        ]);
+            $attributes = [
+                'user_id' => $user->id,
+                'specialization' => $request->specialization,
+                'location' => $request->location,
+                'kra_pin' => $request->kra_pin ? strtoupper(trim($request->kra_pin)) : null,
+                'availability' => $request->availability,
+                'bio' => $request->bio,
+                'skills' => $request->skills,
+                'rating' => 0,
+                'total_jobs' => 0,
+                // Admin is the vetting authority — they've uploaded the
+                // mandatory documents at creation, so mark approved. Without
+                // this the PM Assign Technician dropdown filters them out
+                // (#16).
+                'vetting_status' => Technician::VETTING_APPROVED,
+                'vetted_by' => auth()->id(),
+                'vetted_at' => now(),
+            ];
+
+            // An admin-supplied reference is used as given; otherwise take the
+            // next free one, retrying past anyone who grabbed it first.
+            $technician = $request->technician_id
+                ? Technician::create($attributes + ['technician_id' => $request->technician_id])
+                : Technician::createWithReference($attributes);
+
+            return [$user, $technician];
+        });
 
         // Store mandatory documents
         $documentMap = [
@@ -635,22 +652,30 @@ class AdminDashboardController extends Controller
             }
         }
 
-        // Email the credentials. Wrap in try/catch so a transient mail failure
-        // doesn't roll back the technician record — the admin can resend later.
-        $mailWarning = null;
-        try {
-            Mail::to($user->email)->send(new \App\Mail\TechnicianAccountCreated($user, $technician, $temporaryPassword));
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('TechnicianAccountCreated email failed', [
-                'technician_id' => $technician->id,
-                'user_id' => $user->id,
-                'error' => $e->getMessage(),
-            ]);
-            $mailWarning = ' (warning: credential email could not be sent — please resend manually)';
-        }
+        // Email the credentials after the response has gone. Sending inline
+        // left the admin watching a "Saving…" button through an SMTP
+        // round-trip on top of five document uploads — long enough on a phone
+        // to look like a hang and provoke a second submission.
+        $userId = $user->id;
+        $technicianId = $technician->id;
+        app()->terminating(function () use ($userId, $technicianId, $temporaryPassword) {
+            try {
+                $u = User::find($userId);
+                $t = Technician::find($technicianId);
+                if ($u && $t) {
+                    Mail::to($u->email)->send(new \App\Mail\TechnicianAccountCreated($u, $t, $temporaryPassword));
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('TechnicianAccountCreated email failed', [
+                    'technician_id' => $technicianId,
+                    'user_id' => $userId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        });
 
         return redirect()->route('admin.technicians')->with('success',
-            "Technician created. Login credentials emailed to {$user->email}." . ($mailWarning ?? '')
+            "Technician {$technician->technician_id} created. Login credentials are on their way to {$user->email}."
         );
     }
 
@@ -2765,11 +2790,8 @@ class AdminDashboardController extends Controller
 
         // Create technician profile if role is technician
         if ($request->role === 'technician') {
-            $technicianId = 'TECH-' . str_pad(rand(1, 999), 3, '0', STR_PAD_LEFT);
-
-            Technician::create([
+            Technician::createWithReference([
                 'user_id' => $user->id,
-                'technician_id' => $technicianId,
                 'specialization' => $request->specialization,
                 'location' => $request->location,
                 'availability' => $request->availability ?? 'available',
@@ -2838,11 +2860,8 @@ class AdminDashboardController extends Controller
                 ]);
             } else {
                 // Create new technician profile
-                $technicianId = 'TECH-' . str_pad(rand(1, 999), 3, '0', STR_PAD_LEFT);
-
-                Technician::create([
+                Technician::createWithReference([
                     'user_id' => $user->id,
-                    'technician_id' => $technicianId,
                     'specialization' => $request->specialization,
                     'location' => $request->location,
                     'availability' => $request->availability ?? 'available',

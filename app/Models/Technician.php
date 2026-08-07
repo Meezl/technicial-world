@@ -9,6 +9,56 @@ class Technician extends Model
 {
     use HasFactory;
 
+    /**
+     * Next free technician reference.
+     *
+     * This used to be `rand(1, 999)` against a unique column, which meant
+     * onboarding failed with a duplicate-key error as soon as the random
+     * number happened to land on an existing technician — increasingly
+     * likely with every technician added, and the admin had no way to
+     * recover because the retry hit the same dice roll.
+     *
+     * Sequential from the highest reference in use. The caller retries on
+     * the unique-constraint violation, which is what makes two admins
+     * onboarding at the same moment safe: the database, not this read,
+     * is the arbiter.
+     */
+    public static function generateTechnicianId(): string
+    {
+        // Read the references and take the maximum in PHP rather than in SQL.
+        // The obvious REGEXP + CAST is MySQL-only and breaks anywhere else,
+        // and the roster is small enough that the difference does not matter.
+        $highest = static::query()
+            ->where('technician_id', 'like', 'TECH-%')
+            ->pluck('technician_id')
+            ->map(fn ($ref) => preg_match('/^TECH-(\d+)$/', (string) $ref, $m) ? (int) $m[1] : 0)
+            ->max() ?? 0;
+
+        return 'TECH-' . str_pad((string) ($highest + 1), 3, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * Create a technician, stepping past a reference another request took
+     * first. Only the duplicate-reference collision is retried — any other
+     * failure is the caller's to handle.
+     */
+    public static function createWithReference(array $attributes): self
+    {
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            try {
+                return static::create($attributes + [
+                    'technician_id' => static::generateTechnicianId(),
+                ]);
+            } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+                if (!str_contains($e->getMessage(), 'technician_id')) {
+                    throw $e;
+                }
+            }
+        }
+
+        throw new \RuntimeException('Could not allocate a technician reference after 5 attempts.');
+    }
+
     protected $fillable = [
         'user_id',
         'technician_id',
