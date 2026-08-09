@@ -336,7 +336,13 @@
                             <span class="step-label">Details</span>
                         </div>
                         <div class="step-line"></div>
-                        <div :class="['step', { active: formStep === 2, done: formStep > 2 }]" @click="formStep >= 2 ? formStep = 2 : null">
+                        <!-- Tapping "2 Documents" used to do nothing until you
+                             had already been there, while still looking
+                             clickable. It is the obvious thing to press when
+                             you are looking for where to upload, so it now
+                             takes you there — running the same check as the
+                             button below. -->
+                        <div :class="['step', { active: formStep === 2, done: formStep > 2 }]" @click="goToStep2">
                             <span class="step-num">2</span>
                             <span class="step-label">Documents</span>
                         </div>
@@ -351,10 +357,12 @@
                                     <div class="form-group">
                                         <label>Full Name <span class="req">*</span></label>
                                         <input type="text" v-model="form.name" required placeholder="Enter full name">
+                                        <span v-if="formErrors.name" class="field-error">{{ formErrors.name }}</span>
                                     </div>
                                     <div class="form-group">
                                         <label>Email <span class="req">*</span></label>
                                         <input type="email" v-model="form.email" required placeholder="Enter email address">
+                                        <span v-if="formErrors.email" class="field-error">{{ formErrors.email }}</span>
                                     </div>
                                 </div>
                                 <div class="form-row">
@@ -380,10 +388,12 @@
                                                 {{ cat.name }}
                                             </option>
                                         </select>
+                                        <span v-if="formErrors.specialization" class="field-error">{{ formErrors.specialization }}</span>
                                     </div>
                                     <div class="form-group">
                                         <label>Location <span class="req">*</span></label>
                                         <input type="text" v-model="form.location" required placeholder="Enter location/city">
+                                        <span v-if="formErrors.location" class="field-error">{{ formErrors.location }}</span>
                                     </div>
                                 </div>
                                 <div class="form-row">
@@ -867,7 +877,7 @@
 <script setup>
 import AdminSidebar from '../../Components/AdminSidebar.vue'
 import { Link, router, usePage } from '@inertiajs/vue3'
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 
 const props = defineProps({
     technicians: { type: Array, default: () => [] },
@@ -1171,11 +1181,34 @@ const confirmDelete = () => {
 }
 
 const goToStep2 = () => {
-    // Validate step 1 fields (password is auto-generated on save, no longer required here)
-    if (!form.value.name || !form.value.email || !form.value.specialization || !form.value.location) {
-        alert('Please fill in all required fields before proceeding.')
+    // Validate step 1 fields (password is auto-generated on save, no longer
+    // required here). A single alert naming nothing left the admin hunting
+    // for the empty field — Specialization is a select that reads as filled
+    // at a glance — so mark the actual culprits instead.
+    const required = {
+        name: 'Enter the technician\'s full name.',
+        email: 'Enter an email address.',
+        specialization: 'Choose a specialization.',
+        location: 'Enter a location.',
+    }
+
+    const missing = Object.keys(required).filter(field => !form.value[field])
+
+    if (missing.length) {
+        formErrors.value = { ...formErrors.value }
+        missing.forEach(field => { formErrors.value[field] = required[field] })
+        formStep.value = 1
+        // Bring the first offending field into view; on a phone it is often
+        // above the fold of a long modal.
+        nextTick(() => {
+            document.querySelector('.modal-content .field-error')
+                ?.closest('.form-group')
+                ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        })
         return
     }
+
+    missing.length === 0 && Object.keys(required).forEach(field => delete formErrors.value[field])
     formStep.value = 2
 }
 

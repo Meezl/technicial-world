@@ -1104,7 +1104,17 @@ body.app-sidebar-locked {
     border-top: 1px solid #e5e7eb;
     background: #f9fafb;
     border-radius: 0 0 12px 12px;
+
+    /* The modal body scrolls, so a static footer sits at the bottom of the
+       whole form — on a phone the technician onboarding form is ~2100px
+       tall in a 770px window, which put "Next: Documents" 1300px below the
+       fold. An admin filling in the details had no visible way forward and
+       reasonably concluded there was nowhere to upload the documents. */
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
 }
+
 
 /* Modal Animation */
 .dashboard-container .modal-overlay {
@@ -1159,13 +1169,20 @@ body.app-sidebar-locked {
         padding: 1.5rem;
     }
 
+    /* Stacked, primary action on top, full-width tap targets. Now that the
+       footer is sticky this is always on screen, so it is kept tight — at
+       the old spacing three buttons claimed 220px of an 812px phone. */
     .dashboard-container .modal-footer {
-        padding: 1rem 1.5rem;
+        padding: 0.6rem 1rem;
+        gap: 0.4rem;
         flex-direction: column-reverse;
     }
 
     .dashboard-container .modal-footer .btn {
         width: 100%;
         justify-content: center;
+        min-height: 44px;
+        padding-top: 0.5rem;
+        padding-bottom: 0.5rem;
     }
 }
