@@ -58,6 +58,32 @@
                 </div>
             </div>
 
+            <!-- Reviewed reports waiting to be posted to the office. The office
+                 sees nothing on a lead-run job until the lead posts, so this
+                 reminds them before they even open the job. -->
+            <div
+                v-if="pendingReportPosts > 0"
+                class="post-reports-reminder"
+            >
+                <div class="prr-icon"><i class="fas fa-paper-plane"></i></div>
+                <div class="prr-body">
+                    <span class="prr-kicker">Reports to send</span>
+                    <h3>{{ pendingReportPosts }} reviewed {{ pendingReportPosts === 1 ? 'report' : 'reports' }} ready to post</h3>
+                    <p>The office won't see this progress until you post it. Open the job to send it up.</p>
+                    <div class="prr-jobs">
+                        <Link
+                            v-for="job in jobsAwaitingPost"
+                            :key="job.id"
+                            :href="`/technician/jobs/${job.id}`"
+                            class="prr-chip"
+                        >
+                            {{ job.service_category?.name || job.request_id }}
+                            <span class="prr-count">{{ job.postable_report_count }}</span>
+                        </Link>
+                    </div>
+                </div>
+            </div>
+
             <Link href="/technician/earnings" class="pwa-card" style="display: block; text-decoration: none; color: inherit; margin-bottom: 1rem;">
                 <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem;">
                     <div>
@@ -240,9 +266,16 @@ const props = defineProps({
     activeJobs: Array,
     completedJobsCount: Number,
     earningsSummary: Object,
+    pendingReportPosts: { type: Number, default: 0 },
 });
 
 const isAvailable = computed(() => props.technician?.availability === 'available');
+
+// Active jobs where this lead has reviewed reports waiting to be posted —
+// the ones the reminder links straight to.
+const jobsAwaitingPost = computed(() =>
+    (props.activeJobs || []).filter((job) => (job.postable_report_count || 0) > 0)
+);
 
 const toggleAvailability = () => {
     const newStatus = isAvailable.value ? 'busy' : 'available';
@@ -294,6 +327,72 @@ defineOptions({ layout: null });
 </script>
 
 <style>
+/* Lead reminder: reviewed reports waiting to be posted to the office. */
+.post-reports-reminder {
+    display: flex;
+    gap: .85rem;
+    margin-bottom: 1rem;
+    padding: .95rem 1rem;
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    border-radius: 12px;
+}
+.prr-icon {
+    flex: none;
+    width: 2.2rem;
+    height: 2.2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: #f59e0b;
+    color: #fff;
+    font-size: .9rem;
+}
+.prr-body { min-width: 0; }
+.prr-kicker {
+    display: block;
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: #b45309;
+    margin-bottom: .2rem;
+}
+.prr-body h3 { margin: 0 0 .2rem; font-size: 1rem; color: #78350f; }
+.prr-body p { margin: 0; font-size: .84rem; color: #92400e; }
+.prr-jobs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+    margin-top: .6rem;
+}
+.prr-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    padding: .28rem .6rem;
+    background: #fff;
+    border: 1px solid #f4d58d;
+    border-radius: 999px;
+    font-size: .78rem;
+    font-weight: 600;
+    color: #92400e;
+    text-decoration: none;
+}
+.prr-chip .prr-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.15rem;
+    height: 1.15rem;
+    padding: 0 .3rem;
+    border-radius: 999px;
+    background: #f59e0b;
+    color: #fff;
+    font-size: .68rem;
+}
+
 .my-subtasks {
     margin-bottom: 1rem;
     padding: .65rem .75rem;

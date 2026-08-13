@@ -48,6 +48,13 @@ class DashboardController extends Controller
                 'paymentRequests as pending_payment_requests_count' => function ($q) {
                     $q->where('status', 'pending');
                 },
+                // A revised budget waiting on the client. Surfaced so the
+                // dashboard can point him at the approval on the payments
+                // page — the usual reason a balance sits unactionable.
+                'variationOrders as pending_variations_count' => function ($q) {
+                    $q->where('is_client_visible', true)
+                      ->where('status', \App\Models\VariationOrder::STATUS_PENDING_CLIENT);
+                },
             ])
             ->orderBy('created_at', 'desc')
             ->get();
@@ -61,6 +68,7 @@ class DashboardController extends Controller
             'completedJobs' => $serviceRequests->whereIn('status', ['closed', 'archived', 'completed_pending_confirmation'])->count(),
             'pendingPayments' => $serviceRequests->whereIn('status', ['awaiting_payment', 'payment_pending_approval'])->count(),
             'pendingPaymentsTotal' => $pendingPaymentsTotal,
+            'pendingVariations' => (int) $serviceRequests->sum('pending_variations_count'),
             'totalSpent' => (float) $user->payments()->where('status', 'completed')->sum('amount'),
         ];
 

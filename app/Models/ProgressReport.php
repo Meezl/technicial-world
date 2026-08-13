@@ -35,6 +35,9 @@ class ProgressReport extends Model
         'authored_as',
         'validated_as',
         'approved_by_lead_at',
+        'submitted_to_office_at',
+        'office_batch_id',
+        'released_to_client_at',
         'rejected_at',
         'rejected_by',
         'rejected_as',
@@ -72,6 +75,8 @@ class ProgressReport extends Model
         'percent_complete' => 'integer',
         'validated_percent' => 'integer',
         'approved_by_lead_at' => 'datetime',
+        'submitted_to_office_at' => 'datetime',
+        'released_to_client_at' => 'datetime',
         'rejected_at' => 'datetime',
         'revised_by_lead_at' => 'datetime',
         'restored_at' => 'datetime',
@@ -87,11 +92,33 @@ class ProgressReport extends Model
      */
     public function scopeNeedsOfficeAction($query)
     {
-        return $query->where(function ($q) {
+        // Nothing reaches the office desk before the lead has posted it. On a
+        // single-technician job, or for a whole-job or office-authored report,
+        // that stamp is set the moment the report is filed; on a lead-run job
+        // a crew report waits for the lead to push the batch up.
+        return $query->whereNotNull('submitted_to_office_at')->where(function ($q) {
             $q->where(function ($unvalidated) {
                 $unvalidated->where('is_validated', false)->whereNull('rejected_at');
             })->orWhereNotNull('approved_by_lead_at');
         });
+    }
+
+    /**
+     * On a lead's desk and not yet pushed to the office: a crew report the
+     * lead still has to ratify and post up, or the lead's own report waiting
+     * to go up with the batch.
+     */
+    public function scopeAwaitingLeadPost($query)
+    {
+        return $query->whereNull('submitted_to_office_at')
+            ->whereNull('rejected_at');
+    }
+
+    /** Validated by the office but not yet released to the client. */
+    public function scopeReleasableToClient($query)
+    {
+        return $query->where('is_validated', true)
+            ->whereNull('released_to_client_at');
     }
 
     public function isRejected(): bool

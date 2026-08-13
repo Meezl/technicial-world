@@ -29,6 +29,7 @@ class TechnicianController extends Controller
 
         $incomingJobs = collect();
         $activeJobs = collect();
+        $postableCounts = collect();
         $earnings = null;
 
         if ($technician) {
@@ -51,10 +52,16 @@ class TechnicianController extends Controller
                 ->latest()
                 ->get();
 
+            // Reviewed reports this lead has ready to post to the office, per
+            // job. The office sees nothing on a lead-run job until the lead
+            // posts, so the dashboard reminds them before they open the job.
+            $postableCounts = $this->postableReportCounts($technician, $user);
+
             // Same commercial redaction as the job page — these cards carry
             // the whole model too.
-            $decorate = function ($job) use ($jobEarnings, $technician) {
+            $decorate = function ($job) use ($jobEarnings, $technician, $postableCounts) {
                 $job->setAttribute('compensation_summary', $jobEarnings->get($job->id));
+                $job->setAttribute('postable_report_count', (int) ($postableCounts[$job->id] ?? 0));
                 return $this->technicianSafeJob($job, $technician->id);
             };
 
@@ -67,12 +74,48 @@ class TechnicianController extends Controller
             'incomingJobs' => $incomingJobs->values(),
             'activeJobs' => $activeJobs->values(),
             'completedJobsCount' => $this->calculateCompletedJobs($technician),
+            // Total reviewed reports waiting to be posted, across all the lead's
+            // jobs — drives the dashboard-level reminder.
+            'pendingReportPosts' => (int) $postableCounts->sum(),
             'earningsSummary' => $earnings ? [
                 'total_paid' => (float) ($earnings['total_paid'] ?? 0),
                 'total_outstanding' => (float) ($earnings['total_outstanding'] ?? 0),
                 'job_count' => (int) ($earnings['job_count'] ?? 0),
             ] : null,
         ]);
+    }
+
+    /**
+     * Reviewed reports this lead has ready to post, keyed by job.
+     *
+     * Mirrors the rule on the job page: on jobs the technician leads, reports
+     * not yet sent to the office and not sent back — the crew work they have
+     * ratified, plus their own. Un-reviewed crew claims are excluded; the lead
+     * approves those first, then posts the batch.
+     *
+     * @return \Illuminate\Support\Collection<int,int> job id => count
+     */
+    private function postableReportCounts(Technician $technician, \App\Models\User $user): \Illuminate\Support\Collection
+    {
+        $leadJobIds = ServiceRequest::where('lead_technician_id', $technician->id)
+            ->where('status', 'in_progress')
+            ->pluck('id');
+
+        if ($leadJobIds->isEmpty()) {
+            return collect();
+        }
+
+        return \App\Models\ProgressReport::whereIn('service_request_id', $leadJobIds)
+            ->whereNull('submitted_to_office_at')
+            ->whereNull('rejected_at')
+            ->where(function ($q) use ($technician, $user) {
+                $q->whereNotNull('approved_by_lead_at')
+                  ->orWhere('submitted_by', $user->id)
+                  ->orWhere('technician_id', $technician->id);
+            })
+            ->selectRaw('service_request_id, COUNT(*) as aggregate')
+            ->groupBy('service_request_id')
+            ->pluck('aggregate', 'service_request_id');
     }
 
     private function calculateCompletedJobs($technician)
@@ -1126,6 +1169,32 @@ class TechnicianController extends Controller
         app(ProgressService::class)->reviseByLead($progressReport, auth()->id(), $data);
 
         return back()->with('success', 'Sent back to the project team.');
+    }
+
+    /**
+     * The lead pushes their crew's reviewed reports up to the office as one
+     * batch. Nothing on a lead-run job reaches the office until this — which
+     * is what spares the client a separate notification from each technician.
+     */
+    public function postReportsToOffice(Request $request, ServiceRequest $serviceRequest)
+    {
+        $user = auth()->user();
+        $technician = $user->technician;
+
+        if (!$technician || !$serviceRequest->isLeadTechnician($technician->id)) {
+            abort(403, 'Only the lead technician can post this job\'s reports to the office.');
+        }
+
+        $posted = app(ProgressService::class)->postBatchToOffice($serviceRequest, $user);
+
+        if ($posted === 0) {
+            return back()->with('error',
+                'Nothing to post yet. Approve your crew\'s reports first, then post them together.');
+        }
+
+        return back()->with('success',
+            "Posted {$posted} " . ($posted === 1 ? 'report' : 'reports') .
+            ' to the office. The client hears once, when the office releases the batch.');
     }
 
     /**

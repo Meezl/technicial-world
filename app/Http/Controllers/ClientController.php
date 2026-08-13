@@ -6,7 +6,9 @@ use Illuminate\Http\Request;
 use App\Models\Payment;
 use App\Models\PaymentRequest as PaymentRequestModel;
 use App\Models\ServiceRequest;
+use App\Models\VariationOrder;
 use App\Services\ReportingService;
+use App\Services\VariationOrderService;
 use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
 use Carbon\Carbon;
@@ -34,6 +36,21 @@ class ClientController extends Controller
                 'milestones' => function ($q) {
                     $q->orderBy('progress_step', 'asc');
                 },
+                // Revised-budget approvals live here. A client owed a balance
+                // he cannot act on is usually a variation waiting on him — the
+                // approve control belongs on the page he pays from, not only
+                // on the request-status page. Same client-visible filter the
+                // request-status view uses, so nothing internal leaks.
+                'variationOrders' => function ($q) {
+                    $q->where('is_client_visible', true)
+                      ->whereIn('status', [
+                          VariationOrder::STATUS_PENDING_CLIENT,
+                          VariationOrder::STATUS_APPROVED,
+                          VariationOrder::STATUS_DECLINED,
+                      ])
+                      ->orderBy('id');
+                },
+                'variationOrders.items',
             ]);
 
         if ($serviceRequestId) {
@@ -89,6 +106,25 @@ class ClientController extends Controller
                     'payment_method' => $p->payment_method,
                     'paid_at' => $p->paid_at?->toDateString(),
                     'mpesa_receipt_number' => $p->mpesa_receipt_number,
+                ]),
+                // Everything the client-facing variation card needs to render
+                // and act, shaped like the request-status page so the same
+                // component drives both.
+                'has_pending_variation' => $sr->variationOrders
+                    ->contains('status', VariationOrder::STATUS_PENDING_CLIENT),
+                'variation_ledger' => app(VariationOrderService::class)->ledger($sr),
+                'variation_orders' => $sr->variationOrders->map(fn ($vo) => [
+                    'id' => $vo->id,
+                    'vo_number' => $vo->vo_number,
+                    'status' => $vo->status,
+                    'net_amount' => (float) $vo->net_amount,
+                    'reason' => $vo->reason,
+                    'additional_days' => $vo->additional_days,
+                    'items' => $vo->items->map(fn ($item) => [
+                        'id' => $item->id,
+                        'description' => $item->description,
+                        'total_price' => (float) $item->total_price,
+                    ]),
                 ]),
             ];
         });

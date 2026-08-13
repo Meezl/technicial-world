@@ -282,6 +282,8 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             'progress_percentage' => 40,
         ]);
 
+        // A report the office has settled AND released — the only kind the
+        // client sees now that reports reach them as one collective update.
         ProgressReport::create([
             'service_request_id' => $job->id,
             'service_sub_task_id' => $subTask->id,
@@ -293,6 +295,8 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             'is_validated' => true,
             'validated_percent' => 40,
             'validated_at' => now(),
+            'submitted_to_office_at' => now(),
+            'released_to_client_at' => now(),
         ]);
 
         $this->actingAs($client)
@@ -575,9 +579,23 @@ class SubTaskTechnicianVisibilityTest extends TestCase
 
         // And it is still the office's to settle, so billing is not lost.
         $this->assertNotNull($report->fresh()->approved_by_lead_at);
+
+        // But the office does not see it on the strength of the lead's approval
+        // alone — the lead has to push the batch up first.
+        $this->assertFalse(
+            ProgressReport::needsOfficeAction()->whereKey($report->id)->exists(),
+            'a lead-approved but unposted report must stay off the office queue'
+        );
+
+        $this->actingAs($lead->user)
+            ->post(route('technician.reports.post', $job))
+            ->assertSessionHasNoErrors();
+
+        // Once posted, it is the office's to settle, so billing is not lost.
+        $this->assertNotNull($report->fresh()->submitted_to_office_at);
         $this->assertTrue(
             ProgressReport::needsOfficeAction()->whereKey($report->id)->exists(),
-            'a lead-approved report must stay in the PM queue'
+            'a posted, lead-approved report must be in the PM queue'
         );
     }
 
@@ -1063,6 +1081,12 @@ class SubTaskTechnicianVisibilityTest extends TestCase
         $this->actingAs($lead->user)->post(route('technician.progress-report.approve', $report));
 
         $this->assertSame(70, $subTask->fresh()->progress_percentage);
+
+        // The lead posts the batch, which is how the office comes to see it in
+        // the first place — the office only ever handles posted reports.
+        $this->actingAs($lead->user)
+            ->post(route('technician.reports.post', $job))
+            ->assertSessionHasNoErrors();
 
         // A reason is required.
         $this->actingAs($admin)

@@ -376,9 +376,27 @@ class PMDashboardController extends Controller
             ->paginate(12)
             ->withQueryString();
 
+        // Jobs with reports the PM has settled but not yet sent on. Surfaced so
+        // the PM can release each as one collective client update, the same way
+        // an admin does from the job page.
+        $releasableByJob = ProgressReport::query()
+            ->releasableToClient()
+            ->whereHas('serviceRequest', fn ($q) => $q->where('assigned_pm_id', $pmId))
+            ->with('serviceRequest:id,request_id,job_reference')
+            ->get()
+            ->groupBy('service_request_id')
+            ->map(fn ($group) => [
+                'id' => $group->first()->service_request_id,
+                'request_id' => $group->first()->serviceRequest->request_id,
+                'job_reference' => $group->first()->serviceRequest->job_reference,
+                'count' => $group->count(),
+            ])
+            ->values();
+
         return Inertia::render('PM/ProgressReports', [
             'reports' => $reports,
             'summary' => $summary,
+            'releasableByJob' => $releasableByJob,
             'filters' => $request->only(['pending_only']),
         ]);
     }
@@ -399,6 +417,35 @@ class PMDashboardController extends Controller
         ]));
 
         return redirect()->back()->with('success', 'Progress validated.');
+    }
+
+    /**
+     * Release settled reports to the client as one collective update — the PM
+     * counterpart of the admin action. One report and one email to the client,
+     * in place of a separate notification per technician.
+     */
+    public function releaseReportsToClient(Request $request, ServiceRequest $serviceRequest)
+    {
+        $this->authorizeForPm($serviceRequest);
+
+        $data = $request->validate([
+            'office_batch_id' => 'nullable|uuid',
+        ]);
+
+        $released = $this->progressService->releaseToClient(
+            $serviceRequest,
+            $data['office_batch_id'] ?? null,
+            auth()->id()
+        );
+
+        if ($released === 0) {
+            return redirect()->back()->with('error',
+                'No validated reports are waiting to be released. Validate them first.');
+        }
+
+        return redirect()->back()->with('success',
+            "Released {$released} " . ($released === 1 ? 'report' : 'reports') .
+            ' to the client in one update.');
     }
 
     /**
