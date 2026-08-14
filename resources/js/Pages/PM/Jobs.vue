@@ -226,6 +226,14 @@
                                             <i class="fas fa-exchange-alt"></i>
                                             Reassign
                                         </button>
+
+                                        <button
+                                            class="btn btn-sm btn-secondary"
+                                            @click="openDocumentsModal(job)"
+                                        >
+                                            <i class="fas fa-folder-open"></i>
+                                            Documents
+                                        </button>
                                     </div>
                                 </div>
                             </td>
@@ -307,6 +315,14 @@
                         >
                             <i class="fas fa-exchange-alt"></i>
                             Reassign
+                        </button>
+
+                        <button
+                            class="btn btn-sm btn-secondary"
+                            @click="openDocumentsModal(job)"
+                        >
+                            <i class="fas fa-folder-open"></i>
+                            Documents
                         </button>
                     </div>
                 </article>
@@ -450,6 +466,28 @@
                 </div>
             </div>
         </div>
+
+        <div v-if="showDocumentsModal && documentsJob" class="modal-overlay">
+            <div class="modal-content modal-wide">
+                <div class="modal-header">
+                    <div>
+                        <h3>Documents</h3>
+                        <p class="modal-subtitle">{{ documentsJob.job_reference || documentsJob.request_id }} • {{ documentsJob.user?.name }}</p>
+                    </div>
+                    <button class="modal-close" @click="showDocumentsModal = false">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <JobDocumentsPanel
+                        :job="documentsJob"
+                        :document-kinds="documentKinds"
+                        :technician-visible-kinds="technicianVisibleKinds"
+                    />
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @click="showDocumentsModal = false">Done</button>
+                </div>
+            </div>
+        </div>
     </PMLayout>
 </template>
 
@@ -457,6 +495,7 @@
 import { computed, ref } from 'vue'
 import { Link, router } from '@inertiajs/vue3'
 import PMLayout from '../../Layouts/PMLayout.vue'
+import JobDocumentsPanel from '../../Components/JobDocumentsPanel.vue'
 
 const props = defineProps({
     jobs: { type: Object, default: () => ({ data: [] }) },
@@ -464,6 +503,8 @@ const props = defineProps({
     statusSummary: { type: Object, default: () => ({}) },
     statuses: { type: Object, default: () => ({}) },
     filters: { type: Object, default: () => ({}) },
+    documentKinds: { type: Object, default: () => ({}) },
+    technicianVisibleKinds: { type: Array, default: () => [] },
 })
 
 const summary = computed(() => props.statusSummary || {})
@@ -474,6 +515,14 @@ const selectedJob = ref(null)
 const showSuspendModal = ref(false)
 const showReassignModal = ref(false)
 const showAssignModal = ref(false)
+const showDocumentsModal = ref(false)
+// Track the open job by id, not by reference: the panel's uploads and
+// visibility toggles reload the page props, so we re-resolve the job from the
+// fresh list to keep its document set current while the modal stays open.
+const documentsJobId = ref(null)
+const documentsJob = computed(() =>
+    (props.jobs.data || []).find((job) => job.id === documentsJobId.value) || null,
+)
 const suspendReason = ref('')
 const reassignForm = ref({ technician_id: '', reason: '' })
 const assignForm = ref({ technician_id: '', agreed_compensation: 0, expected_start: '', expected_end: '' })
@@ -530,6 +579,11 @@ const openAssignModal = (job) => {
     selectedJob.value = job
     assignForm.value = { technician_id: '', agreed_compensation: 0, expected_start: '', expected_end: '' }
     showAssignModal.value = true
+}
+
+const openDocumentsModal = (job) => {
+    documentsJobId.value = job.id
+    showDocumentsModal.value = true
 }
 
 const submitSuspend = () => {
@@ -668,6 +722,17 @@ defineOptions({ layout: null })
     margin: 0.45rem 0 0;
     color: #64748b;
     max-width: 58ch;
+}
+
+/* The documents modal carries a full panel — a list plus an upload form — so
+   it needs more room than the narrow action modals, and its own scroll when
+   a job has collected a lot of files. */
+.modal-content.modal-wide {
+    max-width: 760px;
+}
+.modal-content.modal-wide .modal-body {
+    max-height: 70vh;
+    overflow-y: auto;
 }
 
 .jobs-hero,

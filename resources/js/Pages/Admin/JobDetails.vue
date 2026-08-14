@@ -853,6 +853,22 @@
                     <article class="job-shell-card">
                         <div class="job-card-header">
                             <div>
+                                <span class="section-kicker">Documents</span>
+                                <h3>Files &amp; specs</h3>
+                                <p>Briefs, specs and drawings held against the job. Client uploads and ops-drawn specs reach the technician once shared; quotations and approvals never do.</p>
+                            </div>
+                        </div>
+
+                        <JobDocumentsPanel
+                            :job="job"
+                            :document-kinds="documentKinds"
+                            :technician-visible-kinds="technicianVisibleKinds"
+                        />
+                    </article>
+
+                    <article class="job-shell-card">
+                        <div class="job-card-header">
+                            <div>
                                 <span class="section-kicker">Finance</span>
                                 <h3>Refunds</h3>
                                 <p>Money owed back to the client, and whether it has actually gone.</p>
@@ -1939,6 +1955,7 @@ import AdminSidebar from '../../Components/AdminSidebar.vue'
 import ImageLightbox from '../../Components/ImageLightbox.vue'
 import VariationOrdersPanel from '../../Components/VariationOrdersPanel.vue'
 import RefundsPanel from '../../Components/RefundsPanel.vue'
+import JobDocumentsPanel from '../../Components/JobDocumentsPanel.vue'
 import ProgressReportActions from '../../Components/ProgressReportActions.vue'
 import RemovedReportsPanel from '../../Components/RemovedReportsPanel.vue'
 import PhotoUploader from '../../Components/PhotoUploader.vue'
@@ -1966,6 +1983,14 @@ const props = defineProps({
     variationLedger: {
         type: Object,
         default: null
+    },
+    documentKinds: {
+        type: Object,
+        default: () => ({})
+    },
+    technicianVisibleKinds: {
+        type: Array,
+        default: () => []
     }
 })
 

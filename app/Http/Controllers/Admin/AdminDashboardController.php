@@ -340,6 +340,11 @@ class AdminDashboardController extends Controller
             'job' => $job,
             'technicians' => $technicians,
             'budgetSummary' => $budgetSummary,
+            // Kinds for the document upload form, and which of them a
+            // technician on the job is allowed to see once shared — so the
+            // form can say plainly when an upload will reach the crew.
+            'documentKinds' => \App\Models\ServiceRequestDocument::KIND_LABELS,
+            'technicianVisibleKinds' => \App\Models\ServiceRequestDocument::TECHNICIAN_VISIBLE_KINDS,
             // Contract money and attendance money, reported side by side.
             // They are summed only in the total_* lines — the contract cap
             // must never see an attendance fee.

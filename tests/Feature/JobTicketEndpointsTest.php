@@ -178,6 +178,44 @@ class JobTicketEndpointsTest extends TestCase
         Storage::disk('public')->assertExists($doc->path);
     }
 
+    /**
+     * The dedicated Spec/Drawing kind is accepted by the upload endpoint, is
+     * internal until shared like everything else, and once shared it is one of
+     * the kinds a technician on the job may see — unlike commercial paperwork.
+     */
+    public function test_a_spec_is_uploadable_and_reaches_the_technician_once_shared(): void
+    {
+        Storage::fake('public');
+        [$sr, , $admin] = $this->makeJob();
+
+        $this->actingAs($admin)
+            ->post(route('jobs.documents.store', $sr), [
+                'file' => UploadedFile::fake()->create('installation-spec.pdf', 90, 'application/pdf'),
+                'kind' => ServiceRequestDocument::KIND_SPEC,
+                'title' => 'Installation spec — rev B',
+            ])
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $doc = $sr->documents()->firstOrFail();
+        $this->assertSame(ServiceRequestDocument::KIND_SPEC, $doc->kind);
+        $this->assertFalse($doc->is_client_visible, 'A spec is internal until deliberately shared.');
+
+        // Internal, so not yet the technician's to see.
+        $this->assertFalse(
+            $sr->documents()->technicianVisible()->whereKey($doc->id)->exists()
+        );
+
+        $this->actingAs($admin)
+            ->post(route('jobs.documents.visibility', [$sr, $doc]), ['is_client_visible' => true]);
+
+        // Shared: now visible to the technician, because a spec is one of the
+        // kinds the crew is allowed to see.
+        $this->assertTrue(
+            $sr->documents()->technicianVisible()->whereKey($doc->id)->exists()
+        );
+    }
+
     public function test_a_document_can_be_shared_and_unshared(): void
     {
         Storage::fake('public');

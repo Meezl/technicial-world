@@ -230,7 +230,10 @@ class PMDashboardController extends Controller
         ];
 
         $jobs = ServiceRequest::forPm($pmId)
-            ->with(['user', 'serviceCategory', 'technician.user', 'leadTechnician.user', 'subTasks.technician.user'])
+            ->with(['user', 'serviceCategory', 'technician.user', 'leadTechnician.user', 'subTasks.technician.user',
+                // The paperwork a job holds, so the PM can add a spec or share
+                // a brief from the board without opening a separate page.
+                'documents.uploader:id,name'])
             ->when($request->status, fn($q, $s) => $q->where('status', $s))
             ->when($request->search, function ($q, $search) {
                 $q->where(function ($q) use ($search) {
@@ -263,6 +266,10 @@ class PMDashboardController extends Controller
             'statusSummary' => $statusSummary,
             'statuses' => ServiceRequest::allStatuses(),
             'filters' => $request->only(['status', 'search']),
+            // Kinds for the document upload form, and which of them a
+            // technician on the job may see once shared.
+            'documentKinds' => \App\Models\ServiceRequestDocument::KIND_LABELS,
+            'technicianVisibleKinds' => \App\Models\ServiceRequestDocument::TECHNICIAN_VISIBLE_KINDS,
         ]);
     }
 

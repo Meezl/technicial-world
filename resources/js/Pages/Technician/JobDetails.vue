@@ -173,8 +173,10 @@
             </section>
 
             <!-- Drawings and briefs: the files attached to this technician's
-                 own assignment, plus anything ops deliberately shared on the
-                 job. Internal documents stay internal. -->
+                 own assignment, the client's own uploads, and the specs ops
+                 draw for the job. The office's commercial paperwork for the
+                 client — quotations, approvals, case analyses — never appears
+                 here. -->
             <section class="panel-card" v-if="hasJobFiles">
                 <div class="section-heading">
                     <div>

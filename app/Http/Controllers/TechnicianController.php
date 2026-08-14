@@ -207,9 +207,12 @@ class TechnicianController extends Controller
             // Job-level photos — the client's evidence of a snag, so the
             // technician sees it before going back to site.
             'photos.uploader:id,name',
-            // Only documents ops deliberately shared. Case analyses and
-            // margin thinking default to internal and stay there.
-            'documents' => fn ($q) => $q->clientVisible(),
+            // The client's own briefs and the specs ops draw for the job, but
+            // never the office's commercial paperwork for the client —
+            // quotations, quote support, signed approvals, sample reports,
+            // case analyses — even once shared with the client. See
+            // ServiceRequestDocument::scopeTechnicianVisible.
+            'documents' => fn ($q) => $q->technicianVisible(),
         ]);
 
         $reportingService = app(ReportingService::class);

@@ -1307,6 +1307,95 @@ class SubTaskTechnicianVisibilityTest extends TestCase
     }
 
     /**
+     * The job page shows a technician the client's own briefs and the specs
+     * ops draw for the job, but never the commercial paperwork the office
+     * prepared for the client. A quotation, its supporting costing, the
+     * signed approval and the internal case analysis were all being shipped
+     * the moment ops shared them with the client, because the page loaded
+     * every client-visible document. The technician's copy is scoped to the
+     * non-commercial kinds.
+     */
+    public function test_job_page_shows_client_uploads_but_not_the_office_quotation(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $tech = $this->makeTechnician();
+
+        $job = $this->makeJob($client, ['technician_id' => $tech->id]);
+
+        // The client's own brief — the technician needs this.
+        \App\Models\ServiceRequestDocument::create([
+            'service_request_id' => $job->id,
+            'kind'               => \App\Models\ServiceRequestDocument::KIND_CLIENT_UPLOAD,
+            'title'              => 'Site drawings',
+            'path'               => 'job-documents/site-drawings.pdf',
+            'original_name'      => 'site-drawings.pdf',
+            'is_client_visible'  => true,
+            'uploaded_by'        => $client->id,
+        ]);
+
+        // An ops-drawn spec shared on the job — the technician needs this too.
+        \App\Models\ServiceRequestDocument::create([
+            'service_request_id' => $job->id,
+            'kind'               => \App\Models\ServiceRequestDocument::KIND_SPEC,
+            'title'              => 'Installation spec',
+            'path'               => 'job-documents/installation-spec.pdf',
+            'original_name'      => 'installation-spec.pdf',
+            'is_client_visible'  => true,
+            'uploaded_by'        => $admin->id,
+        ]);
+
+        // Everything the office prepared for the client — shared with the
+        // client, but not the technician's to see.
+        foreach ([
+            \App\Models\ServiceRequestDocument::KIND_QUOTE_SUPPORT => 'Quotation v2',
+            \App\Models\ServiceRequestDocument::KIND_APPROVAL      => 'Signed approval',
+            \App\Models\ServiceRequestDocument::KIND_CASE_ANALYSIS => 'Margin analysis',
+            \App\Models\ServiceRequestDocument::KIND_SAMPLE_REPORT => 'Sample report',
+            // A general "other" document is not shipped wholesale — only a
+            // spec is. This one must stay out of the technician's view.
+            \App\Models\ServiceRequestDocument::KIND_OTHER         => 'Misc internal note',
+        ] as $kind => $title) {
+            \App\Models\ServiceRequestDocument::create([
+                'service_request_id' => $job->id,
+                'kind'               => $kind,
+                'title'              => $title,
+                'path'               => 'job-documents/' . \Illuminate\Support\Str::slug($title) . '.pdf',
+                'original_name'      => \Illuminate\Support\Str::slug($title) . '.pdf',
+                'is_client_visible'  => true,
+                'uploaded_by'        => $admin->id,
+            ]);
+        }
+
+        $this->actingAs($tech->user)
+            ->get(route('technician.jobs.show', $job))
+            ->assertOk()
+            ->assertInertia(function ($page) {
+                $page->has('job.documents', 2);
+
+                $titles = collect($page->toArray()['props']['job']['documents'])
+                    ->pluck('title');
+
+                // The client's brief and the ops-drawn spec reach the technician.
+                foreach (['Site drawings', 'Installation spec'] as $allowed) {
+                    $this->assertTrue(
+                        $titles->contains($allowed),
+                        "$allowed did not reach the technician"
+                    );
+                }
+
+                // The office's commercial paperwork — and a general "other"
+                // document — do not.
+                foreach (['Quotation v2', 'Signed approval', 'Margin analysis', 'Sample report', 'Misc internal note'] as $blocked) {
+                    $this->assertFalse(
+                        $titles->contains($blocked),
+                        "$blocked leaked to the technician"
+                    );
+                }
+            });
+    }
+
+    /**
      * REQ-X6HTRO exactly as it sits in production (service_request 68):
      * technician_id = 54 (the sub-task holder), lead_technician_id = 28, and
      * the lead holds no sub-task of their own — only a live JobAssignment
