@@ -84,6 +84,10 @@ class ProgressReportRemovalTest extends TestCase
             'is_validated' => true,
             'validated_percent' => $percent,
             'validated_at' => now(),
+            // A validated report the office is working with has, by definition,
+            // reached the office — so it carries the posted stamp the job page
+            // now filters on.
+            'submitted_to_office_at' => now(),
         ]);
     }
 

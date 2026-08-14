@@ -282,6 +282,8 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             'progress_percentage' => 40,
         ]);
 
+        // A report the office has settled AND released — the only kind the
+        // client sees now that reports reach them as one collective update.
         ProgressReport::create([
             'service_request_id' => $job->id,
             'service_sub_task_id' => $subTask->id,
@@ -293,6 +295,8 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             'is_validated' => true,
             'validated_percent' => 40,
             'validated_at' => now(),
+            'submitted_to_office_at' => now(),
+            'released_to_client_at' => now(),
         ]);
 
         $this->actingAs($client)
@@ -575,9 +579,23 @@ class SubTaskTechnicianVisibilityTest extends TestCase
 
         // And it is still the office's to settle, so billing is not lost.
         $this->assertNotNull($report->fresh()->approved_by_lead_at);
+
+        // But the office does not see it on the strength of the lead's approval
+        // alone — the lead has to push the batch up first.
+        $this->assertFalse(
+            ProgressReport::needsOfficeAction()->whereKey($report->id)->exists(),
+            'a lead-approved but unposted report must stay off the office queue'
+        );
+
+        $this->actingAs($lead->user)
+            ->post(route('technician.reports.post', $job))
+            ->assertSessionHasNoErrors();
+
+        // Once posted, it is the office's to settle, so billing is not lost.
+        $this->assertNotNull($report->fresh()->submitted_to_office_at);
         $this->assertTrue(
             ProgressReport::needsOfficeAction()->whereKey($report->id)->exists(),
-            'a lead-approved report must stay in the PM queue'
+            'a posted, lead-approved report must be in the PM queue'
         );
     }
 
@@ -1064,6 +1082,12 @@ class SubTaskTechnicianVisibilityTest extends TestCase
 
         $this->assertSame(70, $subTask->fresh()->progress_percentage);
 
+        // The lead posts the batch, which is how the office comes to see it in
+        // the first place — the office only ever handles posted reports.
+        $this->actingAs($lead->user)
+            ->post(route('technician.reports.post', $job))
+            ->assertSessionHasNoErrors();
+
         // A reason is required.
         $this->actingAs($admin)
             ->post(route('admin.progress.return', $report), ['rejection_reason' => ''])
@@ -1279,6 +1303,95 @@ class SubTaskTechnicianVisibilityTest extends TestCase
                 $subTasks = collect($job['sub_tasks'])->keyBy('title');
                 $this->assertSame('10000.00', $subTasks['Solar Installation Works']['agreed_compensation']);
                 $this->assertArrayNotHasKey('agreed_compensation', $subTasks['Roof strengthening']);
+            });
+    }
+
+    /**
+     * The job page shows a technician the client's own briefs and the specs
+     * ops draw for the job, but never the commercial paperwork the office
+     * prepared for the client. A quotation, its supporting costing, the
+     * signed approval and the internal case analysis were all being shipped
+     * the moment ops shared them with the client, because the page loaded
+     * every client-visible document. The technician's copy is scoped to the
+     * non-commercial kinds.
+     */
+    public function test_job_page_shows_client_uploads_but_not_the_office_quotation(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $tech = $this->makeTechnician();
+
+        $job = $this->makeJob($client, ['technician_id' => $tech->id]);
+
+        // The client's own brief — the technician needs this.
+        \App\Models\ServiceRequestDocument::create([
+            'service_request_id' => $job->id,
+            'kind'               => \App\Models\ServiceRequestDocument::KIND_CLIENT_UPLOAD,
+            'title'              => 'Site drawings',
+            'path'               => 'job-documents/site-drawings.pdf',
+            'original_name'      => 'site-drawings.pdf',
+            'is_client_visible'  => true,
+            'uploaded_by'        => $client->id,
+        ]);
+
+        // An ops-drawn spec shared on the job — the technician needs this too.
+        \App\Models\ServiceRequestDocument::create([
+            'service_request_id' => $job->id,
+            'kind'               => \App\Models\ServiceRequestDocument::KIND_SPEC,
+            'title'              => 'Installation spec',
+            'path'               => 'job-documents/installation-spec.pdf',
+            'original_name'      => 'installation-spec.pdf',
+            'is_client_visible'  => true,
+            'uploaded_by'        => $admin->id,
+        ]);
+
+        // Everything the office prepared for the client — shared with the
+        // client, but not the technician's to see.
+        foreach ([
+            \App\Models\ServiceRequestDocument::KIND_QUOTE_SUPPORT => 'Quotation v2',
+            \App\Models\ServiceRequestDocument::KIND_APPROVAL      => 'Signed approval',
+            \App\Models\ServiceRequestDocument::KIND_CASE_ANALYSIS => 'Margin analysis',
+            \App\Models\ServiceRequestDocument::KIND_SAMPLE_REPORT => 'Sample report',
+            // A general "other" document is not shipped wholesale — only a
+            // spec is. This one must stay out of the technician's view.
+            \App\Models\ServiceRequestDocument::KIND_OTHER         => 'Misc internal note',
+        ] as $kind => $title) {
+            \App\Models\ServiceRequestDocument::create([
+                'service_request_id' => $job->id,
+                'kind'               => $kind,
+                'title'              => $title,
+                'path'               => 'job-documents/' . \Illuminate\Support\Str::slug($title) . '.pdf',
+                'original_name'      => \Illuminate\Support\Str::slug($title) . '.pdf',
+                'is_client_visible'  => true,
+                'uploaded_by'        => $admin->id,
+            ]);
+        }
+
+        $this->actingAs($tech->user)
+            ->get(route('technician.jobs.show', $job))
+            ->assertOk()
+            ->assertInertia(function ($page) {
+                $page->has('job.documents', 2);
+
+                $titles = collect($page->toArray()['props']['job']['documents'])
+                    ->pluck('title');
+
+                // The client's brief and the ops-drawn spec reach the technician.
+                foreach (['Site drawings', 'Installation spec'] as $allowed) {
+                    $this->assertTrue(
+                        $titles->contains($allowed),
+                        "$allowed did not reach the technician"
+                    );
+                }
+
+                // The office's commercial paperwork — and a general "other"
+                // document — do not.
+                foreach (['Quotation v2', 'Signed approval', 'Margin analysis', 'Sample report', 'Misc internal note'] as $blocked) {
+                    $this->assertFalse(
+                        $titles->contains($blocked),
+                        "$blocked leaked to the technician"
+                    );
+                }
             });
     }
 

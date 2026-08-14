@@ -130,6 +130,26 @@
                         </div>
                     </div>
 
+                    <!-- Revised-budget approval, right where the client pays.
+                         A pending change is the usual reason a balance can't be
+                         acted on; approving it here unlocks the payment request
+                         below without hunting through the request-status page. -->
+                    <div v-if="job.has_pending_variation" class="variation-approval-callout">
+                        <i class="fas fa-file-invoice-dollar"></i>
+                        <span>Your budget was revised. Approve the change below to unlock payment.</span>
+                    </div>
+                    <ClientVariationCards
+                        v-if="job.variation_orders && job.variation_orders.length"
+                        class="payments-variation-cards"
+                        :service-request="{
+                            id: job.id,
+                            quote_amount: job.quote_amount,
+                            variation_orders: job.variation_orders,
+                            payment_requests: job.payment_requests,
+                        }"
+                        :ledger="job.variation_ledger"
+                    />
+
                     <div class="job-summary-grid">
                         <div class="job-summary-tile">
                             <span class="job-summary-label">Paid</span>
@@ -281,6 +301,7 @@ import { computed, ref } from 'vue'
 import { Link, router } from '@inertiajs/vue3'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
 import ClientBottomNav from '../../Components/ClientBottomNav.vue'
+import ClientVariationCards from '../../Components/ClientVariationCards.vue'
 
 const props = defineProps({
     paymentsByJob: { type: Array, default: () => [] },
@@ -447,6 +468,25 @@ defineOptions({ layout: null })
 </script>
 
 <style>
+
+/* Revised-budget approval surfaced on the payments page. The callout uses the
+   same amber "needs your action" language as the pending-payment alert. */
+.variation-approval-callout {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 0 0 1rem;
+    padding: 0.75rem 1rem;
+    border-radius: 0.75rem;
+    background: #FEF3C7;
+    border: 1px solid #FCD34D;
+    color: #92400E;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+.payments-variation-cards {
+    margin-bottom: 1.25rem;
+}
 
 /* Pay Now button on each pending request card — clear, high-contrast,
    matches the payment-due colour language on the dashboard alert. */

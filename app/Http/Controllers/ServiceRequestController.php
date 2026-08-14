@@ -148,8 +148,13 @@ class ServiceRequestController extends Controller
             'payments',
             // Only validated reports get photos eager-loaded; client never
             // sees unvalidated drafts. We also exclude photos the PM removed.
+            // Only reports the office has released reach the client, so what
+            // they see matches the single collective update they were emailed —
+            // not a running feed of each technician's unposted or unsettled
+            // claims. (Legacy validated reports were backfilled as released.)
             'progressReports' => function ($q) {
-                $q->orderBy('report_date', 'desc');
+                $q->whereNotNull('released_to_client_at')
+                  ->orderBy('report_date', 'desc');
             },
             'progressReports.photos' => function ($q) {
                 $q->where('removed_by_pm', false);

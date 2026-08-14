@@ -173,8 +173,10 @@
             </section>
 
             <!-- Drawings and briefs: the files attached to this technician's
-                 own assignment, plus anything ops deliberately shared on the
-                 job. Internal documents stay internal. -->
+                 own assignment, the client's own uploads, and the specs ops
+                 draw for the job. The office's commercial paperwork for the
+                 client — quotations, approvals, case analyses — never appears
+                 here. -->
             <section class="panel-card" v-if="hasJobFiles">
                 <div class="section-heading">
                     <div>
@@ -215,6 +217,32 @@
                         <span class="section-kicker">Sub-Tasks</span>
                         <h3>Assigned work items</h3>
                     </div>
+                    <!-- The lead pushes the reviewed reports up to the office as
+                         one batch. Until this, the office sees nothing — which
+                         is what spares the client a separate update per crew
+                         member. -->
+                    <button
+                        v-if="isLeadTechnician && postableReportCount"
+                        type="button"
+                        class="btn btn-primary"
+                        :disabled="postingReports"
+                        @click="postReportsToOffice()"
+                        title="Send the reviewed reports to the office in one batch"
+                    >
+                        <i class="fas fa-paper-plane"></i>
+                        {{ postingReports ? 'Posting…' : `Post ${postableReportCount} to office` }}
+                    </button>
+                </div>
+
+                <!-- Reminder so reviewed reports don't sit unposted: the office
+                     sees nothing on this job until the lead sends them up. -->
+                <div v-if="isLeadTechnician && postableReportCount" class="post-reports-nudge">
+                    <i class="fas fa-circle-info"></i>
+                    <span>
+                        You have {{ postableReportCount }} reviewed
+                        {{ postableReportCount === 1 ? 'report' : 'reports' }}
+                        ready to send. The office won't see this job's progress until you post them.
+                    </span>
                 </div>
 
                 <div class="subtask-list">
@@ -666,6 +694,29 @@ const onBehalfOf = computed(() => {
 const progressReports = computed(() => props.job.progress_reports || [])
 const jobPhotos = computed(() => props.job.photos || [])
 const recentPayouts = computed(() => (props.compensationSummary?.history || []).slice(0, 3))
+
+// Reports ready for the lead to push up: the crew work they have ratified,
+// plus their own, that has not already gone to the office. Un-reviewed crew
+// claims are excluded — the lead approves them first, then posts the batch.
+const postableReportCount = computed(() =>
+    progressReports.value.filter((r) =>
+        !r.submitted_to_office_at &&
+        !r.rejected_at &&
+        (r.approved_by_lead_at ||
+            r.submitted_by === props.technician.user_id ||
+            r.technician_id === props.technician.id)
+    ).length
+)
+const postingReports = ref(false)
+const postReportsToOffice = () => {
+    const n = postableReportCount.value
+    if (!confirm(`Post ${n} reviewed ${n === 1 ? 'report' : 'reports'} to the office? The client hears once, when the office releases the batch.`)) return
+    postingReports.value = true
+    router.post(`/technician/jobs/${props.job.id}/post-reports`, {}, {
+        preserveScroll: true,
+        onFinish: () => { postingReports.value = false },
+    })
+}
 
 // Mirrors the server rule: your own sub-task, or all of them when you
 // carry the job (lead / sole assignee).
@@ -1415,6 +1466,23 @@ defineOptions({ layout: null })
     font-size: .8rem;
     line-height: 1.35;
     color: var(--text-muted, #64748b);
+}
+
+.post-reports-nudge {
+    display: flex;
+    align-items: flex-start;
+    gap: .55rem;
+    margin: 0 0 1rem;
+    padding: .7rem .9rem;
+    border-radius: .6rem;
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    color: #92400e;
+    font-size: .82rem;
+    line-height: 1.4;
+}
+.post-reports-nudge i {
+    margin-top: .12rem;
 }
 
 @media (max-width: 640px) {

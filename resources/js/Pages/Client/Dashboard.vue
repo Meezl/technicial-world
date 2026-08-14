@@ -230,6 +230,25 @@
                 </div>
             </section>
 
+            <!-- Revised-budget approval waiting on the client. Points at the
+                 payments page, where the approve control now lives, so a
+                 balance he cannot otherwise act on has an obvious next step. -->
+            <section v-if="stats.pendingVariations > 0" class="budget-revised-banner">
+                <div class="budget-revised-copy">
+                    <span class="budget-revised-tag">
+                        <i class="fas fa-file-invoice-dollar"></i> Budget Revised
+                    </span>
+                    <h2>{{ stats.pendingVariations }} budget change{{ stats.pendingVariations === 1 ? '' : 's' }} awaiting your approval</h2>
+                    <p>Approve the revised budget to unlock payment on your job{{ stats.pendingVariations === 1 ? '' : 's' }}.</p>
+                </div>
+                <div class="budget-revised-actions">
+                    <Link href="/client/payments" class="btn btn-primary banner-button">
+                        <i class="fas fa-check-circle"></i>
+                        Review &amp; Approve
+                    </Link>
+                </div>
+            </section>
+
             <section class="dashboard-hero">
                 <article class="hero-card hero-card-primary">
                     <span class="hero-kicker">Client Workspace</span>
@@ -808,6 +827,50 @@ defineOptions({
 .payment-due-banner-actions .btn.btn-primary:hover {
     background: #b91c1c;
     border-color: #b91c1c;
+}
+
+/* Budget-revised banner — amber "needs a decision" language, distinct from
+   the red "money overdue" payment-due banner it sits beside. */
+.budget-revised-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 1.4rem 1.6rem;
+    border-radius: 24px;
+    background: linear-gradient(135deg, #fef9c3, #fef3c7);
+    border: 1px solid #fcd34d;
+    color: #78350f;
+    box-shadow: 0 12px 30px -18px rgba(217, 119, 6, 0.4);
+    margin-bottom: 1.25rem;
+}
+.budget-revised-copy h2 {
+    margin: 0.35rem 0 0.3rem;
+    font-size: 1.55rem;
+    color: #78350f;
+}
+.budget-revised-copy p {
+    margin: 0;
+    color: #92400e;
+    opacity: 0.9;
+}
+.budget-revised-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #b45309;
+}
+.budget-revised-actions .btn.btn-primary {
+    background: #d97706;
+    border-color: #d97706;
+}
+.budget-revised-actions .btn.btn-primary:hover {
+    background: #b45309;
+    border-color: #b45309;
 }
 
 .submission-banner {

@@ -288,6 +288,11 @@ class AdminDashboardController extends Controller
             'paymentRequests',
             'milestones',
             'milestones.allocations.technician.user',
+            // The office sees a report only once the lead has posted it — a
+            // crew report on a lead-run job stays with the lead until then.
+            // Reports that never pass through a lead were stamped posted on
+            // submission, so this hides nothing that used to be here.
+            'progressReports' => fn ($q) => $q->whereNotNull('submitted_to_office_at'),
             'progressReports.technician.user',
             'progressReports.submitter',
             'progressReports.validator',
@@ -335,6 +340,11 @@ class AdminDashboardController extends Controller
             'job' => $job,
             'technicians' => $technicians,
             'budgetSummary' => $budgetSummary,
+            // Kinds for the document upload form, and which of them a
+            // technician on the job is allowed to see once shared — so the
+            // form can say plainly when an upload will reach the crew.
+            'documentKinds' => \App\Models\ServiceRequestDocument::KIND_LABELS,
+            'technicianVisibleKinds' => \App\Models\ServiceRequestDocument::TECHNICIAN_VISIBLE_KINDS,
             // Contract money and attendance money, reported side by side.
             // They are summed only in the total_* lines — the contract cap
             // must never see an attendance fee.
@@ -372,6 +382,36 @@ class AdminDashboardController extends Controller
         ]), $adminPhotos, validatedAs: \App\Models\ProgressReport::AS_ADMIN);
 
         return back()->with('success', 'Progress validated.');
+    }
+
+    /**
+     * Release settled reports to the client as one collective update.
+     *
+     * The office validates each report on its own, then releases them together
+     * here: the client gets one report and one email covering the batch, in
+     * place of a separate notification per technician. A batch id narrows it to
+     * a single lead's push; without one it sweeps everything settled and unsent.
+     */
+    public function releaseReportsToClient(Request $request, ServiceRequest $serviceRequest)
+    {
+        $data = $request->validate([
+            'office_batch_id' => 'nullable|uuid',
+        ]);
+
+        $released = app(ProgressService::class)->releaseToClient(
+            $serviceRequest,
+            $data['office_batch_id'] ?? null,
+            auth()->id()
+        );
+
+        if ($released === 0) {
+            return back()->with('error',
+                'No validated reports are waiting to be released. Validate them first.');
+        }
+
+        return back()->with('success',
+            "Released {$released} " . ($released === 1 ? 'report' : 'reports') .
+            ' to the client in one update.');
     }
 
     /**

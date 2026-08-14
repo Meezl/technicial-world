@@ -151,6 +151,9 @@ Route::middleware(['auth', 'role:project_manager'])->prefix('pm')->group(functio
     Route::get('/progress-reports', [PMDashboardController::class, 'progressReports'])->name('pm.progress-reports');
     Route::post('/progress-reports/{progressReport}/validate', [PMDashboardController::class, 'validateProgress'])->name('pm.progress.validate');
     Route::post('/progress-reports/{progressReport}/return', [PMDashboardController::class, 'returnProgressReport'])->name('pm.progress.return');
+    // The office releases a settled batch to the client — one collective report,
+    // one email. A PM is office too, so they can release the jobs they run.
+    Route::post('/jobs/{serviceRequest}/release-reports', [PMDashboardController::class, 'releaseReportsToClient'])->name('pm.jobs.release-reports');
     Route::post('/jobs/{serviceRequest}/progress-on-behalf', [PMDashboardController::class, 'createProgressOnBehalf'])->name('pm.progress.on-behalf');
 
     // Technician Payment Sheets
@@ -209,6 +212,8 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::post('/jobs/{serviceRequest}/assign-lead', [AdminDashboardController::class, 'assignLeadTechnician'])->name('admin.jobs.assign-lead');
     Route::post('/jobs/{serviceRequest}/assignment-fee', [AdminDashboardController::class, 'updateAssignmentCompensation'])->name('admin.jobs.assignment.fee');
     Route::post('/progress-reports/{progressReport}/validate', [AdminDashboardController::class, 'validateProgress'])->name('admin.progress.validate');
+    // Release a settled batch to the client — one collective report, one email.
+    Route::post('/jobs/{serviceRequest}/release-reports', [AdminDashboardController::class, 'releaseReportsToClient'])->name('admin.jobs.release-reports');
     // Back to the lead to edit or answer, rather than a flat refusal.
     Route::post('/progress-reports/{progressReport}/return', [AdminDashboardController::class, 'returnProgressReport'])->name('admin.progress.return');
     // Office counterpart of a lead covering for their crew — files the report
@@ -423,6 +428,9 @@ Route::middleware(['auth', 'role:technician'])->group(function () {
     Route::post('/technician/progress-reports/{progressReport}/reject', [\App\Http\Controllers\TechnicianController::class, 'rejectSubTaskReport'])->name('technician.progress-report.reject');
     // The lead answers a report the office sent back and puts it up again.
     Route::post('/technician/progress-reports/{progressReport}/revise', [\App\Http\Controllers\TechnicianController::class, 'reviseReturnedReport'])->name('technician.progress-report.revise');
+    // The lead pushes the whole reviewed batch up to the office in one move —
+    // the office sees nothing on a lead-run job until this lands.
+    Route::post('/technician/jobs/{serviceRequest}/post-reports', [\App\Http\Controllers\TechnicianController::class, 'postReportsToOffice'])->name('technician.reports.post');
 
     // Progress reports
     Route::post('/technician/jobs/{serviceRequest}/progress-report', [\App\Http\Controllers\TechnicianController::class, 'submitProgressReport'])->name('technician.progress-report');

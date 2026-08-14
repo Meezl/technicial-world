@@ -455,9 +455,9 @@
 
                                 <div class="subtask-progress">
                                     <div class="progress-bar">
-                                        <div class="progress" :style="`width: ${subTask.progress_percentage}%;`"></div>
+                                        <div class="progress" :style="`width: ${subTaskProgress(subTask)}%;`"></div>
                                     </div>
-                                    <span class="progress-label">{{ subTask.progress_percentage }}%</span>
+                                    <span class="progress-label">{{ subTaskProgress(subTask) }}%</span>
                                 </div>
                             </div>
                         </div>
@@ -512,7 +512,23 @@
                                 <h3>Field updates and photo evidence</h3>
                                 <p>Review technician submissions, inspect site photos, and validate the progress that should count operationally.</p>
                             </div>
-                            <span class="sub-task-count">{{ progressReports.length }} report{{ progressReports.length === 1 ? '' : 's' }}</span>
+                            <div class="header-actions-row">
+                                <span class="sub-task-count">{{ progressReports.length }} report{{ progressReports.length === 1 ? '' : 's' }}</span>
+                                <!-- Release the settled batch to the client as one
+                                     collective update — a single report and a single
+                                     email, in place of one per technician. -->
+                                <button
+                                    v-if="releasableReports.length"
+                                    type="button"
+                                    class="btn btn-primary btn-sm"
+                                    @click="releaseReportsToClient"
+                                    :disabled="releasing"
+                                    title="Send one collective progress update to the client"
+                                >
+                                    <i class="fas fa-paper-plane"></i>
+                                    {{ releasing ? 'Releasing…' : `Release ${releasableReports.length} to client` }}
+                                </button>
+                            </div>
                         </div>
 
                         <!-- Backfill banner — shows when job is closed (status=completed
@@ -832,6 +848,22 @@
                         </div>
 
                         <VariationOrdersPanel :job="job" :ledger="variationLedger" />
+                    </article>
+
+                    <article class="job-shell-card">
+                        <div class="job-card-header">
+                            <div>
+                                <span class="section-kicker">Documents</span>
+                                <h3>Files &amp; specs</h3>
+                                <p>Briefs, specs and drawings held against the job. Client uploads and ops-drawn specs reach the technician once shared; quotations and approvals never do.</p>
+                            </div>
+                        </div>
+
+                        <JobDocumentsPanel
+                            :job="job"
+                            :document-kinds="documentKinds"
+                            :technician-visible-kinds="technicianVisibleKinds"
+                        />
                     </article>
 
                     <article class="job-shell-card">
@@ -1923,6 +1955,7 @@ import AdminSidebar from '../../Components/AdminSidebar.vue'
 import ImageLightbox from '../../Components/ImageLightbox.vue'
 import VariationOrdersPanel from '../../Components/VariationOrdersPanel.vue'
 import RefundsPanel from '../../Components/RefundsPanel.vue'
+import JobDocumentsPanel from '../../Components/JobDocumentsPanel.vue'
 import ProgressReportActions from '../../Components/ProgressReportActions.vue'
 import RemovedReportsPanel from '../../Components/RemovedReportsPanel.vue'
 import PhotoUploader from '../../Components/PhotoUploader.vue'
@@ -1950,6 +1983,14 @@ const props = defineProps({
     variationLedger: {
         type: Object,
         default: null
+    },
+    documentKinds: {
+        type: Object,
+        default: () => ({})
+    },
+    technicianVisibleKinds: {
+        type: Array,
+        default: () => []
     }
 })
 
@@ -2287,6 +2328,11 @@ const completedSubTasks = computed(() => {
     return props.job.sub_tasks?.filter(st => st.status === 'completed').length || 0
 })
 
+// A completed sub-task is 100% done by definition — never let the bar
+// contradict the "Completed" badge, even on a legacy row saved at less.
+const subTaskProgress = (subTask) =>
+    subTask.status === 'completed' ? 100 : Number(subTask.progress_percentage ?? 0)
+
 const subTaskCount = computed(() => props.job.sub_tasks?.length || 0)
 const activeSubTasks = computed(() => Math.max(subTaskCount.value - completedSubTasks.value, 0))
 const normalizedProgress = computed(() => Number(props.job.progress_percentage ?? 0))
@@ -2315,6 +2361,23 @@ const isAdmin = computed(() => page.props.auth?.user?.role === 'admin')
 
 const progressReports = computed(() => props.job.progress_reports || [])
 const jobPhotos = computed(() => props.job.photos || [])
+
+// Reports the office has settled but not yet sent on. Releasing them is one
+// collective client update — one report, one email — instead of a separate
+// notification per technician.
+const releasableReports = computed(() =>
+    progressReports.value.filter(r => r.is_validated && !r.released_to_client_at)
+)
+const releasing = ref(false)
+const releaseReportsToClient = () => {
+    const n = releasableReports.value.length
+    if (!confirm(`Release ${n} settled ${n === 1 ? 'report' : 'reports'} to the client as one update? The client receives a single collective report and one email.`)) return
+    releasing.value = true
+    router.post(`/admin/jobs/${props.job.id}/release-reports`, {}, {
+        preserveScroll: true,
+        onFinish: () => { releasing.value = false },
+    })
+}
 
 // Detects the "Mark Complete tapped without 100% progress report" scenario:
 // the SR shows progress=100 or status=completed, but the latest validated

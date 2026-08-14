@@ -2,7 +2,8 @@
 
 namespace App\Services;
 
-use App\Mail\ProgressApproved;
+use App\Mail\ProgressBatchReleased;
+use App\Mail\LeadReportsPosted;
 use App\Models\ProgressReport;
 use App\Models\ProgressReportNoteVersion;
 use App\Models\JobPhoto;
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class ProgressService
 {
@@ -68,6 +70,10 @@ class ProgressService
                 'percent_complete' => $data['percent_complete'],
                 'notes' => $data['notes'] ?? null,
                 'is_pm_authored' => false,
+                // A crew sub-task report on a lead-run job is the lead's to
+                // ratify and post; it reaches the office only when the lead
+                // pushes the batch. Everything else goes up on submission.
+                'submitted_to_office_at' => $this->waitsForLeadPost($serviceRequest, $data) ? null : now(),
             ]);
 
             // Handle photo uploads
@@ -78,6 +84,159 @@ class ProgressService
             AuditLog::log(AuditLog::ACTION_CREATED, $report);
 
             return $report->fresh(['photos']);
+        });
+    }
+
+    /**
+     * Whether a freshly-filed report has to wait on the lead before the office
+     * sees it. True only for a crew sub-task report on a job that has a lead —
+     * the lead ratifies it and pushes it up with the rest. Whole-job reports,
+     * and any report on a job with no lead, go straight to the office.
+     */
+    private function waitsForLeadPost(ServiceRequest $serviceRequest, array $data): bool
+    {
+        return $serviceRequest->lead_technician_id !== null
+            && !empty($data['service_sub_task_id']);
+    }
+
+    /**
+     * The lead pushes their crew's reports up to the office in one move.
+     *
+     * Gathers every report on the job that is ready to go — the crew reports
+     * the lead has ratified, plus the lead's own — stamps them with one shared
+     * batch id and the moment they went up, and tells the office once. Reports
+     * the lead has not yet ratified stay behind for the next push. Returns the
+     * number posted so the caller can say "nothing to send" cleanly.
+     */
+    public function postBatchToOffice(ServiceRequest $serviceRequest, User $lead): int
+    {
+        return DB::transaction(function () use ($serviceRequest, $lead) {
+            $leadTechnicianId = $lead->technician?->id;
+
+            $reports = $serviceRequest->progressReports()
+                ->whereNull('submitted_to_office_at')
+                ->whereNull('rejected_at')
+                ->where(function ($q) use ($leadTechnicianId, $lead) {
+                    // Ratified crew work, or the lead's own — never an
+                    // un-reviewed crew claim the lead has not looked at.
+                    $q->whereNotNull('approved_by_lead_at')
+                      ->orWhere('submitted_by', $lead->id);
+                    if ($leadTechnicianId) {
+                        $q->orWhere('technician_id', $leadTechnicianId);
+                    }
+                })
+                ->lockForUpdate()
+                ->get();
+
+            if ($reports->isEmpty()) {
+                return 0;
+            }
+
+            $batchId = (string) Str::uuid();
+            $now = now();
+
+            foreach ($reports as $report) {
+                $report->update([
+                    'submitted_to_office_at' => $now,
+                    'office_batch_id' => $batchId,
+                ]);
+            }
+
+            AuditLog::log(AuditLog::ACTION_UPDATED, $serviceRequest, null, [
+                'lead_posted_reports' => $reports->count(),
+                'office_batch_id' => $batchId,
+            ]);
+
+            $this->notifyOfficeOfBatch($serviceRequest, $reports->count());
+
+            return $reports->count();
+        });
+    }
+
+    /**
+     * The office releases a settled batch to the client — one collective
+     * report, one email, however many technicians it covered.
+     *
+     * Only validated, not-yet-released reports go. Scoped to a batch when the
+     * office acts on a single lead's push; without one it sweeps everything on
+     * the job the office has settled and not yet sent on.
+     */
+    public function releaseToClient(ServiceRequest $serviceRequest, ?string $batchId, int $pmId): int
+    {
+        return DB::transaction(function () use ($serviceRequest, $batchId, $pmId) {
+            $query = $serviceRequest->progressReports()->releasableToClient();
+
+            if ($batchId) {
+                $query->where('office_batch_id', $batchId);
+            }
+
+            $reports = $query->lockForUpdate()->get();
+
+            if ($reports->isEmpty()) {
+                return 0;
+            }
+
+            $now = now();
+            foreach ($reports as $report) {
+                $report->update(['released_to_client_at' => $now]);
+            }
+
+            AuditLog::log(AuditLog::ACTION_UPDATED, $serviceRequest, null, [
+                'released_reports' => $reports->count(),
+                'released_by' => $pmId,
+            ]);
+
+            // One email, after the response is sent, carrying the whole batch.
+            $reportIds = $reports->pluck('id')->all();
+            $srId = $serviceRequest->id;
+            app()->terminating(function () use ($reportIds, $srId) {
+                try {
+                    $sr = ServiceRequest::with('user')->find($srId);
+                    $reports = ProgressReport::whereIn('id', $reportIds)
+                        ->with(['subTask:id,title', 'technician.user:id,name'])
+                        ->orderBy('report_date')
+                        ->get();
+                    if ($sr?->user?->email && $reports->isNotEmpty()) {
+                        Mail::to($sr->user->email)->send(new ProgressBatchReleased($sr, $reports));
+                    }
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('ProgressBatchReleased email failed', [
+                        'service_request_id' => $srId,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            });
+
+            return $reports->count();
+        });
+    }
+
+    /**
+     * Tell the office a lead has pushed a batch up. Deferred past the response
+     * so mail latency never blocks the lead's confirmation.
+     */
+    private function notifyOfficeOfBatch(ServiceRequest $serviceRequest, int $count): void
+    {
+        $srId = $serviceRequest->id;
+        app()->terminating(function () use ($srId, $count) {
+            try {
+                $sr = ServiceRequest::find($srId);
+                if (!$sr) {
+                    return;
+                }
+                $recipients = User::whereIn('role', [User::ROLE_ADMIN, User::ROLE_PROJECT_MANAGER])
+                    ->whereNotNull('email')
+                    ->pluck('email')
+                    ->all();
+                if ($recipients) {
+                    Mail::to($recipients)->send(new LeadReportsPosted($sr, $count));
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('LeadReportsPosted email failed', [
+                    'service_request_id' => $srId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         });
     }
 
@@ -107,6 +266,12 @@ class ProgressService
                 'validated_as' => $authoredAs,
                 'validated_at' => now(),
                 'validated_percent' => $data['percent_complete'],
+                // Written and settled by the office in one move: never on a
+                // lead's desk, and already the client's to see — so it sits
+                // outside the batch-and-release path rather than showing up as
+                // a pending release the office has to action again.
+                'submitted_to_office_at' => now(),
+                'released_to_client_at' => now(),
             ]);
 
             foreach ($photos as $photo) {
@@ -213,25 +378,16 @@ class ProgressService
                 'validated_percent' => $data['validated_percent'] ?? $report->percent_complete,
             ]);
 
-            // Email the client about the validated progress — deferred to
-            // run AFTER the HTTP response is sent so SMTP latency doesn't
-            // block the admin's UI or trip the 30s execution timeout.
-            $reportId = $report->id;
-            $srId     = $serviceRequest->id;
-            app()->terminating(function () use ($reportId, $srId) {
-                try {
-                    $sr  = ServiceRequest::with('user')->find($srId);
-                    $rep = ProgressReport::find($reportId);
-                    if ($sr?->user?->email && $rep) {
-                        Mail::to($sr->user->email)->send(new ProgressApproved($sr, $rep));
-                    }
-                } catch (\Throwable $e) {
-                    \Illuminate\Support\Facades\Log::warning('ProgressApproved email failed', [
-                        'report_id' => $reportId,
-                        'error' => $e->getMessage(),
-                    ]);
-                }
-            });
+            // A lead-run job hears once, when the office releases the batch —
+            // that is what ends the one-email-per-technician fatigue. But a job
+            // with no lead has no batch step to gather reports into: there, the
+            // office validating the report IS the release, so it goes to the
+            // client straight away, exactly as it did before the pipeline. Only
+            // on a genuine office validation ($releaseBilling), never on a
+            // lead's on-site sign-off.
+            if ($releaseBilling && $serviceRequest->lead_technician_id === null) {
+                $this->releaseToClient($serviceRequest, null, $pmId);
+            }
 
             return $report->fresh(['photos']);
         });

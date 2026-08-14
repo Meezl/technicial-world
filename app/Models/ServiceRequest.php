@@ -698,19 +698,21 @@ class ServiceRequest extends Model
 
     public function recalculateProgress()
     {
-        $subTasks = $this->subTasks()->get();
-
-        if ($subTasks->isEmpty()) {
+        if (!$this->subTasks()->exists()) {
             return;
         }
 
-        $sum = $subTasks->sum('progress_percentage');
-        $count = $subTasks->count();
-        $averageProgress = $count > 0 ? (int) round($sum / $count) : 0;
+        if (!$this->has_sub_tasks) {
+            $this->forceFill(['has_sub_tasks' => true])->save();
+        }
 
-        $this->progress_percentage = $averageProgress;
-        $this->has_sub_tasks = true;
-        $this->save();
+        // One rule for the headline everywhere it is recomputed: the average
+        // across the sub-tasks, unless a validated whole-job report stands
+        // higher, with completion gated on a lead sign-off. Delegated to the
+        // progress service so a sub-task edit here and a validated report there
+        // can never settle on different arithmetic. Billing is never released
+        // from a sub-task edit — that stays a report-validation decision.
+        app(\App\Services\ProgressService::class)->recalculate($this->fresh(), false);
     }
 
     /**

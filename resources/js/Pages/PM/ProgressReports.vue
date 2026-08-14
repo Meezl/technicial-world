@@ -90,6 +90,35 @@
             </article>
         </section>
 
+        <!-- Settled reports waiting to reach the client. Releasing a job sends
+             one collective report and one email, in place of a separate
+             notification per technician. -->
+        <section v-if="releasableByJob.length" class="panel-card release-panel">
+            <div class="release-head">
+                <div>
+                    <p class="section-kicker">Ready to release</p>
+                    <h3>Send settled progress to the client</h3>
+                </div>
+            </div>
+            <div class="release-jobs">
+                <div v-for="job in releasableByJob" :key="job.id" class="release-job">
+                    <div class="release-job-copy">
+                        <strong>{{ job.job_reference || job.request_id }}</strong>
+                        <span>{{ job.count }} settled {{ job.count === 1 ? 'report' : 'reports' }} — client hears once</span>
+                    </div>
+                    <button
+                        type="button"
+                        class="btn btn-primary btn-sm"
+                        :disabled="releasingJobId === job.id"
+                        @click="releaseJob(job)"
+                    >
+                        <i class="fas fa-paper-plane"></i>
+                        {{ releasingJobId === job.id ? 'Releasing…' : `Release ${job.count} to client` }}
+                    </button>
+                </div>
+            </div>
+        </section>
+
         <section class="panel-card queue-panel">
             <div class="section-heading">
                 <div>
@@ -312,11 +341,22 @@ import ImageLightbox from '../../Components/ImageLightbox.vue'
 const props = defineProps({
     reports: { type: Object, default: () => ({ data: [] }) },
     summary: { type: Object, default: () => ({}) },
+    releasableByJob: { type: Array, default: () => [] },
     filters: { type: Object, default: () => ({}) },
 })
 
 const pendingOnly = ref(props.filters.pending_only !== false)
 const submitting = ref(false)
+const releasingJobId = ref(null)
+
+const releaseJob = (job) => {
+    if (!confirm(`Release ${job.count} settled ${job.count === 1 ? 'report' : 'reports'} on ${job.job_reference || job.request_id} to the client? They receive one collective report and one email.`)) return
+    releasingJobId.value = job.id
+    router.post(`/pm/jobs/${job.id}/release-reports`, {}, {
+        preserveScroll: true,
+        onFinish: () => { releasingJobId.value = null },
+    })
+}
 const validationForms = reactive({})
 
 props.reports.data?.forEach((report) => {
@@ -454,6 +494,34 @@ defineOptions({ layout: null })
 .reports-hero {
     grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.95fr);
 }
+
+.release-panel {
+    padding: 1.25rem 1.4rem;
+    margin-bottom: 1.25rem;
+    background: #fffbeb;
+    border: 1px solid #fcd34d !important;
+}
+.release-head h3 { margin: .15rem 0 0; font-size: 1.05rem; color: #78350f; }
+.release-head .section-kicker { color: #b45309; }
+.release-jobs {
+    display: flex;
+    flex-direction: column;
+    gap: .6rem;
+    margin-top: .9rem;
+}
+.release-job {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: .7rem .9rem;
+    background: #fff;
+    border: 1px solid #f4d58d;
+    border-radius: 12px;
+}
+.release-job-copy { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
+.release-job-copy strong { color: #1f2937; }
+.release-job-copy span { font-size: .82rem; color: #92400e; }
 
 .hero-card,
 .panel-card,

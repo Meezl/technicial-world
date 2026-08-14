@@ -36,6 +36,25 @@ class ServiceSubTask extends Model
     const STATUS_IN_PROGRESS = 'in_progress';
     const STATUS_COMPLETED = 'completed';
 
+    /**
+     * Keep the headline status and the progress bar from ever disagreeing.
+     *
+     * The bar on the job page reads progress_percentage directly while the
+     * badge reads status, so a row saved completed at anything under 100 — as
+     * older rollups left some — renders "Completed" over a part-full bar. This
+     * guard closes that gap at the source: whatever path marks a sub-task
+     * completed, it leaves here at 100 with a completed_at stamp.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (ServiceSubTask $subTask) {
+            if ($subTask->status === self::STATUS_COMPLETED) {
+                $subTask->progress_percentage = 100;
+                $subTask->completed_at = $subTask->completed_at ?? now();
+            }
+        });
+    }
+
     public function serviceRequest()
     {
         return $this->belongsTo(ServiceRequest::class);
