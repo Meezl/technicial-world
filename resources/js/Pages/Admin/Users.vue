@@ -205,13 +205,9 @@
                                     <label>Specialization *</label>
                                     <select v-model="userForm.specialization" class="form-control" :required="userForm.role === 'technician'">
                                         <option value="">Select Specialization</option>
-                                        <option value="Electrical">Electrical</option>
-                                        <option value="Plumbing">Plumbing</option>
-                                        <option value="HVAC">HVAC</option>
-                                        <option value="Carpentry">Carpentry</option>
-                                        <option value="Painting">Painting</option>
-                                        <option value="Roofing">Roofing</option>
-                                        <option value="General Maintenance">General Maintenance</option>
+                                        <option v-for="name in specializationOptions" :key="name" :value="name">
+                                            {{ name }}
+                                        </option>
                                     </select>
                                 </div>
                                 <div class="form-group">
@@ -385,7 +381,7 @@
 <script setup>
 import AdminSidebar from '../../Components/AdminSidebar.vue'
 import { Link, router } from '@inertiajs/vue3'
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive, watch, computed } from 'vue'
 import debounce from 'lodash/debounce'
 
 const props = defineProps({
@@ -399,7 +395,22 @@ const props = defineProps({
             admins: 0
         })
     },
-    filters: Object
+    filters: Object,
+    // Active service categories for the technician Specialization dropdown.
+    serviceCategories: { type: Array, default: () => [] }
+})
+
+// Options for the technician Specialization dropdown: every active service
+// category. When editing a technician whose current specialisation is not in
+// that list — a retired category, or an older free-text value — it is kept as
+// an option so the field is never silently blanked on save.
+const specializationOptions = computed(() => {
+    const options = props.serviceCategories.map(c => c.name)
+    const current = userForm.specialization
+    if (current && !options.includes(current)) {
+        options.unshift(current)
+    }
+    return options
 })
 
 // Reactive data
