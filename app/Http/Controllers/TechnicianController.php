@@ -329,6 +329,7 @@ class TechnicianController extends Controller
         $technician = $user->technician;
 
         $issuedTools = collect();
+        $issuedStock = collect();
         $returnHistory = collect();
         $availableTools = collect();
         $pendingRequests = collect();
@@ -341,16 +342,27 @@ class TechnicianController extends Controller
                 ->with('serviceRequest:id,request_id,job_reference')
                 ->get();
 
+            // PPE this technician currently holds — stock issues with a
+            // quantity still out, so they can see what is against their name.
+            $issuedStock = \App\Models\ToolIssuance::where('technician_id', $technician->id)
+                ->outstanding()
+                ->with(['tool:id,name,category', 'serviceRequest:id,request_id,job_reference'])
+                ->latest('issued_at')
+                ->get();
+
             $returnHistory = Tool::where('technician_id', $technician->id)
                 ->where('status', '!=', Tool::STATUS_ISSUED)
                 ->limit(20)
                 ->get();
 
-            // Inventory of tools currently available to request
-            $availableTools = Tool::where('status', Tool::STATUS_AVAILABLE)
+            // Inventory a technician can request: serialized tools on the shelf
+            // and stock items (PPE) with something left in them. Carries the
+            // tracking type and live quantity so the request form can show the
+            // available stock on PPE.
+            $availableTools = Tool::issuable()
                 ->whereNotIn('condition', ['damaged', 'needs_repair'])
                 ->orderBy('name')
-                ->get(['id', 'name', 'serial_number', 'category', 'condition', 'location']);
+                ->get(['id', 'name', 'serial_number', 'category', 'condition', 'location', 'tracking_type', 'quantity_available']);
 
             // Active jobs the technician can attach a request to
             $activeJobs = ServiceRequest::forTechnician($technician->id)
@@ -420,6 +432,7 @@ class TechnicianController extends Controller
         return Inertia::render('Technician/Tools', [
             'technician' => $technician,
             'issuedTools' => $issuedTools,
+            'issuedStock' => $issuedStock,
             'returnHistory' => $returnHistory,
             'availableTools' => $availableTools,
             'activeJobs' => $activeJobs,

@@ -93,12 +93,19 @@
                                 </td>
                                 <td>{{ tool.category }}</td>
                                 <td>
-                                    <span :class="['status', getStatusClass(tool.status)]">
+                                    <template v-if="isStock(tool)">
+                                        <span class="status available">{{ tool.quantity_available }} in stock</span>
+                                        <span class="sub-text" v-if="tool.quantity_issued">{{ tool.quantity_issued }} issued out</span>
+                                    </template>
+                                    <span v-else :class="['status', getStatusClass(tool.status)]">
                                         {{ formatStatus(tool.status) }}
                                     </span>
                                 </td>
                                 <td>
-                                    <span v-if="tool.technician">
+                                    <span v-if="isStock(tool)" class="text-muted" title="See the PPE issuance ledger below">
+                                        {{ tool.quantity_issued ? 'Multiple — see ledger' : '-' }}
+                                    </span>
+                                    <span v-else-if="tool.technician">
                                         {{ tool.technician.user.name }}
                                         <span class="sub-text">{{ tool.technician.technician_id }}</span>
                                     </span>
@@ -118,16 +125,16 @@
                                 <td>
                                     <div class="action-buttons">
                                         <button
-                                            v-if="tool.status === 'available'"
+                                            v-if="isStock(tool) ? tool.quantity_available > 0 : tool.status === 'available'"
                                             @click="showAssignModal(tool)"
                                             class="btn btn-primary btn-sm"
                                             :disabled="['damaged','needs_repair'].includes(tool.condition)"
-                                            :title="['damaged','needs_repair'].includes(tool.condition) ? 'Tool is ' + tool.condition.replace('_',' ') + ' — repair before issuing' : ''"
+                                            :title="['damaged','needs_repair'].includes(tool.condition) ? 'Item is ' + tool.condition.replace('_',' ') + ' — repair before issuing' : ''"
                                         >
-                                            Issue Tool
+                                            Issue
                                         </button>
                                         <button
-                                            v-if="tool.status === 'issued'"
+                                            v-if="!isStock(tool) && tool.status === 'issued'"
                                             @click="returnTool(tool)"
                                             class="btn btn-secondary btn-sm"
                                         >
@@ -158,6 +165,45 @@
                     </table>
                 </div>
             </section>
+
+            <!-- PPE issuance ledger: stock hand-outs still carrying an
+                 outstanding quantity, with a way to record returns. -->
+            <section v-if="stockIssuances.length > 0" class="main-panel">
+                <div class="panel-card full-width">
+                    <div class="card-header">
+                        <h3>PPE Currently Issued</h3>
+                    </div>
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Item</th>
+                                <th>Technician</th>
+                                <th>Job</th>
+                                <th>Issued</th>
+                                <th>Still Out</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="iss in stockIssuances" :key="`iss-${iss.id}`">
+                                <td>{{ iss.tool?.name }}</td>
+                                <td>{{ iss.technician?.user?.name || '-' }}</td>
+                                <td>
+                                    <span v-if="iss.service_request">{{ iss.service_request.job_reference || iss.service_request.request_id }}</span>
+                                    <span v-else class="text-muted">-</span>
+                                </td>
+                                <td>{{ iss.quantity }} on {{ formatDateShort(iss.issued_at) }}</td>
+                                <td><strong>{{ iss.quantity_outstanding }}</strong></td>
+                                <td>
+                                    <button class="btn btn-secondary btn-sm" @click="returnStockIssuance(iss)">
+                                        Record Return
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
         </main>
 
         <!-- Create/Edit Tool Modal -->
@@ -171,21 +217,49 @@
                     <form @submit.prevent="saveTool">
                         <div class="form-row">
                             <div class="form-group">
-                                <label>Tool Name*</label>
+                                <label>Name*</label>
                                 <input
                                     type="text"
                                     v-model="form.name"
                                     required
-                                    placeholder="e.g., Power Drill"
+                                    placeholder="e.g., Power Drill or Safety Helmet"
                                 >
                             </div>
                             <div class="form-group">
+                                <label>Type*</label>
+                                <select v-model="form.tracking_type" :disabled="isEditing">
+                                    <option value="serialized">Serialized tool (one unit)</option>
+                                    <option value="stock">Stock item / PPE (quantity)</option>
+                                </select>
+                                <small class="field-hint" v-if="!isEditing">
+                                    Stock items (helmets, reflectors) are counted and issued in quantities.
+                                </small>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <!-- Serialized: one physical unit, optional serial. -->
+                            <div class="form-group" v-if="form.tracking_type === 'serialized'">
                                 <label>Serial Number</label>
                                 <input
                                     type="text"
                                     v-model="form.serial_number"
                                     placeholder="e.g., DR-45B1"
                                 >
+                            </div>
+                            <!-- Stock: opening quantity in inventory. -->
+                            <div class="form-group" v-else>
+                                <label>{{ isEditing ? 'Quantity in stock' : 'Opening stock quantity*' }}</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    v-model.number="form.quantity_available"
+                                    :required="form.tracking_type === 'stock' && !isEditing"
+                                    placeholder="e.g., 50"
+                                >
+                                <small class="field-hint" v-if="isEditing">
+                                    This is the shelf count. Issued items are tracked separately.
+                                </small>
                             </div>
                         </div>
 
@@ -253,9 +327,20 @@
                 </div>
                 <div class="modal-body">
                     <div class="tool-info">
-                        <p><strong>Tool:</strong> {{ selectedTool?.name }}</p>
+                        <p><strong>Item:</strong> {{ selectedTool?.name }}</p>
                         <p v-if="selectedTool?.serial_number"><strong>S/N:</strong> {{ selectedTool.serial_number }}</p>
                         <p><strong>Category:</strong> {{ selectedTool?.category }}</p>
+                        <p v-if="isStock(selectedTool)"><strong>In stock:</strong> {{ selectedTool.quantity_available }}</p>
+                    </div>
+
+                    <div class="form-group" v-if="isStock(selectedTool)">
+                        <label>Quantity to issue*</label>
+                        <input
+                            type="number"
+                            min="1"
+                            :max="selectedTool.quantity_available"
+                            v-model.number="assignForm.quantity"
+                        >
                     </div>
 
                     <div class="form-group">
@@ -340,8 +425,15 @@ const props = defineProps({
     toolRequests: {
         type: Array,
         default: () => []
+    },
+    // Outstanding PPE (stock) hand-outs — who holds what, and how many.
+    stockIssuances: {
+        type: Array,
+        default: () => []
     }
 })
+
+const isStock = (tool) => tool?.tracking_type === 'stock'
 
 // ---- Tool request actions ----
 const approveToolRequest = (req) => {
@@ -393,7 +485,9 @@ const selectedTool = ref(null)
 
 const form = ref({
     name: '',
+    tracking_type: 'serialized',
     serial_number: '',
+    quantity_available: 1,
     category: '',
     condition: 'good',
     description: '',
@@ -403,6 +497,7 @@ const form = ref({
 const assignForm = ref({
     technician_id: '',
     service_request_id: '',
+    quantity: 1,
     expected_return_date: '',
     notes: ''
 })
@@ -487,7 +582,9 @@ const editTool = (tool) => {
     form.value = {
         id: tool.id,
         name: tool.name,
+        tracking_type: tool.tracking_type || 'serialized',
         serial_number: tool.serial_number || '',
+        quantity_available: tool.quantity_available ?? 0,
         category: tool.category,
         condition: tool.condition,
         description: tool.description || '',
@@ -536,7 +633,9 @@ const assignTool = () => {
 const resetForm = () => {
     form.value = {
         name: '',
+        tracking_type: 'serialized',
         serial_number: '',
+        quantity_available: 1,
         category: '',
         condition: 'good',
         description: '',
@@ -548,9 +647,23 @@ const resetAssignForm = () => {
     assignForm.value = {
         technician_id: '',
         service_request_id: '',
+        quantity: 1,
         expected_return_date: '',
         notes: ''
     }
+}
+
+// Record a return of issued PPE against its ledger row.
+const returnStockIssuance = (issuance) => {
+    const max = issuance.quantity_outstanding
+    const input = prompt(`Return how many ${issuance.tool?.name}? (up to ${max})`, String(max))
+    if (input === null) return
+    const quantity = Number(input)
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > max) {
+        alert(`Enter a whole number between 1 and ${max}.`)
+        return
+    }
+    router.post(`/admin/tool-issuances/${issuance.id}/return`, { quantity }, { preserveScroll: true })
 }
 
 const closeModal = () => {
@@ -570,6 +683,8 @@ defineOptions({
 </script>
 
 <style>
+
+.field-hint { display: block; margin-top: 0.25rem; font-size: 0.72rem; color: #64748B; line-height: 1.4; }
 
 /* Pending tool requests panel */
 .tool-requests-panel { border-left: 4px solid #F59E0B; background: #FFFBEB; }

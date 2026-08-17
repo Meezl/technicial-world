@@ -266,6 +266,8 @@ Route::middleware(['auth', 'role:admin,storeman'])->prefix('admin')->group(funct
     Route::delete('/tools/{tool}', [AdminDashboardController::class, 'destroyTool'])->name('admin.tools.destroy');
     Route::post('/tools/{tool}/assign', [AdminDashboardController::class, 'assignTool'])->name('admin.tools.assign');
     Route::post('/tools/{tool}/return', [AdminDashboardController::class, 'returnTool'])->name('admin.tools.return');
+    // Record a return of issued PPE (stock) against its issuance ledger row.
+    Route::post('/tool-issuances/{toolIssuance}/return', [AdminDashboardController::class, 'returnToolIssuance'])->name('admin.tool-issuances.return');
     Route::post('/tool-requests/{toolRequestItem}/approve', [AdminDashboardController::class, 'approveToolRequestItem'])->name('admin.tool-requests.approve');
     Route::post('/tool-requests/{toolRequestItem}/reject', [AdminDashboardController::class, 'rejectToolRequestItem'])->name('admin.tool-requests.reject');
 });
