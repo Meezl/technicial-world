@@ -1835,11 +1835,24 @@ class AdminDashboardController extends Controller
                 ];
             });
 
+        // The PPE issuance ledger: every stock hand-out still carrying an
+        // outstanding quantity, so ops can see who holds what and record
+        // returns against it.
+        $stockIssuances = \App\Models\ToolIssuance::outstanding()
+            ->with([
+                'tool:id,name,category',
+                'technician.user:id,name',
+                'serviceRequest:id,request_id,job_reference',
+            ])
+            ->latest('issued_at')
+            ->get();
+
         return Inertia::render('Admin/Tools', [
             'tools' => $tools,
             'technicians' => $technicians,
             'activeJobs' => $activeJobs,
             'toolRequests' => $toolRequests,
+            'stockIssuances' => $stockIssuances,
         ]);
     }
 
@@ -1858,6 +1871,9 @@ class AdminDashboardController extends Controller
 
         $request->validate([
             'tool_id' => 'nullable|integer|exists:tools,id',
+            // For a stock item (PPE) the admin may issue fewer than requested.
+            // Defaults to the requested quantity when omitted.
+            'issue_quantity' => 'nullable|integer|min:1',
             'expected_return_date' => 'nullable|date|after:today',
             'decision_notes' => 'nullable|string|max:500',
         ]);
@@ -1869,27 +1885,56 @@ class AdminDashboardController extends Controller
             $toolToIssue = Tool::find($toolRequestItem->tool_id);
         }
 
+        $issuedSummary = null;
+
         if ($toolToIssue) {
-            if ($toolToIssue->status !== Tool::STATUS_AVAILABLE) {
-                return back()->withErrors([
-                    'tool_id' => 'That tool is no longer available. Pick another or reject this request.',
-                ]);
-            }
-            // #17 — also block tools whose condition is damaged or needs repair.
+            // #17 — condition gate applies whichever way it is tracked.
             if (in_array($toolToIssue->condition, ['damaged', 'needs_repair'], true)) {
                 return back()->withErrors([
-                    'tool_id' => "That tool is currently marked '{$toolToIssue->condition}'. Restore its condition before issuing.",
+                    'tool_id' => "That item is currently marked '{$toolToIssue->condition}'. Restore its condition before issuing.",
                 ]);
             }
+
             $serviceRequest = $toolRequestItem->toolRequest->service_request_id
                 ? ServiceRequest::find($toolRequestItem->toolRequest->service_request_id)
                 : null;
-            $toolToIssue->assignTo(
-                $toolRequestItem->toolRequest->technician,
-                $serviceRequest,
-                $request->expected_return_date,
-                $toolRequestItem->toolRequest->notes
-            );
+
+            if ($toolToIssue->isStock()) {
+                // PPE: issue a quantity from the shelf and log it.
+                $quantity = (int) ($request->issue_quantity ?? $toolRequestItem->quantity ?? 1);
+
+                if ($quantity > $toolToIssue->quantity_available) {
+                    return back()->withErrors([
+                        'issue_quantity' => "Only {$toolToIssue->quantity_available} of {$toolToIssue->name} left in stock.",
+                    ]);
+                }
+
+                $toolToIssue->issueQuantity(
+                    $toolRequestItem->toolRequest->technician,
+                    $quantity,
+                    $serviceRequest,
+                    auth()->id(),
+                    $toolRequestItem,
+                    $request->expected_return_date,
+                    $toolRequestItem->toolRequest->notes,
+                );
+
+                $issuedSummary = "{$quantity} × {$toolToIssue->name}";
+            } else {
+                // Serialized tool: the whole unit goes out to one technician.
+                if ($toolToIssue->status !== Tool::STATUS_AVAILABLE) {
+                    return back()->withErrors([
+                        'tool_id' => 'That tool is no longer available. Pick another or reject this request.',
+                    ]);
+                }
+                $toolToIssue->assignTo(
+                    $toolRequestItem->toolRequest->technician,
+                    $serviceRequest,
+                    $request->expected_return_date,
+                    $toolRequestItem->toolRequest->notes
+                );
+                $issuedSummary = $toolToIssue->name;
+            }
         }
 
         $toolRequestItem->update([
@@ -1911,8 +1956,8 @@ class AdminDashboardController extends Controller
         }
 
         return redirect()->route('admin.tools')->with('success',
-            $toolToIssue
-                ? "Item approved and {$toolToIssue->name} issued to {$toolRequestItem->toolRequest->technician->user->name}."
+            $issuedSummary
+                ? "Item approved and {$issuedSummary} issued to {$toolRequestItem->toolRequest->technician->user->name}."
                 : 'Item acknowledged. Remember to issue an actual tool when ready.'
         );
     }
@@ -1954,16 +1999,26 @@ class AdminDashboardController extends Controller
     {
         $request->validate([
             'name' => 'required|string|max:255',
+            'tracking_type' => 'required|in:serialized,stock',
+            // A serialized unit may carry a serial; a stock item (PPE) has no
+            // per-unit serial and instead carries an opening quantity.
             'serial_number' => 'nullable|string|max:255|unique:tools,serial_number',
+            'quantity_available' => 'required_if:tracking_type,stock|nullable|integer|min:1|max:100000',
             'category' => 'required|string|max:255',
             'condition' => 'required|in:new,good,fair,needs_repair,damaged',
             'description' => 'nullable|string',
             'notes' => 'nullable|string'
         ]);
 
+        $isStock = $request->tracking_type === Tool::TRACKING_STOCK;
+
         Tool::create([
             'name' => $request->name,
-            'serial_number' => $request->serial_number,
+            'tracking_type' => $request->tracking_type,
+            // Serials belong to individual units, so a stock item never has one.
+            'serial_number' => $isStock ? null : $request->serial_number,
+            'quantity_available' => $isStock ? (int) $request->quantity_available : 0,
+            'quantity_issued' => 0,
             'category' => $request->category,
             'condition' => $request->condition,
             'description' => $request->description,
@@ -1971,7 +2026,11 @@ class AdminDashboardController extends Controller
             'status' => Tool::STATUS_AVAILABLE
         ]);
 
-        return redirect()->route('admin.tools')->with('success', 'Tool added to inventory successfully!');
+        return redirect()->route('admin.tools')->with('success',
+            $isStock
+                ? "{$request->name} added to inventory with {$request->quantity_available} in stock."
+                : 'Tool added to inventory successfully!'
+        );
     }
 
     public function updateTool(Request $request, Tool $tool)
@@ -1979,20 +2038,33 @@ class AdminDashboardController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'serial_number' => 'nullable|string|max:255|unique:tools,serial_number,' . $tool->id,
+            // Stock items can have their shelf count corrected/restocked here.
+            // It is the quantity still available; what is already issued out is
+            // tracked separately and left untouched.
+            'quantity_available' => 'nullable|integer|min:0|max:100000',
             'category' => 'required|string|max:255',
             'condition' => 'required|in:new,good,fair,needs_repair,damaged',
             'description' => 'nullable|string',
             'notes' => 'nullable|string'
         ]);
 
-        $tool->update([
+        $data = [
             'name' => $request->name,
-            'serial_number' => $request->serial_number,
             'category' => $request->category,
             'condition' => $request->condition,
             'description' => $request->description,
-            'notes' => $request->notes
-        ]);
+            'notes' => $request->notes,
+        ];
+
+        if ($tool->isStock()) {
+            if ($request->filled('quantity_available')) {
+                $data['quantity_available'] = (int) $request->quantity_available;
+            }
+        } else {
+            $data['serial_number'] = $request->serial_number;
+        }
+
+        $tool->update($data);
 
         return redirect()->route('admin.tools')->with('success', 'Tool updated successfully!');
     }
@@ -2013,27 +2085,50 @@ class AdminDashboardController extends Controller
         $request->validate([
             'technician_id' => 'required|exists:technicians,id',
             'service_request_id' => 'nullable|exists:service_requests,id',
+            'quantity' => 'nullable|integer|min:1',
             'expected_return_date' => 'nullable|date|after:today',
             'notes' => 'nullable|string'
         ]);
 
-        // #17 — block damaged tools (and anything in maintenance) from
-        // being issued. Tool must be marked back to a serviceable
-        // condition before allocation.
+        // #17 — block damaged items (and anything in maintenance) from being
+        // issued, whichever way they are tracked.
         if ($tool->status === Tool::STATUS_DAMAGED || in_array($tool->condition, ['damaged', 'needs_repair'], true)) {
             return redirect()->route('admin.tools')->with('error',
                 "Cannot issue '{$tool->name}' — it is currently marked as " . ($tool->status === Tool::STATUS_DAMAGED ? 'damaged' : $tool->condition) .
                 '. Update its condition to good/fair first.'
             );
         }
+
+        $technician = Technician::findOrFail($request->technician_id);
+        $serviceRequest = $request->service_request_id ? ServiceRequest::findOrFail($request->service_request_id) : null;
+
+        if ($tool->isStock()) {
+            $quantity = (int) ($request->quantity ?? 1);
+            if ($quantity > $tool->quantity_available) {
+                return redirect()->route('admin.tools')->with('error',
+                    "Only {$tool->quantity_available} of {$tool->name} left in stock."
+                );
+            }
+            $tool->issueQuantity(
+                $technician,
+                $quantity,
+                $serviceRequest,
+                auth()->id(),
+                null,
+                $request->expected_return_date,
+                $request->notes,
+            );
+
+            return redirect()->route('admin.tools')->with('success',
+                "{$quantity} × {$tool->name} issued to {$technician->user->name}."
+            );
+        }
+
         if ($tool->status !== Tool::STATUS_AVAILABLE) {
             return redirect()->route('admin.tools')->with('error',
                 "Cannot issue '{$tool->name}' — current status is '{$tool->status}'. Only available tools can be issued."
             );
         }
-
-        $technician = Technician::findOrFail($request->technician_id);
-        $serviceRequest = $request->service_request_id ? ServiceRequest::findOrFail($request->service_request_id) : null;
 
         $tool->assignTo(
             $technician,
@@ -2055,6 +2150,39 @@ class AdminDashboardController extends Controller
         $tool->returnTool($request->condition, $request->notes);
 
         return redirect()->route('admin.tools')->with('success', 'Tool returned to inventory!');
+    }
+
+    /**
+     * Record a return of a stock item (PPE) against the issue it went out on,
+     * taking the quantity back onto the shelf.
+     */
+    public function returnToolIssuance(Request $request, \App\Models\ToolIssuance $toolIssuance)
+    {
+        $data = $request->validate([
+            'quantity' => 'required|integer|min:1',
+            'notes' => 'nullable|string|max:500',
+        ]);
+
+        if ($toolIssuance->quantity_outstanding < 1) {
+            return redirect()->route('admin.tools')->with('error', 'That issue has already been fully returned.');
+        }
+
+        if ($data['quantity'] > $toolIssuance->quantity_outstanding) {
+            return redirect()->route('admin.tools')->with('error',
+                "Only {$toolIssuance->quantity_outstanding} of that issue is still out."
+            );
+        }
+
+        if ($request->filled('notes')) {
+            $toolIssuance->notes = trim($toolIssuance->notes . "\n" . $data['notes']);
+            $toolIssuance->save();
+        }
+
+        $toolIssuance->tool->restockQuantity($toolIssuance, (int) $data['quantity']);
+
+        return redirect()->route('admin.tools')->with('success',
+            "{$data['quantity']} × {$toolIssuance->tool->name} returned to stock."
+        );
     }
 
     public function payments(Request $request)

@@ -79,6 +79,28 @@
                 <p>No tools currently issued to you.</p>
             </div>
 
+            <!-- PPE (stock items) currently held. Returns are recorded by the
+                 office when you hand them back. -->
+            <template v-if="issuedStock.length > 0">
+                <h2 class="section-title">PPE In Your Care</h2>
+                <div v-for="iss in issuedStock" :key="`stock-${iss.id}`" class="pwa-card">
+                    <div class="card-top-row">
+                        <div>
+                            <h3 class="card-title">{{ iss.tool?.name }}</h3>
+                            <span class="card-sub">{{ iss.tool?.category || 'PPE' }}</span>
+                        </div>
+                        <div class="card-icon"><i class="fas fa-hard-hat"></i></div>
+                    </div>
+                    <p class="card-text">
+                        Holding <strong>{{ iss.quantity_outstanding }}</strong>
+                        <span v-if="iss.quantity_outstanding !== iss.quantity">of {{ iss.quantity }} issued</span>
+                    </p>
+                    <p v-if="iss.service_request" class="card-meta-line">
+                        <i class="fas fa-briefcase"></i> Job {{ iss.service_request.job_reference || iss.service_request.request_id }}
+                    </p>
+                </div>
+            </template>
+
             <!-- Recent decisions -->
             <template v-if="recentDecisions.length > 0">
                 <h2 class="section-title">Recent Decisions</h2>
@@ -154,7 +176,10 @@
                                     <strong>{{ tool.name }}</strong>
                                     <span>{{ tool.category || 'General' }}{{ tool.serial_number ? ` · SN: ${tool.serial_number}` : '' }}</span>
                                 </div>
-                                <span class="available-tool-cond">{{ formatCondition(tool.condition) }}</span>
+                                <span v-if="tool.tracking_type === 'stock'" class="available-tool-cond">
+                                    {{ tool.quantity_available }} in stock
+                                </span>
+                                <span v-else class="available-tool-cond">{{ formatCondition(tool.condition) }}</span>
                             </button>
                         </div>
                         <p v-else class="muted-note small">No tools matched. Try a different search or use "Other / not listed".</p>
@@ -256,6 +281,7 @@ import TechnicianBottomNav from '@/Components/TechnicianBottomNav.vue'
 const props = defineProps({
     technician: Object,
     issuedTools: { type: Array, default: () => [] },
+    issuedStock: { type: Array, default: () => [] },
     returnHistory: { type: Array, default: () => [] },
     availableTools: { type: Array, default: () => [] },
     activeJobs: { type: Array, default: () => [] },
