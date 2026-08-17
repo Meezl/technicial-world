@@ -198,6 +198,49 @@ class PpeStockIssuanceTest extends TestCase
         $this->assertNotNull($issuance->returned_at);
     }
 
+    public function test_a_technician_can_return_their_own_ppe(): void
+    {
+        $admin = $this->admin();
+        $tech = $this->makeTechnician();
+        $other = $this->makeTechnician();
+
+        $tool = Tool::create([
+            'name' => 'Safety Helmet',
+            'tracking_type' => Tool::TRACKING_STOCK,
+            'quantity_available' => 10,
+            'category' => 'PPE',
+            'condition' => 'new',
+            'status' => Tool::STATUS_AVAILABLE,
+        ]);
+
+        $issuance = $tool->issueQuantity($tech, 3, null, $admin->id);
+        $tool->refresh();
+        $this->assertSame(7, $tool->quantity_available);
+
+        // Another technician cannot return PPE that is not theirs.
+        $this->actingAs($other->user)
+            ->post(route('technician.tool-issuances.return', $issuance), ['quantity' => 1])
+            ->assertForbidden();
+
+        // The holder returns 2 — restocks and logs it.
+        $this->actingAs($tech->user)
+            ->post(route('technician.tool-issuances.return', $issuance), ['quantity' => 2])
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $tool->refresh();
+        $issuance->refresh();
+        $this->assertSame(9, $tool->quantity_available);
+        $this->assertSame(1, $tool->quantity_issued);
+        $this->assertSame(1, $issuance->quantity_outstanding);
+        $this->assertSame(ToolIssuance::STATUS_PARTIALLY_RETURNED, $issuance->status);
+
+        // They cannot return more than they still hold.
+        $this->actingAs($tech->user)
+            ->post(route('technician.tool-issuances.return', $issuance), ['quantity' => 5])
+            ->assertSessionHas('error');
+    }
+
     public function test_serialized_tool_issuing_is_unchanged(): void
     {
         $admin = $this->admin();
