@@ -223,12 +223,13 @@ class AdminDashboardController extends Controller
         return Inertia::render('Admin/Technicians', [
             'technicians' => $technicians,
             'documentTypes' => \App\Models\TechnicianDocument::documentTypes(),
-            // Pass the real service categories so the Specialization dropdown
-            // on the create-technician form stays in sync as admin adds/removes
-            // categories from the Service Categories page.
-            'serviceCategories' => \App\Models\ServiceCategory::where('is_active', true)
-                ->orderBy('name')
-                ->get(['id', 'name']),
+            // Every service category, carrying is_active, so the Specialization
+            // dropdown stays in sync as admin adds/removes categories. Editing a
+            // technician offers the full list — including retired categories —
+            // so an existing specialization is never missing from the options;
+            // the create form and the list filter narrow this to active ones.
+            'serviceCategories' => \App\Models\ServiceCategory::orderBy('name')
+                ->get(['id', 'name', 'is_active']),
         ]);
     }
 

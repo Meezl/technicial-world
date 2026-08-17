@@ -187,7 +187,7 @@
                                 <!-- Show every active service category, not just those already
                                      covered by a registered technician — so admin can search
                                      for a trade we don't yet have anyone for. -->
-                                <option v-for="cat in serviceCategories" :key="cat.id" :value="cat.name">{{ cat.name }}</option>
+                                <option v-for="cat in activeServiceCategories" :key="cat.id" :value="cat.name">{{ cat.name }}</option>
                             </select>
                         </label>
                         <label class="filter-field">
@@ -384,8 +384,8 @@
                                         <label>Specialization <span class="req">*</span></label>
                                         <select v-model="form.specialization" required>
                                             <option value="">Select specialization</option>
-                                            <option v-for="cat in serviceCategories" :key="cat.id" :value="cat.name">
-                                                {{ cat.name }}
+                                            <option v-for="opt in specializationOptions" :key="opt.value" :value="opt.value">
+                                                {{ opt.label }}
                                             </option>
                                         </select>
                                         <span v-if="formErrors.specialization" class="field-error">{{ formErrors.specialization }}</span>
@@ -978,6 +978,31 @@ const editingTechnicianDocs = computed(() => {
 const uniqueSpecializations = computed(() => {
     const specs = props.technicians.map(t => t.specialization).filter(Boolean)
     return [...new Set(specs)].sort()
+})
+
+// Live categories only — the list filter narrows technicians to specialisations
+// that are still offered, so a retired category the client can no longer
+// request does not clutter the filter.
+const activeServiceCategories = computed(() =>
+    props.serviceCategories.filter(c => c.is_active),
+)
+
+// Options for the Specialization dropdown in the technician form. Creating a
+// technician offers the live categories; editing offers every category —
+// including ones since retired — so an existing specialization is never
+// dropped from the list and silently blanked on save. A current value that
+// matches no category at all (an older free-text specialisation) is kept too.
+const specializationOptions = computed(() => {
+    const source = isEditing.value ? props.serviceCategories : activeServiceCategories.value
+    const options = source.map(c => ({
+        value: c.name,
+        label: c.is_active ? c.name : `${c.name} (inactive)`,
+    }))
+    const current = form.value.specialization
+    if (current && !options.some(o => o.value === current)) {
+        options.unshift({ value: current, label: current })
+    }
+    return options
 })
 
 const filteredTechnicians = computed(() => {
