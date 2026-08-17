@@ -412,6 +412,41 @@ class ServiceRequest extends Model
     }
 
     /**
+     * Whether the client may still add, replace or remove their own snag
+     * photos on this job.
+     *
+     * The photos are the client's own description of the problem, editable
+     * while the request is still being scoped. Once a technician has started
+     * work — the moment the crew is acting on that evidence, marked by
+     * started_at — or the job has been closed off, the set is fixed. Ops still
+     * manage photos through their own screens regardless.
+     */
+    public function clientCanManagePhotos(): bool
+    {
+        // started_at is stamped the moment a technician goes en route, so it
+        // is the clearest "work has begun" signal even if the status column
+        // lags behind.
+        if ($this->started_at !== null) {
+            return false;
+        }
+
+        // Otherwise, editable only through the scoping phase — pending,
+        // awaiting-*, ready-for-assignment, assigned, queued. Locked from the
+        // point work is actively underway through to the job being closed off.
+        return !in_array($this->status, [
+            self::STATUS_IN_PROGRESS,
+            self::STATUS_DELAYED,
+            self::STATUS_SUSPENDED,
+            self::STATUS_REASSIGNED,
+            self::STATUS_COMPLETED_PENDING_CONFIRMATION,
+            self::STATUS_COMPLETED,
+            self::STATUS_CLOSED,
+            self::STATUS_ARCHIVED,
+            self::STATUS_CANCELLED,
+        ], true);
+    }
+
+    /**
      * Every photo on the job, whatever it hangs off. The denormalised
      * service_request_id on job_photos is what makes this one indexed query
      * instead of a walk through each morph target.

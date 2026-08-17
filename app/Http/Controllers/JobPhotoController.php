@@ -30,6 +30,13 @@ class JobPhotoController extends Controller
             return back()->with('error', 'You are not allowed to add photos to this job.');
         }
 
+        // A client's snag photos are locked once work has started — after that
+        // point the crew is acting on the evidence. Technicians and ops still
+        // add photos as the job runs, so this gate is client-only.
+        if ($user->isClient() && !$serviceRequest->clientCanManagePhotos()) {
+            return back()->with('error', 'Photos can no longer be changed now that work has started on this job.');
+        }
+
         $request->validate([
             'photos'   => 'required|array|max:' . self::MAX_PER_REQUEST,
             // No `image` rule: it calls getimagesize(), which cannot read
@@ -78,6 +85,14 @@ class JobPhotoController extends Controller
         // a PM excludes them from approval rather than destroying them.
         if ($jobPhoto->photoable_type !== ServiceRequest::class) {
             return back()->with('error', 'Progress report photos cannot be deleted. Remove them from approval instead.');
+        }
+
+        // A client removing their own photo is bound by the same "still being
+        // scoped" window as posting — once work has started the set is fixed.
+        // Ops removing a photo are not, so they can still clean up after.
+        if ($isOwner && !$isOps && $user->isClient()
+            && optional($jobPhoto->serviceRequest)->clientCanManagePhotos() === false) {
+            return back()->with('error', 'Photos can no longer be changed now that work has started on this job.');
         }
 
         Storage::disk('public')->delete($jobPhoto->file_path);

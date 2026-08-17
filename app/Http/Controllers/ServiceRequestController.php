@@ -203,6 +203,11 @@ class ServiceRequestController extends Controller
 
         return Inertia::render('Client/RequestStatus', [
             'serviceRequest' => $serviceRequest,
+            // Whether the client can still add, replace or remove their own
+            // snag photos — open while the job is being scoped, locked once a
+            // technician has started work. Drives the upload form and the
+            // per-photo remove control.
+            'canManageJobPhotos' => $serviceRequest->clientCanManagePhotos(),
             // Quote, then every variation, then the value after each — so the
             // client can see how the job got to its current figure instead of
             // being handed a new total with no history.
