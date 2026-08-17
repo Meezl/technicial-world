@@ -675,7 +675,7 @@
                  attach were the ones sent at the moment they filed the
                  request — a snag found later had nowhere to go but WhatsApp,
                  leaving no record on the job. -->
-            <section class="panel-section" v-if="serviceRequest.status !== 'completed' || jobPhotos.length">
+            <section class="panel-section" v-if="jobPhotos.length || canManageJobPhotos">
                 <div class="panel-card full-width">
                     <div class="card-header">
                         <h3>Your Photos</h3>
@@ -684,13 +684,29 @@
                         </small>
                     </div>
 
-                    <JobPhotoGallery :photos="jobPhotos" title="Shared on this job" />
+                    <JobPhotoGallery
+                        :photos="jobPhotos"
+                        title="Shared on this job"
+                        :removable-ids="removableJobPhotoIds"
+                        @remove="removeJobPhoto"
+                    />
 
-                    <p v-if="!jobPhotos.length" class="empty-photos-note">
+                    <p v-if="!jobPhotos.length && canManageJobPhotos" class="empty-photos-note">
                         No photos yet. Add one below and the team working on your job will see it.
                     </p>
 
-                    <form class="client-photo-form" @submit.prevent="submitJobPhotos">
+                    <div v-else-if="jobPhotos.length && !canManageJobPhotos" class="photos-locked-note">
+                        <p>
+                            Work has started, so the photos on this job are now fixed — they're what the
+                            team is working from. Spotted something new or unrelated? Raise it as its own
+                            request and add fresh photos there.
+                        </p>
+                        <Link :href="newRequestHref" class="btn btn-secondary btn-sm">
+                            <i class="fas fa-plus"></i> Start a new request
+                        </Link>
+                    </div>
+
+                    <form v-if="canManageJobPhotos" class="client-photo-form" @submit.prevent="submitJobPhotos">
                         <PhotoUploader
                             ref="jobPhotoUploader"
                             v-model="newJobPhotos"
@@ -1016,6 +1032,12 @@ const props = defineProps({
         type: Object,
         default: null,
     },
+    // Whether the client may still add or remove their own snag photos —
+    // open while the job is being scoped, locked once work has started.
+    canManageJobPhotos: {
+        type: Boolean,
+        default: false,
+    },
 })
 
 const bank = props.bank
@@ -1037,6 +1059,32 @@ const uploadingJobPhotos = ref(false)
 const jobPhotoProgress = ref(0)
 
 const jobPhotos = computed(() => props.serviceRequest.photos || [])
+
+// The client may remove only their own snag photos, and only while the job is
+// still editable. A client can upload only to their own request, so every
+// client-role photo here is theirs. The server enforces both rules again.
+const removableJobPhotoIds = computed(() =>
+    props.canManageJobPhotos
+        ? jobPhotos.value.filter((p) => p.uploader_role === 'client').map((p) => p.id)
+        : [],
+)
+
+// Once photos on this job are locked, a new snag belongs on its own request.
+// Carry the same category so the client lands on the details step rather than
+// picking the category again; the wizard falls back to the picker if it is no
+// longer offered.
+const newRequestHref = computed(() => {
+    const categoryId = props.serviceRequest.service_category_id
+    return categoryId ? `/client/new-request/${categoryId}` : '/client/new-request'
+})
+
+function removeJobPhoto(photoId) {
+    if (!confirm('Remove this photo? This cannot be undone.')) return
+
+    router.delete(`/job-photos/${photoId}`, {
+        preserveScroll: true,
+    })
+}
 
 function submitJobPhotos() {
     if (!newJobPhotos.value.length || preparingJobPhotos.value) return
@@ -1737,6 +1785,26 @@ defineOptions({
 </script>
 
 <style>
+
+/* Photos locked once work has started — a doorway to a new request rather
+   than a dead end. */
+.photos-locked-note {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: .6rem;
+    margin-top: .75rem;
+    padding: .85rem 1rem;
+    border-radius: 8px;
+    background: #f8fafc;
+    border: 1px solid #e5e7eb;
+}
+.photos-locked-note p {
+    margin: 0;
+    font-size: .85rem;
+    color: var(--text-muted, #64748b);
+    line-height: 1.5;
+}
 
 /* Client documents & drawings */
 .client-doc-list {

@@ -17,24 +17,27 @@ class JobPhotoEvidenceTest extends TestCase
 {
     use RefreshDatabase;
 
-    private function makeJob(User $client, ?Technician $technician = null): ServiceRequest
+    private function makeJob(User $client, ?Technician $technician = null, array $overrides = []): ServiceRequest
     {
         $category = ServiceCategory::create([
             'name' => 'Electrical Services ' . uniqid(),
             'description' => 'Test category',
         ]);
 
-        return ServiceRequest::create([
+        return ServiceRequest::create(array_merge([
             'request_id' => 'REQ-' . strtoupper(uniqid()),
             'user_id' => $client->id,
             'service_category_id' => $category->id,
             'description' => 'Solar install for a commercial office.',
             'location' => 'Industrial Area, Nairobi',
             'urgency' => 'medium',
-            'status' => 'in_progress',
+            // Default to the scoping phase, when a client may still manage
+            // their own snag photos. Tests that need an active job pass a
+            // started status explicitly.
+            'status' => ServiceRequest::STATUS_PENDING,
             'technician_id' => $technician?->id,
-            'progress_percentage' => 20,
-        ]);
+            'progress_percentage' => 0,
+        ], $overrides));
     }
 
     private function makeTechnician(): Technician
@@ -108,7 +111,9 @@ class JobPhotoEvidenceTest extends TestCase
         $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
         $assigned = $this->makeTechnician();
         $unassigned = $this->makeTechnician();
-        $job = $this->makeJob($client, $assigned);
+        // An active job — technicians add site photos as the work runs, which
+        // the client-only "locked once started" gate must never block.
+        $job = $this->makeJob($client, $assigned, ['status' => ServiceRequest::STATUS_IN_PROGRESS]);
 
         $this->actingAs($assigned->user)
             ->post(route('jobs.photos.store', $job), [
@@ -173,7 +178,7 @@ class JobPhotoEvidenceTest extends TestCase
 
         $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
         $technician = $this->makeTechnician();
-        $job = $this->makeJob($client, $technician);
+        $job = $this->makeJob($client, $technician, ['status' => ServiceRequest::STATUS_IN_PROGRESS]);
 
         $report = ProgressReport::create([
             'service_request_id' => $job->id,
@@ -241,5 +246,56 @@ class JobPhotoEvidenceTest extends TestCase
         $this->assertCount(1, $photos);
         $this->assertSame(User::ROLE_CLIENT, $photos[0]['uploader_role']);
         $this->assertStringStartsWith('/storage/', $photos[0]['url']);
+    }
+
+    public function test_client_cannot_add_or_remove_photos_once_work_has_started(): void
+    {
+        Storage::fake('public');
+
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $job = $this->makeJob($client);
+
+        // Posted while the job was still being scoped.
+        $this->actingAs($client)->post(route('jobs.photos.store', $job), [
+            'photos' => [UploadedFile::fake()->image('early-snag.jpg')],
+        ])->assertSessionHas('success');
+
+        $photo = JobPhoto::where('service_request_id', $job->id)->firstOrFail();
+
+        // A technician goes en route — work has begun.
+        $job->update(['status' => ServiceRequest::STATUS_IN_PROGRESS, 'started_at' => now()]);
+
+        // No more posting…
+        $this->actingAs($client)->post(route('jobs.photos.store', $job), [
+            'photos' => [UploadedFile::fake()->image('late-snag.jpg')],
+        ])->assertSessionHas('error');
+
+        // …and no removing what is already there.
+        $this->actingAs($client)
+            ->delete(route('jobs.photos.destroy', $photo))
+            ->assertSessionHas('error');
+
+        $this->assertDatabaseHas('job_photos', ['id' => $photo->id]);
+        $this->assertSame(1, JobPhoto::where('service_request_id', $job->id)->count());
+    }
+
+    public function test_the_status_page_flags_whether_photos_can_be_managed(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+
+        $scoping = $this->makeJob($client);
+        $this->actingAs($client)
+            ->get(route('client.request-status', $scoping))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->where('canManageJobPhotos', true));
+
+        $running = $this->makeJob($client, null, [
+            'status' => ServiceRequest::STATUS_IN_PROGRESS,
+            'started_at' => now(),
+        ]);
+        $this->actingAs($client)
+            ->get(route('client.request-status', $running))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->where('canManageJobPhotos', false));
     }
 }

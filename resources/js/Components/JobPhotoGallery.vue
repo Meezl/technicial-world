@@ -23,6 +23,22 @@
                 <span v-if="photo.badge" class="job-photo-badge">{{ photo.badge }}</span>
                 <span v-if="photo.caption" class="job-photo-caption">{{ photo.caption }}</span>
 
+                <!-- Opt-in remove control. A span (not a nested button) so it
+                     is valid inside the thumbnail button; the click is stopped
+                     so it removes rather than opening the carousel. -->
+                <span
+                    v-if="photo.removable"
+                    class="job-photo-remove"
+                    role="button"
+                    tabindex="0"
+                    :aria-label="`Remove photo ${index + 1}`"
+                    @click.stop.prevent="$emit('remove', photo.key)"
+                    @keydown.enter.stop.prevent="$emit('remove', photo.key)"
+                    @keydown.space.stop.prevent="$emit('remove', photo.key)"
+                >
+                    <i class="fas fa-times"></i>
+                </span>
+
                 <!-- Affordance that the grid opens a swipeable carousel
                      rather than a single image. -->
                 <span class="job-photo-zoom"><i class="fas fa-expand"></i></span>
@@ -52,20 +68,30 @@ const props = defineProps({
     title: { type: String, default: '' },
     /** Label removed-from-approval photos, for the ops-side screens. */
     showRemovedBadge: { type: Boolean, default: false },
+    /**
+     * Photo ids that show a remove control. The caller decides which photos
+     * the viewer may remove (e.g. a client's own snag photos); clicking one
+     * emits `remove` with that id. Empty means a read-only gallery, the
+     * default everywhere else.
+     */
+    removableIds: { type: Array, default: () => [] },
 })
+
+defineEmits(['remove'])
 
 const lightbox = ref(null)
 
 const normalized = computed(() =>
     (props.photos || []).map((photo, index) => {
         if (typeof photo === 'string') {
-            return { key: index, src: photo, caption: null, removed: false, badge: null }
+            return { key: index, src: photo, caption: null, removed: false, badge: null, removable: false }
         }
 
         const removed = Boolean(photo.removed_by_pm)
+        const id = photo.id ?? index
 
         return {
-            key: photo.id ?? index,
+            key: id,
             // `url` is appended by the JobPhoto model; file_path is the raw
             // column, kept as a fallback for callers that select columns.
             src: photo.url || photo.file_path || photo.src || '',
@@ -73,6 +99,7 @@ const normalized = computed(() =>
             filename: photo.original_filename || null,
             removed,
             badge: props.showRemovedBadge && removed ? 'Removed from approval' : null,
+            removable: photo.id != null && props.removableIds.includes(photo.id),
         }
     }).filter(photo => photo.src)
 )
@@ -159,6 +186,31 @@ const normalized = computed(() =>
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.job-photo-remove {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: rgba(185, 28, 28, .92);
+    color: #fff;
+    font-size: .7rem;
+    cursor: pointer;
+    z-index: 1;
+    transition: background .15s;
+}
+
+.job-photo-remove:hover,
+.job-photo-remove:focus-visible {
+    background: #991b1b;
+    outline: 2px solid #fff;
+    outline-offset: 1px;
 }
 
 .job-photo-zoom {
