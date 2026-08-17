@@ -421,6 +421,8 @@ Route::middleware(['auth', 'role:technician'])->group(function () {
     Route::post('/technician/availability', [\App\Http\Controllers\TechnicianController::class, 'updateAvailability'])->name('technician.availability');
     Route::post('/technician/jobs/{serviceRequest}/status', [\App\Http\Controllers\TechnicianController::class, 'updateJobStatus'])->name('technician.jobs.status');
     Route::post('/technician/tools/{tool}/return', [\App\Http\Controllers\TechnicianController::class, 'returnTool'])->name('technician.tools.return');
+    // Technician hands PPE (stock) back themselves, against their own issue.
+    Route::post('/technician/tool-issuances/{toolIssuance}/return', [\App\Http\Controllers\TechnicianController::class, 'returnToolIssuance'])->name('technician.tool-issuances.return');
     Route::post('/technician/tool-requests', [\App\Http\Controllers\TechnicianController::class, 'storeToolRequest'])->name('technician.tool-requests.store');
     Route::post('/technician/tool-requests/{toolRequest}/cancel', [\App\Http\Controllers\TechnicianController::class, 'cancelToolRequest'])->name('technician.tool-requests.cancel');
     Route::post('/technician/sub-tasks/{serviceSubTask}/progress', [\App\Http\Controllers\TechnicianController::class, 'updateSubTaskProgress'])->name('technician.sub-tasks.progress');

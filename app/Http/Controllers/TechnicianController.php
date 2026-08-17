@@ -1027,6 +1027,44 @@ class TechnicianController extends Controller
     }
 
     /**
+     * Technician hands PPE (a stock item) back themselves — the counterpart of
+     * returnTool for stock. Restocks the quantity and records it against the
+     * issue, the same way ops recording a return would. They can only return
+     * what is against their own name.
+     */
+    public function returnToolIssuance(Request $request, \App\Models\ToolIssuance $toolIssuance)
+    {
+        $user = auth()->user();
+        $technician = $user->technician;
+
+        if (!$technician || $toolIssuance->technician_id !== $technician->id) {
+            abort(403, 'That PPE is not issued to you.');
+        }
+
+        $data = $request->validate([
+            'quantity' => 'required|integer|min:1',
+            'notes' => 'nullable|string|max:500',
+        ]);
+
+        if ($toolIssuance->quantity_outstanding < 1) {
+            return back()->with('error', 'You have already returned all of that PPE.');
+        }
+
+        if ($data['quantity'] > $toolIssuance->quantity_outstanding) {
+            return back()->with('error', "You are only holding {$toolIssuance->quantity_outstanding} of those.");
+        }
+
+        if ($request->filled('notes')) {
+            $toolIssuance->notes = trim($toolIssuance->notes . "\n" . $data['notes']);
+            $toolIssuance->save();
+        }
+
+        $toolIssuance->tool->restockQuantity($toolIssuance, (int) $data['quantity']);
+
+        return back()->with('success', "Returned {$data['quantity']} × {$toolIssuance->tool->name}.");
+    }
+
+    /**
      * Update sub-task progress (existing method).
      */
     public function updateSubTaskProgress(Request $request, ServiceSubTask $serviceSubTask)

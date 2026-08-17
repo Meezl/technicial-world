@@ -79,8 +79,8 @@
                 <p>No tools currently issued to you.</p>
             </div>
 
-            <!-- PPE (stock items) currently held. Returns are recorded by the
-                 office when you hand them back. -->
+            <!-- PPE (stock items) currently held. The technician can hand any
+                 quantity back; it restocks and is logged against the issue. -->
             <template v-if="issuedStock.length > 0">
                 <h2 class="section-title">PPE In Your Care</h2>
                 <div v-for="iss in issuedStock" :key="`stock-${iss.id}`" class="pwa-card">
@@ -98,6 +98,9 @@
                     <p v-if="iss.service_request" class="card-meta-line">
                         <i class="fas fa-briefcase"></i> Job {{ iss.service_request.job_reference || iss.service_request.request_id }}
                     </p>
+                    <button class="btn btn-outline btn-danger full" @click="returnStock(iss)">
+                        Return PPE
+                    </button>
                 </div>
             </template>
 
@@ -427,6 +430,18 @@ function returnTool(tool) {
         return
     }
     router.post(`/technician/tools/${tool.id}/return`, { condition }, { preserveScroll: true })
+}
+
+function returnStock(iss) {
+    const max = iss.quantity_outstanding
+    const input = prompt(`Return how many ${iss.tool?.name}? (up to ${max})`, String(max))
+    if (input === null) return
+    const quantity = Number(input)
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > max) {
+        alert(`Enter a whole number between 1 and ${max}.`)
+        return
+    }
+    router.post(`/technician/tool-issuances/${iss.id}/return`, { quantity }, { preserveScroll: true })
 }
 
 function formatCondition(condition) {
