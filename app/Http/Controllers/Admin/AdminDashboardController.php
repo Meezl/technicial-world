@@ -2778,7 +2778,14 @@ class AdminDashboardController extends Controller
         return Inertia::render('Admin/Users', [
             'users' => $users,
             'stats' => $stats,
-            'filters' => $request->only(['search', 'role'])
+            'filters' => $request->only(['search', 'role']),
+            // Real, live service categories for the technician Specialization
+            // dropdown — the same list the Technicians page and the new-request
+            // flow use, so a technician's specialisation lines up with a
+            // category jobs are actually raised under.
+            'serviceCategories' => \App\Models\ServiceCategory::where('is_active', true)
+                ->orderBy('name')
+                ->get(['id', 'name']),
         ]);
     }
 
