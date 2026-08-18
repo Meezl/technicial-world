@@ -268,6 +268,9 @@ Route::middleware(['auth', 'role:admin,storeman'])->prefix('admin')->group(funct
     Route::post('/tools/{tool}/return', [AdminDashboardController::class, 'returnTool'])->name('admin.tools.return');
     // Record a return of issued PPE (stock) against its issuance ledger row.
     Route::post('/tool-issuances/{toolIssuance}/return', [AdminDashboardController::class, 'returnToolIssuance'])->name('admin.tool-issuances.return');
+    // Confirm / reject a return a technician requested.
+    Route::post('/tool-issuances/{toolIssuance}/confirm-return', [AdminDashboardController::class, 'confirmToolIssuanceReturn'])->name('admin.tool-issuances.confirm-return');
+    Route::post('/tool-issuances/{toolIssuance}/reject-return', [AdminDashboardController::class, 'rejectToolIssuanceReturn'])->name('admin.tool-issuances.reject-return');
     Route::post('/tool-requests/{toolRequestItem}/approve', [AdminDashboardController::class, 'approveToolRequestItem'])->name('admin.tool-requests.approve');
     Route::post('/tool-requests/{toolRequestItem}/reject', [AdminDashboardController::class, 'rejectToolRequestItem'])->name('admin.tool-requests.reject');
 });

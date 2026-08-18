@@ -124,4 +124,88 @@ class NotificationService
             ]);
         }
     }
+
+    /**
+     * A technician submitted a tool / PPE request — tell the admins there is
+     * something waiting to act on. Mail failures never break the request.
+     */
+    public function notifyToolRequestSubmitted(\App\Models\ToolRequest $toolRequest): void
+    {
+        $toolRequest->loadMissing(['items.tool', 'technician.user']);
+
+        $admins = User::where('role', User::ROLE_ADMIN)->get();
+        if ($admins->isEmpty()) {
+            return;
+        }
+
+        try {
+            Notification::send($admins, new \App\Notifications\ToolRequestSubmittedNotification($toolRequest));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Tool request submitted notify failed', [
+                'tool_request_id' => $toolRequest->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * The office acted on a requested item — accepted, assigned (issued) or
+     * rejected. Tell the technician who asked for it.
+     */
+    public function notifyToolRequestDecision(
+        \App\Models\ToolRequestItem $item,
+        string $action,
+        ?string $issuedSummary = null,
+    ): void {
+        $item->loadMissing(['tool', 'toolRequest.technician.user']);
+
+        $technicianUser = $item->toolRequest?->technician?->user;
+        if (!$technicianUser) {
+            return;
+        }
+
+        try {
+            $technicianUser->notify(
+                new \App\Notifications\ToolRequestDecisionNotification($item, $action, $issuedSummary)
+            );
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Tool request decision notify failed', [
+                'tool_request_item_id' => $item->id,
+                'action' => $action,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * PPE return handshake. A requested return goes to the admins to confirm; a
+     * confirmed or rejected one goes back to the technician who asked.
+     */
+    public function notifyToolReturn(
+        \App\Models\ToolIssuance $issuance,
+        string $action,
+        int $quantity,
+    ): void {
+        $issuance->loadMissing(['tool', 'technician.user']);
+
+        $notification = new \App\Notifications\ToolReturnNotification($issuance, $action, $quantity);
+
+        try {
+            if ($action === \App\Notifications\ToolReturnNotification::ACTION_REQUESTED) {
+                $admins = User::where('role', User::ROLE_ADMIN)->get();
+                if ($admins->isNotEmpty()) {
+                    Notification::send($admins, $notification);
+                }
+            } else {
+                $technicianUser = $issuance->technician?->user;
+                $technicianUser?->notify($notification);
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Tool return notify failed', [
+                'tool_issuance_id' => $issuance->id,
+                'action' => $action,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
 }

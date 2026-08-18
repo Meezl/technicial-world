@@ -198,7 +198,7 @@ class PpeStockIssuanceTest extends TestCase
         $this->assertNotNull($issuance->returned_at);
     }
 
-    public function test_a_technician_can_return_their_own_ppe(): void
+    public function test_a_technician_return_is_pending_until_ops_confirm(): void
     {
         $admin = $this->admin();
         $tech = $this->makeTechnician();
@@ -222,7 +222,7 @@ class PpeStockIssuanceTest extends TestCase
             ->post(route('technician.tool-issuances.return', $issuance), ['quantity' => 1])
             ->assertForbidden();
 
-        // The holder returns 2 — restocks and logs it.
+        // The holder requests to return 2 — nothing restocks yet.
         $this->actingAs($tech->user)
             ->post(route('technician.tool-issuances.return', $issuance), ['quantity' => 2])
             ->assertRedirect()
@@ -230,15 +230,63 @@ class PpeStockIssuanceTest extends TestCase
 
         $tool->refresh();
         $issuance->refresh();
-        $this->assertSame(9, $tool->quantity_available);
+        $this->assertSame(7, $tool->quantity_available, 'stock unchanged until ops confirm');
+        $this->assertSame(2, $issuance->return_pending_quantity);
+        $this->assertSame(3, $issuance->quantity_outstanding, 'still on their name');
+        $this->assertSame(1, $issuance->quantity_returnable, 'only the 1 not already pending');
+
+        // They cannot request more than what is left to return.
+        $this->actingAs($tech->user)
+            ->post(route('technician.tool-issuances.return', $issuance), ['quantity' => 2])
+            ->assertSessionHas('error');
+
+        // Ops confirm — now it restocks.
+        $this->actingAs($admin)
+            ->post(route('admin.tool-issuances.confirm-return', $issuance))
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $tool->refresh();
+        $issuance->refresh();
+        $this->assertSame(9, $tool->quantity_available, '2 back on the shelf after confirmation');
         $this->assertSame(1, $tool->quantity_issued);
+        $this->assertSame(0, $issuance->return_pending_quantity);
         $this->assertSame(1, $issuance->quantity_outstanding);
         $this->assertSame(ToolIssuance::STATUS_PARTIALLY_RETURNED, $issuance->status);
+    }
 
-        // They cannot return more than they still hold.
+    public function test_ops_can_reject_a_pending_return_and_nothing_restocks(): void
+    {
+        $admin = $this->admin();
+        $tech = $this->makeTechnician();
+
+        $tool = Tool::create([
+            'name' => 'Reflector Vest',
+            'tracking_type' => Tool::TRACKING_STOCK,
+            'quantity_available' => 10,
+            'category' => 'PPE',
+            'condition' => 'new',
+            'status' => Tool::STATUS_AVAILABLE,
+        ]);
+
+        $issuance = $tool->issueQuantity($tech, 4, null, $admin->id);
+
         $this->actingAs($tech->user)
-            ->post(route('technician.tool-issuances.return', $issuance), ['quantity' => 5])
-            ->assertSessionHas('error');
+            ->post(route('technician.tool-issuances.return', $issuance), ['quantity' => 4]);
+        $issuance->refresh();
+        $this->assertSame(4, $issuance->return_pending_quantity);
+
+        $this->actingAs($admin)
+            ->post(route('admin.tool-issuances.reject-return', $issuance))
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $tool->refresh();
+        $issuance->refresh();
+        $this->assertSame(6, $tool->quantity_available, 'nothing restocked on rejection');
+        $this->assertSame(4, $tool->quantity_issued);
+        $this->assertSame(0, $issuance->return_pending_quantity);
+        $this->assertSame(4, $issuance->quantity_outstanding, 'still on their name');
     }
 
     public function test_serialized_tool_issuing_is_unchanged(): void

@@ -98,7 +98,15 @@
                     <p v-if="iss.service_request" class="card-meta-line">
                         <i class="fas fa-briefcase"></i> Job {{ iss.service_request.job_reference || iss.service_request.request_id }}
                     </p>
-                    <button class="btn btn-outline btn-danger full" @click="returnStock(iss)">
+                    <p v-if="iss.return_pending_quantity > 0" class="pending-return-note">
+                        <i class="fas fa-hourglass-half"></i>
+                        Return of {{ iss.return_pending_quantity }} awaiting office confirmation.
+                    </p>
+                    <button
+                        v-if="iss.quantity_returnable > 0"
+                        class="btn btn-outline btn-danger full"
+                        @click="returnStock(iss)"
+                    >
                         Return PPE
                     </button>
                 </div>
@@ -433,8 +441,8 @@ function returnTool(tool) {
 }
 
 function returnStock(iss) {
-    const max = iss.quantity_outstanding
-    const input = prompt(`Return how many ${iss.tool?.name}? (up to ${max})`, String(max))
+    const max = iss.quantity_returnable
+    const input = prompt(`Return how many ${iss.tool?.name}? (up to ${max}). The office confirms it before it leaves your name.`, String(max))
     if (input === null) return
     const quantity = Number(input)
     if (!Number.isInteger(quantity) || quantity < 1 || quantity > max) {
@@ -507,6 +515,17 @@ defineOptions({ layout: null })
 }
 .card-text { font-size: 0.9rem; margin-bottom: 0.4rem; }
 .card-meta-line { font-size: 0.78rem; color: var(--light-text); margin-bottom: 0.65rem; }
+.pending-return-note {
+    font-size: 0.78rem;
+    color: #92400E;
+    background: #FEF3C7;
+    border-radius: 8px;
+    padding: 0.5rem 0.7rem;
+    margin: 0 0 0.65rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
 .card-meta-row {
     display: flex;
     flex-wrap: wrap;
