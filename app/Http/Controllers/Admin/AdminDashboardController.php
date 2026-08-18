@@ -1955,6 +1955,16 @@ class AdminDashboardController extends Controller
             ]);
         }
 
+        // Tell the technician. Issuing something now is an "assigned"; a bare
+        // acknowledgement is "accepted", to be issued later.
+        app(\App\Services\NotificationService::class)->notifyToolRequestDecision(
+            $toolRequestItem,
+            $issuedSummary
+                ? \App\Notifications\ToolRequestDecisionNotification::ACTION_ASSIGNED
+                : \App\Notifications\ToolRequestDecisionNotification::ACTION_ACCEPTED,
+            $issuedSummary,
+        );
+
         return redirect()->route('admin.tools')->with('success',
             $issuedSummary
                 ? "Item approved and {$issuedSummary} issued to {$toolRequestItem->toolRequest->technician->user->name}."
@@ -1991,6 +2001,11 @@ class AdminDashboardController extends Controller
                 'status' => $hasApproved ? \App\Models\ToolRequest::STATUS_APPROVED : \App\Models\ToolRequest::STATUS_REJECTED
             ]);
         }
+
+        app(\App\Services\NotificationService::class)->notifyToolRequestDecision(
+            $toolRequestItem,
+            \App\Notifications\ToolRequestDecisionNotification::ACTION_REJECTED,
+        );
 
         return redirect()->route('admin.tools')->with('success', 'Tool item rejected.');
     }
@@ -2182,6 +2197,54 @@ class AdminDashboardController extends Controller
 
         return redirect()->route('admin.tools')->with('success',
             "{$data['quantity']} × {$toolIssuance->tool->name} returned to stock."
+        );
+    }
+
+    /**
+     * Confirm a technician's pending return: the quantity they asked to hand
+     * back goes onto the shelf and the technician is told.
+     */
+    public function confirmToolIssuanceReturn(\App\Models\ToolIssuance $toolIssuance)
+    {
+        if (!$toolIssuance->hasPendingReturn()) {
+            return redirect()->route('admin.tools')->with('error', 'There is no pending return to confirm.');
+        }
+
+        $quantity = (int) $toolIssuance->return_pending_quantity;
+        $toolIssuance->confirmReturn();
+
+        app(\App\Services\NotificationService::class)->notifyToolReturn(
+            $toolIssuance,
+            \App\Notifications\ToolReturnNotification::ACTION_CONFIRMED,
+            $quantity,
+        );
+
+        return redirect()->route('admin.tools')->with('success',
+            "{$quantity} × {$toolIssuance->tool->name} confirmed and returned to stock."
+        );
+    }
+
+    /**
+     * Reject a technician's pending return — the items stay recorded against
+     * them, nothing is restocked, and they are told to follow up.
+     */
+    public function rejectToolIssuanceReturn(\App\Models\ToolIssuance $toolIssuance)
+    {
+        if (!$toolIssuance->hasPendingReturn()) {
+            return redirect()->route('admin.tools')->with('error', 'There is no pending return to reject.');
+        }
+
+        $quantity = (int) $toolIssuance->return_pending_quantity;
+        $toolIssuance->rejectReturn();
+
+        app(\App\Services\NotificationService::class)->notifyToolReturn(
+            $toolIssuance,
+            \App\Notifications\ToolReturnNotification::ACTION_REJECTED,
+            $quantity,
+        );
+
+        return redirect()->route('admin.tools')->with('success',
+            "Return of {$quantity} × {$toolIssuance->tool->name} rejected — still recorded against the technician."
         );
     }
 

@@ -185,7 +185,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            <tr v-for="iss in stockIssuances" :key="`iss-${iss.id}`">
+                            <tr v-for="iss in stockIssuances" :key="`iss-${iss.id}`" :class="{ 'row-pending-return': iss.return_pending_quantity > 0 }">
                                 <td>{{ iss.tool?.name }}</td>
                                 <td>{{ iss.technician?.user?.name || '-' }}</td>
                                 <td>
@@ -193,11 +193,26 @@
                                     <span v-else class="text-muted">-</span>
                                 </td>
                                 <td>{{ iss.quantity }} on {{ formatDateShort(iss.issued_at) }}</td>
-                                <td><strong>{{ iss.quantity_outstanding }}</strong></td>
                                 <td>
-                                    <button class="btn btn-secondary btn-sm" @click="returnStockIssuance(iss)">
-                                        Record Return
-                                    </button>
+                                    <strong>{{ iss.quantity_outstanding }}</strong>
+                                    <span v-if="iss.return_pending_quantity > 0" class="pending-return-tag">
+                                        {{ iss.return_pending_quantity }} return pending
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="action-buttons">
+                                        <template v-if="iss.return_pending_quantity > 0">
+                                            <button class="btn btn-success btn-sm" @click="confirmStockReturn(iss)">
+                                                Confirm Return
+                                            </button>
+                                            <button class="btn btn-secondary btn-sm" style="color: var(--red);" @click="rejectStockReturn(iss)">
+                                                Reject
+                                            </button>
+                                        </template>
+                                        <button v-else class="btn btn-secondary btn-sm" @click="returnStockIssuance(iss)">
+                                            Record Return
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         </tbody>
@@ -653,7 +668,7 @@ const resetAssignForm = () => {
     }
 }
 
-// Record a return of issued PPE against its ledger row.
+// Record a return of issued PPE against its ledger row (ops has the items).
 const returnStockIssuance = (issuance) => {
     const max = issuance.quantity_outstanding
     const input = prompt(`Return how many ${issuance.tool?.name}? (up to ${max})`, String(max))
@@ -664,6 +679,18 @@ const returnStockIssuance = (issuance) => {
         return
     }
     router.post(`/admin/tool-issuances/${issuance.id}/return`, { quantity }, { preserveScroll: true })
+}
+
+// Confirm a technician's pending return — this is what actually restocks it.
+const confirmStockReturn = (issuance) => {
+    if (!confirm(`Confirm return of ${issuance.return_pending_quantity} × ${issuance.tool?.name}? This puts them back in stock.`)) return
+    router.post(`/admin/tool-issuances/${issuance.id}/confirm-return`, {}, { preserveScroll: true })
+}
+
+// Reject a pending return — nothing restocks, it stays against the technician.
+const rejectStockReturn = (issuance) => {
+    if (!confirm(`Reject this return? The ${issuance.return_pending_quantity} × ${issuance.tool?.name} stay recorded against the technician.`)) return
+    router.post(`/admin/tool-issuances/${issuance.id}/reject-return`, {}, { preserveScroll: true })
 }
 
 const closeModal = () => {
@@ -685,6 +712,18 @@ defineOptions({
 <style>
 
 .field-hint { display: block; margin-top: 0.25rem; font-size: 0.72rem; color: #64748B; line-height: 1.4; }
+
+.row-pending-return { background: #FFFBEB; }
+.pending-return-tag {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    background: #FEF3C7;
+    color: #92400E;
+}
 
 /* Pending tool requests panel */
 .tool-requests-panel { border-left: 4px solid #F59E0B; background: #FFFBEB; }

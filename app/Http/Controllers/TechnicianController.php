@@ -511,6 +511,9 @@ class TechnicianController extends Controller
             ]);
         }
 
+        // Let the office know there is a request waiting.
+        app(\App\Services\NotificationService::class)->notifyToolRequestSubmitted($toolRequest);
+
         return back()->with('success', 'Tool request submitted. An admin will review it shortly.');
     }
 
@@ -1027,10 +1030,9 @@ class TechnicianController extends Controller
     }
 
     /**
-     * Technician hands PPE (a stock item) back themselves — the counterpart of
-     * returnTool for stock. Restocks the quantity and records it against the
-     * issue, the same way ops recording a return would. They can only return
-     * what is against their own name.
+     * Technician asks to hand PPE (a stock item) back. This does not restock —
+     * it records a pending return the office confirms once the items are in
+     * hand. They can only return what is against their own name.
      */
     public function returnToolIssuance(Request $request, \App\Models\ToolIssuance $toolIssuance)
     {
@@ -1046,22 +1048,30 @@ class TechnicianController extends Controller
             'notes' => 'nullable|string|max:500',
         ]);
 
-        if ($toolIssuance->quantity_outstanding < 1) {
-            return back()->with('error', 'You have already returned all of that PPE.');
+        if ($toolIssuance->quantity_returnable < 1) {
+            return back()->with('error', 'You have no more of that PPE waiting to return.');
         }
 
-        if ($data['quantity'] > $toolIssuance->quantity_outstanding) {
-            return back()->with('error', "You are only holding {$toolIssuance->quantity_outstanding} of those.");
+        if ($data['quantity'] > $toolIssuance->quantity_returnable) {
+            return back()->with('error', "You can only return {$toolIssuance->quantity_returnable} of those.");
         }
 
         if ($request->filled('notes')) {
             $toolIssuance->notes = trim($toolIssuance->notes . "\n" . $data['notes']);
-            $toolIssuance->save();
         }
 
-        $toolIssuance->tool->restockQuantity($toolIssuance, (int) $data['quantity']);
+        $toolIssuance->requestReturn((int) $data['quantity']);
 
-        return back()->with('success', "Returned {$data['quantity']} × {$toolIssuance->tool->name}.");
+        // Let the office know there is a return to confirm.
+        app(\App\Services\NotificationService::class)->notifyToolReturn(
+            $toolIssuance,
+            \App\Notifications\ToolReturnNotification::ACTION_REQUESTED,
+            (int) $data['quantity'],
+        );
+
+        return back()->with('success',
+            "Return requested for {$data['quantity']} × {$toolIssuance->tool->name}. The office will confirm it."
+        );
     }
 
     /**
