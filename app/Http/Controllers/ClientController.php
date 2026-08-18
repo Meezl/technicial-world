@@ -61,10 +61,28 @@ class ClientController extends Controller
 
         // Build per-service-request payment summary
         $paymentsByJob = $serviceRequests->map(function ($sr) {
-            $totalQuoted = (float) ($sr->quote_amount ?? 0);
+            // What the job is worth now — the original quote plus every
+            // approved variation. The billed and owed figures track this, not
+            // the base quote, so an approved change reads through to the
+            // client's totals instead of leaving a balance they can't explain.
+            $ledger = app(VariationOrderService::class)->ledger($sr);
+            $originalQuote = (float) $ledger['base_quote'];
+            $contractValue = (float) $ledger['contract_value'];
+
             $totalPaid = (float) $sr->payments->where('status', 'completed')->sum('amount');
-            $percentagePaid = $totalQuoted > 0 ? round(($totalPaid / $totalQuoted) * 100, 1) : 0;
+            $percentagePaid = $contractValue > 0 ? round(($totalPaid / $contractValue) * 100, 1) : 0;
             $totalPending = (float) $sr->paymentRequests->where('status', 'pending')->sum('amount');
+
+            // The approved variations behind any gap between the two figures —
+            // so the client can see why the total moved off the original quote.
+            $approvedVariations = $sr->variationOrders
+                ->where('status', VariationOrder::STATUS_APPROVED)
+                ->map(fn ($vo) => [
+                    'vo_number' => $vo->vo_number,
+                    'reason' => $vo->reason,
+                    'net_amount' => (float) $vo->net_amount,
+                ])
+                ->values();
 
             return [
                 'id' => $sr->id,
@@ -72,10 +90,18 @@ class ClientController extends Controller
                 'job_reference' => $sr->job_reference ?? $sr->request_id,
                 'service_name' => $sr->serviceCategory->name ?? $sr->service_type ?? 'N/A',
                 'status' => $sr->status,
-                'quote_amount' => $totalQuoted,
+                // Headline "quoted" is now the contract value, so every tile
+                // that reads it shows the merged figure. The base quote and the
+                // variations that moved it are carried alongside for the
+                // "why it changed" breakdown.
+                'quote_amount' => $contractValue,
+                'contract_value' => $contractValue,
+                'original_quote' => $originalQuote,
+                'approved_variations' => $approvedVariations,
+                'has_contract_change' => round($contractValue - $originalQuote, 2) !== 0.0,
                 'total_paid' => $totalPaid,
                 'total_pending' => $totalPending,
-                'balance' => $totalQuoted - $totalPaid,
+                'balance' => $contractValue - $totalPaid,
                 'percentage_paid' => $percentagePaid,
                 'milestones' => $sr->milestones->map(fn ($m) => [
                     'id' => $m->id,
@@ -112,7 +138,7 @@ class ClientController extends Controller
                 // component drives both.
                 'has_pending_variation' => $sr->variationOrders
                     ->contains('status', VariationOrder::STATUS_PENDING_CLIENT),
-                'variation_ledger' => app(VariationOrderService::class)->ledger($sr),
+                'variation_ledger' => $ledger,
                 'variation_orders' => $sr->variationOrders->map(fn ($vo) => [
                     'id' => $vo->id,
                     'vo_number' => $vo->vo_number,

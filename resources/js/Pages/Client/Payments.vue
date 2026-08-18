@@ -125,8 +125,34 @@
                         </div>
 
                         <div class="job-header-side">
-                            <span class="job-header-label">Quoted Value</span>
-                            <strong>{{ formatCurrency(job.quote_amount) }}</strong>
+                            <span class="job-header-label">{{ job.has_contract_change ? 'Contract Value' : 'Quoted Value' }}</span>
+                            <strong>{{ formatCurrency(job.contract_value ?? job.quote_amount) }}</strong>
+                        </div>
+                    </div>
+
+                    <!-- Why the total moved off the original quote: the approved
+                         variations, referenced by number, that changed it. -->
+                    <div v-if="job.has_contract_change" class="contract-breakdown">
+                        <div class="cb-row cb-base">
+                            <span>Original quote</span>
+                            <span>{{ formatCurrency(job.original_quote) }}</span>
+                        </div>
+                        <div
+                            v-for="vo in job.approved_variations"
+                            :key="vo.vo_number"
+                            class="cb-row cb-vo"
+                        >
+                            <span>
+                                <strong>{{ vo.vo_number }}</strong>
+                                <span class="cb-reason">{{ vo.reason }}</span>
+                            </span>
+                            <span :class="vo.net_amount < 0 ? 'cb-deduct' : 'cb-add'">
+                                {{ vo.net_amount < 0 ? '−' : '+' }} {{ formatCurrency(Math.abs(vo.net_amount)) }}
+                            </span>
+                        </div>
+                        <div class="cb-row cb-total">
+                            <span>Current contract value</span>
+                            <span>{{ formatCurrency(job.contract_value) }}</span>
                         </div>
                     </div>
 
@@ -468,6 +494,37 @@ defineOptions({ layout: null })
 </script>
 
 <style>
+
+/* Why the contract value differs from the original quote — the approved
+   variations, referenced by number, laid out as a small running total. */
+.contract-breakdown {
+    margin: 0 0 1rem;
+    padding: 0.85rem 1rem;
+    border: 1px dashed #cbd5e1;
+    border-radius: 0.75rem;
+    background: #f8fafc;
+    font-size: 0.88rem;
+}
+.contract-breakdown .cb-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    padding: 0.28rem 0;
+}
+.contract-breakdown .cb-base { color: #64748b; }
+.contract-breakdown .cb-vo { color: #334155; border-top: 1px solid #eef2f7; }
+.contract-breakdown .cb-vo strong { font-weight: 700; margin-right: 0.5rem; }
+.contract-breakdown .cb-reason { color: #64748b; }
+.contract-breakdown .cb-add { color: #15803d; font-weight: 600; white-space: nowrap; }
+.contract-breakdown .cb-deduct { color: #b45309; font-weight: 600; white-space: nowrap; }
+.contract-breakdown .cb-total {
+    margin-top: 0.35rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid #cbd5e1;
+    font-weight: 700;
+    color: #0f172a;
+}
 
 /* Revised-budget approval surfaced on the payments page. The callout uses the
    same amber "needs your action" language as the pending-payment alert. */
