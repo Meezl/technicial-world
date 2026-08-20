@@ -2501,6 +2501,15 @@ class AdminDashboardController extends Controller
             'compensationAmendments:id,service_request_id,status',
         ]);
 
+        // Approved variations raise the contract above the original quote, so
+        // the billing UI must reckon against quote + approved variations, not
+        // the quote alone. Without this, REQ-DENXUL — a fully paid quote with
+        // an approved-but-unpaid KES 4,500 variation — showed as fully paid
+        // with no way to bill the variation.
+        $query->withSum(['variationOrders as approved_variation_total' => function ($q) {
+            $q->whereIn('status', \App\Models\VariationOrder::COUNTS_TOWARD_CONTRACT);
+        }], 'net_amount');
+
         // Search filter
         if ($search = $request->input('search')) {
             $query->where(function ($q) use ($search) {
@@ -3239,38 +3248,43 @@ class AdminDashboardController extends Controller
             ], 422);
         }
 
-        $quoteAmount = (float) $serviceRequest->quote_amount;
-        if ($quoteAmount <= 0) {
+        $billing = app(\App\Services\BillingService::class);
+
+        // The contract is the quote plus every approved variation — that, not
+        // the bare quote, is what the client has agreed to pay and what a
+        // percentage bills against. A paid quote with an approved variation
+        // still has a balance to bill (REQ-DENXUL).
+        $contractValue = $billing->contractValue($serviceRequest);
+        if ($contractValue <= 0) {
             return response()->json([
-                'error' => 'Cannot bill against a zero-value quotation.',
+                'error' => 'Cannot bill against a zero-value contract.',
             ], 422);
         }
 
-        // #14a: Compute amount, then enforce the approved-quote cap so the
-        // sum of all non-cancelled billings stays at or below quote_amount.
+        // #14a: Compute amount, then enforce the approved-contract cap so the
+        // sum of all non-cancelled billings stays at or below the contract.
         if ($request->filled('amount')) {
             $amount = (float) $request->amount;
-            $percentage = round(($amount / $quoteAmount) * 100, 2);
+            $percentage = round(($amount / $contractValue) * 100, 2);
         } else {
             $percentage = (float) $request->percentage;
-            $amount = round(($percentage / 100) * $quoteAmount, 2);
+            $amount = round(($percentage / 100) * $contractValue, 2);
         }
 
-        $billing = app(\App\Services\BillingService::class);
         $alreadyBilled = $billing->billed($serviceRequest);
         $remaining = $billing->billableRemaining($serviceRequest);
 
         if ($amount > $remaining + 0.001) {
             return response()->json([
                 'error' => sprintf(
-                    'This request (KES %s) exceeds the remaining approved balance (KES %s of KES %s already billed). Request additional client approval before billing beyond the quotation.',
+                    'This request (KES %s) exceeds the remaining approved balance (KES %s of KES %s already billed). Request additional client approval before billing beyond the contract.',
                     number_format($amount, 2),
                     number_format($alreadyBilled, 2),
-                    number_format($quoteAmount, 2)
+                    number_format($contractValue, 2)
                 ),
                 'remaining' => $remaining,
                 'already_billed' => $alreadyBilled,
-                'quote_amount' => $quoteAmount,
+                'contract_value' => $contractValue,
             ], 422);
         }
 
