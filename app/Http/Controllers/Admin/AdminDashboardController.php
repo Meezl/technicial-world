@@ -2880,9 +2880,12 @@ class AdminDashboardController extends Controller
             'rfq_status' => $serviceRequest->rfq_status,
         ];
 
+        // Store the reason as given. The cancelled status is what marks this
+        // as a cancellation (vs a rejected quotation), so the reason reads
+        // cleanly wherever it is shown; who cancelled is on the audit log.
         $serviceRequest->update([
             'status'           => ServiceRequest::STATUS_CANCELLED,
-            'rejection_reason' => 'Cancelled by admin: ' . $request->reason,
+            'rejection_reason' => $request->reason,
         ]);
 
         AuditLog::log(AuditLog::ACTION_STATE_CHANGED, $serviceRequest, $oldValues, [
