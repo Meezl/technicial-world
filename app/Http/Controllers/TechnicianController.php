@@ -1197,24 +1197,26 @@ class TechnicianController extends Controller
     }
 
     /**
-     * The lead answers a report the office sent back.
-     *
-     * They can correct the percentage, rewrite the notes, or just add a
-     * comment saying why it stands — a returned report is often a question,
-     * not a verdict. Either way it goes back to the office to settle, never
-     * onto the lead's own authority.
+     * Answer a report that was sent back, correcting it rather than filing a
+     * fresh one. Who answers, and where it goes next, depends on who returned
+     * it:
+     *   • the office sent it back to the lead → the lead answers, and it goes
+     *     back to the office to settle;
+     *   • the lead sent it back to the crew member → that technician corrects
+     *     it, and it goes back to the lead to sign off.
+     * Either way it is the same report, kept with its history, not a new one.
      */
     public function reviseReturnedReport(Request $request, \App\Models\ProgressReport $progressReport)
     {
         $technician = auth()->user()->technician;
         $serviceRequest = $progressReport->serviceRequest;
 
-        if (!$technician || !$serviceRequest || !$serviceRequest->isLeadTechnician($technician->id)) {
-            abort(403, 'Only the lead technician can answer a report sent back on this job.');
+        if (!$technician || !$serviceRequest) {
+            abort(403, 'Unauthorized action.');
         }
 
-        if (!$progressReport->isReturnedToLead()) {
-            return back()->with('error', 'That report has not been sent back to you.');
+        if (!$progressReport->isRejected()) {
+            return back()->with('error', 'That report has not been sent back.');
         }
 
         $data = $request->validate([
@@ -1223,16 +1225,35 @@ class TechnicianController extends Controller
             'comment' => 'nullable|string|max:1000',
         ]);
 
-        // Sending it back up unchanged tells the office nothing.
+        // Sending it back up unchanged says nothing about what was queried.
         if (!$request->filled('comment') && !$request->filled('notes') && !$request->filled('percent_complete')) {
             return back()->withErrors([
                 'comment' => 'Change the figure, edit the notes, or add a comment before sending it back.',
             ]);
         }
 
-        app(ProgressService::class)->reviseByLead($progressReport, auth()->id(), $data);
+        // Office → lead: only the lead answers, and it returns to the office.
+        if ($progressReport->isReturnedToLead()) {
+            if (!$serviceRequest->isLeadTechnician($technician->id)) {
+                abort(403, 'Only the lead technician can answer a report the office sent back on this job.');
+            }
+            app(ProgressService::class)->reviseByLead($progressReport, auth()->id(), $data);
+            return back()->with('success', 'Sent back to the project team.');
+        }
 
-        return back()->with('success', 'Sent back to the project team.');
+        // Lead → crew: the crew member whose work it is corrects it, and it
+        // returns to the lead to sign off.
+        if ($progressReport->isReturnedToCrew()) {
+            $isOwner = (int) $progressReport->technician_id === (int) $technician->id
+                || (int) $progressReport->submitted_by === (int) auth()->id();
+            if (!$isOwner) {
+                abort(403, 'That report is not yours to revise.');
+            }
+            app(ProgressService::class)->reviseByTechnician($progressReport, auth()->id(), $data);
+            return back()->with('success', 'Sent back to your lead technician to sign off.');
+        }
+
+        return back()->with('error', 'That report has not been sent back to you.');
     }
 
     /**
