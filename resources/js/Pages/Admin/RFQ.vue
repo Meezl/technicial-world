@@ -1079,8 +1079,11 @@
                         <!-- Balance summary cards -->
                         <div class="pr-balance-grid">
                             <div class="pr-balance-tile tile-blue">
-                                <span class="pr-tile-label">Total Quote</span>
-                                <strong>KSH {{ formatCurrency(selectedRFQ?.quote_amount) }}</strong>
+                                <span class="pr-tile-label">{{ approvedVariationTotal ? 'Contract Value' : 'Total Quote' }}</span>
+                                <strong>KSH {{ formatCurrency(contractValue) }}</strong>
+                                <small v-if="approvedVariationTotal" class="pr-tile-note">
+                                    Quote {{ formatCurrency(selectedRFQ?.quote_amount) }} + variations {{ formatCurrency(approvedVariationTotal) }}
+                                </small>
                             </div>
                             <div class="pr-balance-tile tile-amber">
                                 <span class="pr-tile-label">Already Billed</span>
@@ -1524,17 +1527,21 @@ const priorPaymentRequests = computed(() => {
 })
 const hasPriorPayments = computed(() => priorPaymentRequests.value.length > 0)
 const alreadyBilledAmount = computed(() => priorPaymentRequests.value.reduce((sum, pr) => sum + (Number(pr.amount) || 0), 0))
-const remainingAmount = computed(() => Math.max(0, (Number(selectedRFQ.value?.quote_amount) || 0) - alreadyBilledAmount.value))
+// The contract (quote + approved variations) is the billing ceiling, and the
+// base a percentage is taken against — not the bare quote.
+const contractValue = computed(() => contractValueFor(selectedRFQ.value))
+const approvedVariationTotal = computed(() => Number(selectedRFQ.value?.approved_variation_total) || 0)
+const remainingAmount = computed(() => Math.max(0, contractValue.value - alreadyBilledAmount.value))
 
 // Keep percentage <-> amount in sync so admin can type either
 const onPercentageInput = () => {
     const pct = Number(paymentRequestForm.value.percentage) || 0
-    const total = Number(selectedRFQ.value?.quote_amount) || 0
+    const total = contractValue.value
     paymentRequestForm.value.amount = total > 0 ? Math.round(((pct / 100) * total) * 100) / 100 : null
 }
 const onAmountInput = () => {
     const amt = Number(paymentRequestForm.value.amount) || 0
-    const total = Number(selectedRFQ.value?.quote_amount) || 0
+    const total = contractValue.value
     paymentRequestForm.value.percentage = total > 0 ? Math.round(((amt / total) * 100) * 100) / 100 : 0
 }
 
@@ -2029,11 +2036,17 @@ const getStatusLabel = (status) => ({ pending: 'Pending Review', quoted: 'Awaiti
 const getSubmissionModeLabel = (mode) => ({ client_self: 'Client Submitted', admin_proxy: 'Admin Assisted' })[mode] || 'Client Submitted'
 const formatUrgencyLabel = (urgency) => ({ low: 'Low', medium: 'Medium', high: 'High' })[urgency] || (urgency || '—')
 
-// Sum of all paid payment requests vs the quote total. Treats anything
-// within 1 cent of the quote as "fully paid" to absorb rounding drift.
+// What the client has agreed to pay: the quote plus every approved variation.
+// Billing against the bare quote is what let a paid quote with an approved,
+// unpaid variation read as fully paid (REQ-DENXUL).
+const contractValueFor = (rfq) =>
+    (Number(rfq?.quote_amount) || 0) + (Number(rfq?.approved_variation_total) || 0)
+
+// Sum of all paid payment requests vs the contract total. Treats anything
+// within 1 cent of the contract as "fully paid" to absorb rounding drift.
 const isRfqFullyPaid = (rfq) => {
-    if (!rfq || !rfq.quote_amount) return false
-    const total = Number(rfq.quote_amount) || 0
+    if (!rfq) return false
+    const total = contractValueFor(rfq)
     if (total <= 0) return false
     const paid = (rfq.payment_requests || [])
         .filter(pr => pr.status === 'paid')
@@ -2695,6 +2708,7 @@ defineOptions({ layout: null })
     opacity: 0.85;
 }
 .pr-balance-tile strong { font-size: 0.92rem; font-weight: 700; }
+.pr-tile-note { display: block; margin-top: 2px; font-size: 0.62rem; font-weight: 600; opacity: 0.8; line-height: 1.3; }
 
 /* Info strips */
 .pr-info-strip {
