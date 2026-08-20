@@ -858,6 +858,46 @@ class ProgressService
         });
     }
 
+    /**
+     * A crew member answers a report their lead sent back, then puts it up
+     * again. Same as the lead answering the office — correct the percentage,
+     * rewrite the notes, or add a comment — but it goes back to the lead to
+     * sign off, not to the office, and does not count until they do.
+     */
+    public function reviseByTechnician(ProgressReport $report, int $userId, array $data): ProgressReport
+    {
+        return DB::transaction(function () use ($report, $userId, $data) {
+            $previousNotes = $report->notes;
+            $notes = $data['notes'] ?? $previousNotes;
+
+            if (!empty($data['comment'])) {
+                $stamp = now()->format('d M Y H:i');
+                $notes = trim(($notes ? $notes . "\n\n" : '') . "[Technician, {$stamp}] " . $data['comment']);
+            }
+
+            $this->recordNoteVersionIfChanged($report, $userId, 'notes', $previousNotes, $notes);
+
+            $report->update([
+                'percent_complete' => $data['percent_complete'] ?? $report->percent_complete,
+                'notes' => $notes,
+                // Corrected and sent back to the lead to sign off — not counting
+                // yet, and no longer sitting as a rejection.
+                'rejected_at' => null,
+                'rejected_by' => null,
+                'rejected_as' => null,
+                'rejection_reason' => null,
+                'is_validated' => false,
+                'approved_by_lead_at' => null,
+            ]);
+
+            AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, [
+                'revised_by_technician' => true,
+            ]);
+
+            return $report->fresh();
+        });
+    }
+
     private function aggregateSubTaskProgress(ServiceRequest $serviceRequest): int
     {
         return (int) round($serviceRequest->subTasks()->avg('progress_percentage') ?? 0);

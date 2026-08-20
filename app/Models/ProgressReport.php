@@ -128,13 +128,23 @@ class ProgressReport extends Model
 
     /**
      * Sent back by the office, so it is the lead's to edit or comment on
-     * before it goes back up. A lead's own rejection lands on the crew member
-     * instead, who redoes the work and files afresh.
+     * before it goes back up.
      */
     public function isReturnedToLead(): bool
     {
         return $this->rejected_at !== null
             && in_array($this->rejected_as, self::OFFICE_CAPACITIES, true);
+    }
+
+    /**
+     * Sent back by the lead to the crew member whose work it is, so it is
+     * theirs to correct and resubmit — back up to the lead. The counterpart
+     * of isReturnedToLead (the office sending one to the lead).
+     */
+    public function isReturnedToCrew(): bool
+    {
+        return $this->rejected_at !== null
+            && $this->rejected_as === self::AS_LEAD;
     }
 
     /**

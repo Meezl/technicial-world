@@ -359,16 +359,57 @@
                             </div>
                         </div>
 
-                        <!-- Sent back to the crew member: they need to know
-                             why, not just that their bar never moved. -->
-                        <p v-else-if="rejectedClaimFor(task)" class="subtask-rejected">
-                            <i class="fas fa-rotate-left"></i>
-                            {{ rejectedClaimFor(task).percent_complete }}% was sent back<span
-                                v-if="rejectedClaimFor(task).rejector?.name"
-                            > by {{ rejectedClaimFor(task).rejector.name }}</span>:
-                            <strong>{{ rejectedClaimFor(task).rejection_reason }}</strong>
-                            <span v-if="isMyTask(task)"> Put it right and submit again.</span>
-                        </p>
+                        <!-- Sent back to the crew member by the lead: theirs to
+                             correct and resubmit, back to the lead — the same
+                             report, not a fresh one. -->
+                        <div v-else-if="rejectedClaimFor(task)" class="subtask-returned">
+                            <p>
+                                <i class="fas fa-rotate-left"></i>
+                                {{ rejectedClaimFor(task).percent_complete }}% was sent back<span
+                                    v-if="rejectedClaimFor(task).rejector?.name"
+                                > by {{ rejectedClaimFor(task).rejector.name }}</span>:
+                                <strong>{{ rejectedClaimFor(task).rejection_reason }}</strong>
+                            </p>
+
+                            <template v-if="isMyTask(task)">
+                                <div v-if="revisingClaim?.id !== rejectedClaimFor(task).id">
+                                    <button class="btn btn-primary btn-full" @click="openRevise(rejectedClaimFor(task))">
+                                        <i class="fas fa-pen"></i> Edit &amp; resubmit
+                                    </button>
+                                </div>
+
+                                <div v-else class="revise-box">
+                                    <label class="form-field">
+                                        <span>Progress %</span>
+                                        <input v-model.number="reviseForm.percent_complete" type="number" min="0" max="100" class="input">
+                                    </label>
+                                    <label class="form-field">
+                                        <span>Notes</span>
+                                        <textarea v-model="reviseForm.notes" rows="3" class="input textarea"></textarea>
+                                    </label>
+                                    <label class="form-field">
+                                        <span>Add a comment</span>
+                                        <textarea
+                                            v-model="reviseForm.comment"
+                                            rows="2"
+                                            class="input textarea"
+                                            placeholder="What you put right — e.g. corrected to 60%, the last two panels went in after the photos."
+                                        ></textarea>
+                                    </label>
+                                    <p v-if="reviseError" class="reject-error">{{ reviseError }}</p>
+                                    <div class="signoff-actions">
+                                        <button
+                                            class="btn btn-primary"
+                                            :disabled="busyReportId === revisingClaim.id"
+                                            @click="submitRevision()"
+                                        >
+                                            {{ busyReportId === revisingClaim.id ? 'Sending…' : 'Resubmit to lead' }}
+                                        </button>
+                                        <button class="btn btn-outline" @click="cancelRevise()">Cancel</button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
 
                         <div v-if="canSignOffClaim(pendingClaimFor(task))" class="signoff-actions">
                             <button

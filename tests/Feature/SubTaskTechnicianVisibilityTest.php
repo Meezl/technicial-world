@@ -1192,8 +1192,8 @@ class SubTaskTechnicianVisibilityTest extends TestCase
     }
 
     /**
-     * A report the lead sent back to their crew is a different thing from one
-     * the office sent back to the lead, and must not be answered as one.
+     * A report the lead sent back to their crew is the crew member's to answer,
+     * not the lead's. The lead cannot revise it on their behalf.
      */
     public function test_a_lead_cannot_revise_a_report_they_sent_back_to_the_crew(): void
     {
@@ -1225,12 +1225,80 @@ class SubTaskTechnicianVisibilityTest extends TestCase
 
         $this->assertSame(ProgressReport::AS_LEAD, $report->fresh()->rejected_as);
 
+        // The lead cannot answer it for the crew member.
         $this->actingAs($lead->user)
             ->post(route('technician.progress-report.revise', $report), ['comment' => 'Actually it is fine.'])
-            ->assertRedirect();
+            ->assertForbidden();
 
-        // Still sent back — the crew member redoes it.
+        // Still sent back.
         $this->assertNotNull($report->fresh()->rejected_at);
+    }
+
+    /**
+     * A crew member whose claim the lead sent back can correct it and resubmit
+     * the same report — it goes back to the lead to sign off, not off as a new
+     * report and not straight into the banked total.
+     */
+    public function test_a_crew_member_revises_the_claim_their_lead_sent_back(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        $subTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Solar Installation Works',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 80]);
+        $report = ProgressReport::latest('id')->first();
+
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.reject', $report), [
+                'rejection_reason' => 'Only four of the eight panels are up.',
+            ]);
+        $this->assertNotNull($report->fresh()->rejected_at);
+
+        // Another crew member cannot revise it.
+        $outsider = $this->makeTechnician();
+        $this->actingAs($outsider->user)
+            ->post(route('technician.progress-report.revise', $report), ['percent_complete' => 50])
+            ->assertForbidden();
+
+        // The owner corrects the figure and resubmits the same report.
+        $this->actingAs($crew->user)
+            ->post(route('technician.progress-report.revise', $report), [
+                'percent_complete' => 50,
+                'comment' => 'Recount: four up, corrected to 50%.',
+            ])
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $revised = $report->fresh();
+        $this->assertNull($revised->rejected_at, 'no longer a rejection');
+        $this->assertSame(50, $revised->percent_complete);
+        $this->assertFalse($revised->is_validated);
+        $this->assertNull($revised->approved_by_lead_at, 'back with the lead to sign off, not banked');
+        $this->assertStringContainsString('Recount: four up', $revised->notes);
+
+        // It is the same report — no fresh one was created.
+        $this->assertSame(1, ProgressReport::where('service_sub_task_id', $subTask->id)->count());
+
+        // And the lead can now sign it off.
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.approve', $revised))
+            ->assertSessionHasNoErrors();
+        $this->assertTrue($report->fresh()->is_validated);
+        $this->assertSame(50, $subTask->fresh()->progress_percentage);
     }
 
     /**
