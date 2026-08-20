@@ -191,6 +191,7 @@
                                 <option value="en_route">Technician En Route</option>
                                 <option value="in_progress">In Progress</option>
                                 <option value="rejected">Rejected</option>
+                                <option value="cancelled">Cancelled</option>
                             </select>
                         </label>
 
@@ -295,8 +296,8 @@
                                         <span v-else class="no-pm">Unassigned</span>
                                     </td>
                                     <td>
-                                        <span :class="['status-badge', rfq.rfq_status || 'pending']">
-                                            {{ getStatusLabel(rfq.rfq_status || 'pending') }}
+                                        <span :class="['status-badge', rfqDisplayStatus(rfq)]">
+                                            {{ getStatusLabel(rfqDisplayStatus(rfq)) }}
                                         </span>
                                         <!-- Per-row action reasons — small amber chips that say WHY
                                              this REQ needs attention. Server-computed from the same
@@ -389,8 +390,8 @@
                                     <h4>{{ rfq.request_id || `REQ-${rfq.id}` }}</h4>
                                     <p>{{ rfq.service_category?.name || 'General Service' }}</p>
                                 </div>
-                                <span :class="['status-badge', rfq.rfq_status || 'pending']">
-                                    {{ getStatusLabel(rfq.rfq_status || 'pending') }}
+                                <span :class="['status-badge', rfqDisplayStatus(rfq)]">
+                                    {{ getStatusLabel(rfqDisplayStatus(rfq)) }}
                                 </span>
                             </div>
 
@@ -563,8 +564,8 @@
                                 </div>
                                 <div class="info-item">
                                     <label>Status:</label>
-                                    <span :class="['status-badge', selectedRFQ?.rfq_status || 'pending']">
-                                        {{ getStatusLabel(selectedRFQ?.rfq_status || 'pending') }}
+                                    <span :class="['status-badge', rfqDisplayStatus(selectedRFQ)]">
+                                        {{ getStatusLabel(rfqDisplayStatus(selectedRFQ)) }}
                                     </span>
                                 </div>
                                 <div class="info-item">
@@ -670,8 +671,18 @@
                             </div>
                         </div>
 
+                        <!-- Cancelled outright (voided by admin/ops). Takes
+                             precedence over rejection: a cancelled request is
+                             cancelled whatever quotation stage it was at. -->
+                        <div v-if="selectedRFQ?.status === 'cancelled'" class="rejection-section">
+                            <h4>Cancellation Information</h4>
+                            <div class="rejection-display">
+                                <p><strong>Reason:</strong> {{ selectedRFQ?.rejection_reason }}</p>
+                            </div>
+                        </div>
+
                         <!-- Rejection Reason -->
-                        <div v-if="selectedRFQ?.rfq_status === 'rejected'" class="rejection-section">
+                        <div v-else-if="selectedRFQ?.rfq_status === 'rejected'" class="rejection-section">
                             <h4>Rejection Information</h4>
                             <div class="rejection-display">
                                 <p><strong>Reason:</strong> {{ selectedRFQ?.rejection_reason }}</p>
@@ -2032,7 +2043,14 @@ const getDaysOpenLabel = (date) => {
     return `Opened ${days} days ago`
 }
 
-const getStatusLabel = (status) => ({ pending: 'Pending Review', quoted: 'Awaiting Approval', approved: 'Approved', rejected: 'Rejected' })[status] || 'Unknown'
+const getStatusLabel = (status) => ({ pending: 'Pending Review', quoted: 'Awaiting Approval', approved: 'Approved', rejected: 'Rejected', cancelled: 'Cancelled' })[status] || 'Unknown'
+
+// A cancelled request is voided outright (status = cancelled) while its
+// rfq_status keeps whatever it was when pulled. Cancelling wins for display,
+// so a cancelled RFQ reads "Cancelled" rather than the stage it was cancelled
+// at — and stays distinct from a "Rejected" quotation.
+const rfqDisplayStatus = (rfq) =>
+    rfq?.status === 'cancelled' ? 'cancelled' : (rfq?.rfq_status || 'pending')
 const getSubmissionModeLabel = (mode) => ({ client_self: 'Client Submitted', admin_proxy: 'Admin Assisted' })[mode] || 'Client Submitted'
 const formatUrgencyLabel = (urgency) => ({ low: 'Low', medium: 'Medium', high: 'High' })[urgency] || (urgency || '—')
 
@@ -2402,6 +2420,7 @@ defineOptions({ layout: null })
 .status-badge.quoted { background: #DBEAFE; color: #2563EB; }
 .status-badge.approved { background: #D1FAE5; color: #059669; }
 .status-badge.rejected { background: #FEE2E2; color: #DC2626; }
+.status-badge.cancelled { background: #E5E7EB; color: #4B5563; }
 
 .quote-amount-text { font-weight: 700; color: #166534; }
 .no-quote { color: #94a3b8; }

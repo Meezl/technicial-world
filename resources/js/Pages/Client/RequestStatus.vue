@@ -35,13 +35,28 @@
                 <div class="panel-card full-width rfq-status-card">
                     <div class="card-header">
                         <h3>Request for Quotation (RFQ) Status</h3>
-                        <span :class="['status', getRFQStatusClass(serviceRequest.rfq_status)]">
+                        <span v-if="serviceRequest.status === 'cancelled'" class="status cancelled">Cancelled</span>
+                        <span v-else :class="['status', getRFQStatusClass(serviceRequest.rfq_status)]">
                             {{ formatRFQStatus(serviceRequest.rfq_status) }}
                         </span>
                     </div>
 
+                    <!-- Cancelled outright by the office. Shown ahead of the
+                         quotation stages so a cancelled request never still
+                         offers the client a quote to approve or decline. -->
+                    <div v-if="serviceRequest.status === 'cancelled'" class="rfq-rejected">
+                        <div class="error-message">
+                            <i class="fas fa-ban"></i>
+                            <p>This request has been cancelled by our team.</p>
+                            <div v-if="serviceRequest.rejection_reason" class="rejection-reason">
+                                <h5>Reason:</h5>
+                                <p>{{ serviceRequest.rejection_reason }}</p>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Pending RFQ -->
-                    <div v-if="serviceRequest.rfq_status === 'pending'" class="rfq-pending">
+                    <div v-else-if="serviceRequest.rfq_status === 'pending'" class="rfq-pending">
                         <div class="info-message">
                             <i class="fas fa-clock"></i>
                             <p>Your service request is being reviewed by our team. We will send you a quotation shortly.</p>
@@ -2522,6 +2537,11 @@ defineOptions({
 .status.quoted {
     background: #DBEAFE;
     color: #1E40AF;
+}
+
+.status.cancelled {
+    background: #E5E7EB;
+    color: #4B5563;
 }
 
 /* Modal Styles */
