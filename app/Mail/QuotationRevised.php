@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Mail\Concerns\BuildsQuotationEmail;
 use App\Models\ServiceRequest;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
@@ -17,7 +18,7 @@ use Illuminate\Queue\SerializesModels;
  */
 class QuotationRevised extends Mailable
 {
-    use Queueable, SerializesModels;
+    use Queueable, SerializesModels, BuildsQuotationEmail;
 
     public $serviceRequest;
 
@@ -39,6 +40,7 @@ class QuotationRevised extends Mailable
         $ref = $this->serviceRequest->request_id ?: ('REQ-' . $this->serviceRequest->id);
         return new Envelope(
             subject: "Revised Quotation — {$ref} — Technician World",
+            bcc: $this->quotationBcc(),
         );
     }
 
@@ -65,8 +67,12 @@ class QuotationRevised extends Mailable
         );
     }
 
+    /**
+     * A revision carries the same attachments as the first quotation — the
+     * regenerated PDF and every attached file — not an empty set as before.
+     */
     public function attachments(): array
     {
-        return [];
+        return $this->quotationAttachments();
     }
 }
