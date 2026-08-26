@@ -56,4 +56,9 @@ return [
         'swift_code'     => env('BANK_SWIFT_CODE', 'CBAFKENX'),
     ],
 
+    // Office address BCC'd on every quotation (and revision) sent to a client,
+    // so a copy of exactly what the client received — body and attachments —
+    // lands in the shared inbox.
+    'quotation_bcc' => env('QUOTATION_BCC', 'info@technicianworld.co.ke'),
+
 ];

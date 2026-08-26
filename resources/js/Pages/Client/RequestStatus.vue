@@ -84,9 +84,25 @@
                                         <span class="material-total">KSH {{ formatCurrency(material.quantity * material.unit_price) }}</span>
                                     </div>
                                 </div>
-                                <div v-if="serviceRequest.quote_materials_file_path" class="mt-4" style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px dashed #e5e7eb;">
-                                    <a :href="`/storage/${serviceRequest.quote_materials_file_path}`" target="_blank" class="btn btn-primary" style="display: flex; align-items: center; justify-content: center; gap: 0.75rem; text-decoration: none; padding: 0.75rem 1.5rem; font-weight: 600; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);">
-                                        <i class="fas fa-file-download" style="font-size: 1.1rem;"></i> Download Detailed Materials List
+                            </div>
+
+                            <!-- Every file the office attached to this
+                                 quotation, downloadable by the client. -->
+                            <div v-if="quoteAttachments.length" class="quote-attachments-section">
+                                <h5><i class="fas fa-paperclip"></i> Attachments</h5>
+                                <p class="attachments-hint">Documents your quotation team attached to this request.</p>
+                                <div class="quote-attachments-list">
+                                    <a
+                                        v-for="att in quoteAttachments"
+                                        :key="att.path"
+                                        :href="`/storage/${att.path}`"
+                                        target="_blank"
+                                        rel="noopener"
+                                        class="quote-attachment-link"
+                                    >
+                                        <i class="fas fa-file-download"></i>
+                                        <span class="attachment-label">{{ att.label }}</span>
+                                        <span v-if="att.ext" class="attachment-ext">{{ att.ext }}</span>
                                     </a>
                                 </div>
                             </div>
@@ -169,6 +185,26 @@
                             <p>Quotation approved! You will shortly receive a deposit payment request as per the approved quotation. A technician will be assigned once the deposit is confirmed.</p>
                             <div class="approved-amount">
                                 <span>Approved Amount: <strong>KSH {{ formatCurrency(serviceRequest.quote_amount) }}</strong></span>
+                            </div>
+                        </div>
+
+                        <!-- Quotation attachments stay available after approval. -->
+                        <div v-if="quoteAttachments.length" class="quote-attachments-section">
+                            <h5><i class="fas fa-paperclip"></i> Attachments</h5>
+                            <p class="attachments-hint">Documents your quotation team attached to this request.</p>
+                            <div class="quote-attachments-list">
+                                <a
+                                    v-for="att in quoteAttachments"
+                                    :key="att.path"
+                                    :href="`/storage/${att.path}`"
+                                    target="_blank"
+                                    rel="noopener"
+                                    class="quote-attachment-link"
+                                >
+                                    <i class="fas fa-file-download"></i>
+                                    <span class="attachment-label">{{ att.label }}</span>
+                                    <span v-if="att.ext" class="attachment-ext">{{ att.ext }}</span>
+                                </a>
                             </div>
                         </div>
 
@@ -1144,6 +1180,21 @@ const authUserId = computed(() => usePage().props.auth?.user?.id ?? null)
 // server.
 const jobDocuments = computed(() => props.serviceRequest.documents || [])
 
+// Every file the office attached to the quotation: the multi-file array the
+// admin uploads plus the legacy single path, de-duplicated. Lets the client
+// download all of them, not just the first. Labelled by extension, and
+// numbered when there is more than one.
+const quoteAttachments = computed(() => {
+    const paths = [...(props.serviceRequest.quote_materials_file_paths || [])]
+    const single = props.serviceRequest.quote_materials_file_path
+    if (single && !paths.includes(single)) paths.unshift(single)
+    return paths.filter(Boolean).map((path, i, arr) => ({
+        path,
+        ext: (String(path).split('.').pop() || '').toUpperCase(),
+        label: arr.length > 1 ? `Attachment ${i + 1}` : 'Detailed materials / quotation document',
+    }))
+})
+
 const isMyDocument = (doc) => doc.uploaded_by != null && doc.uploaded_by === authUserId.value
 
 function onDocumentsPicked(event) {
@@ -2114,6 +2165,37 @@ defineOptions({
     border-top: 2px solid var(--primary-color);
     margin-top: 0.5rem;
     padding-top: 1rem;
+}
+
+.quote-attachments-section { margin: 1.25rem 0; }
+.quote-attachments-section h5 { margin: 0 0 0.25rem; display: flex; align-items: center; gap: 0.4rem; }
+.attachments-hint { font-size: 0.82rem; color: var(--text-muted, #6b7280); margin: 0 0 0.75rem; }
+.quote-attachments-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.quote-attachment-link {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.7rem 0.9rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #fff;
+    text-decoration: none;
+    color: #1f2937;
+    font-weight: 600;
+    font-size: 0.88rem;
+    transition: background 0.15s, border-color 0.15s;
+}
+.quote-attachment-link:hover { background: #f8fafc; border-color: #cbd5e1; }
+.quote-attachment-link .fa-file-download { color: var(--info-color, #2563eb); }
+.quote-attachment-link .attachment-label { flex: 1; }
+.attachment-ext {
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: #6b7280;
+    background: #f3f4f6;
+    border-radius: 4px;
+    padding: 2px 6px;
 }
 
 .quote-notes {
