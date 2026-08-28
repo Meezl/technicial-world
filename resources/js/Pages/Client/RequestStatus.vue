@@ -528,6 +528,27 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- Outstanding balance the client can settle right
+                             here, so they are not left after the deposit with
+                             no idea how to pay the rest. Hidden when a request
+                             is already pending — the Pay Now alert covers that. -->
+                        <div v-if="balanceDue > 0 && !pendingPaymentRequest" class="balance-due-card">
+                            <div class="balance-due-info">
+                                <span class="balance-due-label"><i class="fas fa-wallet"></i> Balance Due</span>
+                                <strong class="balance-due-amount">KSH {{ formatCurrency(balanceDue) }}</strong>
+                                <span class="balance-due-hint">Pay the remaining amount to keep your job moving.</span>
+                            </div>
+                            <button
+                                type="button"
+                                class="btn btn-primary balance-due-btn"
+                                :disabled="raisingBalance"
+                                @click="payBalance"
+                            >
+                                <i class="fas fa-credit-card"></i>
+                                {{ raisingBalance ? 'Preparing…' : 'Pay Balance' }}
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Rejected RFQ -->
@@ -1089,9 +1110,31 @@ const props = defineProps({
         type: Boolean,
         default: false,
     },
+    // Outstanding contract balance the client may pay themselves.
+    balanceDue: {
+        type: Number,
+        default: 0,
+    },
 })
 
 const bank = props.bank
+const raisingBalance = ref(false)
+
+// Raise the outstanding balance as a payable request, then let the normal
+// Pay Now / M-Pesa / bank flow take over once the page reloads with it pending.
+const payBalance = () => {
+    if (raisingBalance.value) return
+    raisingBalance.value = true
+    router.post(`/client/service-request/${props.serviceRequest.id}/pay-balance`, {}, {
+        preserveScroll: true,
+        onSuccess: () => {
+            // The request now exists — drop the client straight onto the
+            // payment form instead of making them scroll for it.
+            nextTick(() => jumpToPaymentForm())
+        },
+        onFinish: () => { raisingBalance.value = false },
+    })
+}
 
 // ---- Client photo evidence -------------------------------------------------
 const jobPhotoUploader = ref(null)
@@ -2570,6 +2613,24 @@ defineOptions({
     padding-top: 1.5rem;
     border-top: 2px solid #E5E7EB;
 }
+
+.balance-due-card {
+    margin-top: 1.25rem;
+    padding: 1.15rem 1.25rem;
+    border-radius: 14px;
+    background: #FFF7ED;
+    border: 1px solid #FDBA74;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+.balance-due-info { display: flex; flex-direction: column; gap: 0.15rem; }
+.balance-due-label { font-size: 0.82rem; font-weight: 700; color: #9A3412; display: flex; align-items: center; gap: 0.4rem; }
+.balance-due-amount { font-size: 1.5rem; font-weight: 800; color: #7C2D12; }
+.balance-due-hint { font-size: 0.8rem; color: #9A3412; }
+.balance-due-btn { flex-shrink: 0; }
 
 .paid-payments-section h4 {
     display: flex;

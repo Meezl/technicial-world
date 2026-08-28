@@ -107,6 +107,8 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/client/payments/{paymentRequest}/mpesa', [\App\Http\Controllers\PaymentController::class, 'initiateMpesa'])->name('client.payments.mpesa');
     Route::get('/client/payments/{paymentRequest}/status', [\App\Http\Controllers\PaymentController::class, 'checkMpesaStatus'])->name('client.payments.status');
     Route::post('/client/payments/{paymentRequest}/offline', [\App\Http\Controllers\PaymentController::class, 'recordOfflinePayment'])->name('client.payments.offline');
+    // Client raises the outstanding balance as a payable request themselves.
+    Route::post('/client/service-request/{serviceRequest}/pay-balance', [\App\Http\Controllers\ClientController::class, 'raiseBalancePayment'])->name('client.pay-balance');
 
     // Client tickets (authenticated)
     Route::get('/client/tickets', [\App\Http\Controllers\TicketController::class, 'clientIndex'])->name('client.tickets.index');
@@ -381,6 +383,8 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::put('/sub-tasks/{serviceSubTask}', [AdminDashboardController::class, 'updateSubTask'])->name('admin.sub-tasks.update');
     Route::delete('/sub-tasks/{serviceSubTask}', [AdminDashboardController::class, 'deleteSubTask'])->name('admin.sub-tasks.destroy');
     Route::post('/sub-tasks/{serviceSubTask}/assign', [AdminDashboardController::class, 'assignSubTaskTechnician'])->name('admin.sub-tasks.assign');
+    // Adjust a sub-task technician's fee without reassigning them.
+    Route::post('/sub-tasks/{serviceSubTask}/fee', [AdminDashboardController::class, 'updateSubTaskCompensation'])->name('admin.sub-tasks.fee');
 
     // Payment Processing (Technician Payment Sheets)
     Route::get('/payment-processing', [\App\Http\Controllers\Admin\PaymentProcessingController::class, 'index'])->name('admin.payment-processing.index');

@@ -201,8 +201,14 @@ class ServiceRequestController extends Controller
             },
         ]);
 
+        $billing = app(\App\Services\BillingService::class);
+
         return Inertia::render('Client/RequestStatus', [
             'serviceRequest' => $serviceRequest,
+            // The outstanding contract balance (quote + approved variations,
+            // less what has been billed) so the client can pay it themselves
+            // from this screen without waiting for an invoice.
+            'balanceDue' => round($billing->billableRemaining($serviceRequest), 2),
             // Whether the client can still add, replace or remove their own
             // snag photos — open while the job is being scoped, locked once a
             // technician has started work. Drives the upload form and the

@@ -253,6 +253,18 @@
                                 </div>
                             </div>
 
+                            <!-- Overall job progress, so the lead's card carries
+                                 the same at-a-glance bar the sub-tasks show. -->
+                            <div class="assignment-progress">
+                                <div class="assignment-progress-head">
+                                    <span>Job progress</span>
+                                    <strong>{{ normalizedProgress }}%</strong>
+                                </div>
+                                <div class="progress-bar">
+                                    <div class="progress" :style="`width: ${normalizedProgress}%;`"></div>
+                                </div>
+                            </div>
+
                             <div class="assignment-action-row" v-if="canReassignTechnician">
                                 <button
                                     v-if="job.has_sub_tasks"
@@ -443,14 +455,57 @@
                                     <div v-else class="unassigned">
                                         <span class="text-muted"><i class="fas fa-user-slash"></i> Unassigned</span>
                                     </div>
-                                    <button
-                                        v-if="subTask.status !== 'completed' && (!job.rfq_status || job.rfq_status === 'approved')"
-                                        @click="showAssignModalFor(subTask)"
-                                        class="btn btn-primary btn-xs"
-                                    >
-                                        <i class="fas fa-user-plus"></i>
-                                        {{ subTask.technician ? 'Reassign' : 'Assign' }}
-                                    </button>
+                                    <div class="subtask-tech-actions">
+                                        <button
+                                            v-if="subTask.technician && subTask.status !== 'completed'"
+                                            @click="openSubTaskFeeEdit(subTask)"
+                                            class="btn btn-secondary btn-xs"
+                                            title="Adjust this sub-task's fee without reassigning"
+                                        >
+                                            <i class="fas fa-pen"></i> Edit fee
+                                        </button>
+                                        <button
+                                            v-if="subTask.status !== 'completed' && (!job.rfq_status || job.rfq_status === 'approved')"
+                                            @click="showAssignModalFor(subTask)"
+                                            class="btn btn-primary btn-xs"
+                                        >
+                                            <i class="fas fa-user-plus"></i>
+                                            {{ subTask.technician ? 'Reassign' : 'Assign' }}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Inline fee edit — the counterpart of the
+                                     lead's Edit fee, so a sub-task fee no longer
+                                     needs a pretend reassignment to change. -->
+                                <div v-if="editingSubTaskFee === subTask.id" class="subtask-fee-edit-form">
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>New agreed amount (KSH)</label>
+                                            <input
+                                                type="number"
+                                                v-model.number="subTaskFeeForm.agreed_compensation"
+                                                min="0"
+                                                step="0.01"
+                                                class="form-control form-control-sm"
+                                            />
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Reason / notes</label>
+                                            <input
+                                                type="text"
+                                                v-model="subTaskFeeForm.compensation_notes"
+                                                class="form-control form-control-sm"
+                                                placeholder="Optional reason for the change…"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+                                        <button type="button" class="btn btn-primary btn-xs" :disabled="savingSubTaskFee" @click="saveSubTaskFee(subTask)">
+                                            <i class="fas fa-save"></i> Save
+                                        </button>
+                                        <button type="button" class="btn btn-secondary btn-xs" @click="editingSubTaskFee = null">Cancel</button>
+                                    </div>
                                 </div>
 
                                 <div class="subtask-progress">
@@ -2051,6 +2106,36 @@ const selectedTechnician = ref(null)
 const assigningSubTask = ref(null)
 const editingSubTask = ref(null)
 const assignmentContext = ref('single')
+
+// Inline sub-task fee edit — mirrors the lead's Edit fee (openFeeEdit /
+// saveAgreedFee) so a sub-technician's fee can be changed without a pretend
+// reassignment.
+const editingSubTaskFee = ref(null)
+const savingSubTaskFee = ref(false)
+const subTaskFeeForm = reactive({ agreed_compensation: 0, compensation_notes: '' })
+
+const openSubTaskFeeEdit = (subTask) => {
+    editingSubTaskFee.value = subTask.id
+    subTaskFeeForm.agreed_compensation = Number(subTask.agreed_compensation || 0)
+    subTaskFeeForm.compensation_notes = subTask.compensation_notes || ''
+}
+
+const saveSubTaskFee = (subTask) => {
+    if (savingSubTaskFee.value) return
+    savingSubTaskFee.value = true
+    router.post(
+        `/admin/sub-tasks/${subTask.id}/fee`,
+        {
+            agreed_compensation: subTaskFeeForm.agreed_compensation,
+            compensation_notes: subTaskFeeForm.compensation_notes,
+        },
+        {
+            preserveScroll: true,
+            onSuccess: () => { editingSubTaskFee.value = null },
+            onFinish: () => { savingSubTaskFee.value = false },
+        }
+    )
+}
 
 // Technician picker filters
 const techFilterTrade = ref('')
@@ -4149,6 +4234,35 @@ defineOptions({
     border: 1px solid #e2e8f0;
     margin-bottom: 0.7rem;
 }
+
+.subtask-tech-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.subtask-fee-edit-form {
+    padding: 0.75rem 0.9rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    background: #fff;
+    margin-bottom: 0.7rem;
+}
+.subtask-fee-edit-form .form-row { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.subtask-fee-edit-form .form-group { flex: 1 1 12rem; display: flex; flex-direction: column; gap: 0.2rem; }
+.subtask-fee-edit-form label { font-size: 0.72rem; font-weight: 600; color: #475569; }
+
+.assignment-progress { margin-top: 0.9rem; }
+.assignment-progress-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 0.35rem;
+    font-size: 0.82rem;
+    color: #475569;
+}
+.assignment-progress-head strong { color: #0f172a; }
 
 .progress-bar,
 .budget-progress-bar {
