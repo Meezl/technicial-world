@@ -385,26 +385,49 @@ class ClientController extends Controller
             return back()->with('warning', 'You already have a payment request awaiting settlement — use Pay Now above.');
         }
 
-        $balance = round($billing->billableRemaining($serviceRequest), 2);
-        if ($balance <= 0) {
+        // On a staged job this is the next unbilled milestone, so the client
+        // settles the schedule step by step rather than the whole balance.
+        $next = $billing->nextClientPayment($serviceRequest);
+        if (!$next) {
             return back()->with('warning', 'This job is fully paid — there is no balance outstanding.');
         }
 
+        $amount = $next['amount'];
         $contractValue = $billing->contractValue($serviceRequest);
-        $percentage = $contractValue > 0 ? round(($balance / $contractValue) * 100, 2) : 0;
+        $percentage = $contractValue > 0 ? round(($amount / $contractValue) * 100, 2) : 0;
 
-        PaymentRequestModel::create([
+        $milestone = $next['milestone_id']
+            ? \App\Models\ReqBillingMilestone::find($next['milestone_id'])
+            : null;
+
+        $paymentRequest = PaymentRequestModel::create([
             'payment_request_id' => PaymentRequestModel::generatePaymentRequestId(),
             'service_request_id' => $serviceRequest->id,
+            'variation_order_id' => $milestone?->variation_order_id,
             'user_id'            => $serviceRequest->user_id,
             'requested_by'       => Auth::id(),
             'percentage'         => $percentage,
-            'amount'             => $balance,
+            'amount'             => $amount,
             'status'             => PaymentRequestModel::STATUS_PENDING,
-            'notes'              => 'Balance payment raised by the client.',
+            'notes'              => $milestone
+                ? sprintf('Milestone "%s" raised by the client.', $milestone->label)
+                : 'Balance payment raised by the client.',
         ]);
 
-        return back()->with('success', 'Balance payment ready — choose how you would like to pay below.');
+        // Close the milestone against the bill it raised, exactly as the
+        // progress auto-trigger would, so it is never billed twice.
+        if ($milestone) {
+            $milestone->update([
+                'payment_request_id' => $paymentRequest->id,
+                'triggered_at'       => now(),
+            ]);
+        }
+
+        return back()->with('success',
+            $milestone
+                ? sprintf('Payment for "%s" is ready — choose how you would like to pay below.', $milestone->label)
+                : 'Balance payment ready — choose how you would like to pay below.'
+        );
     }
 
     public function confirmArrival(ServiceRequest $serviceRequest)

@@ -533,11 +533,19 @@
                              here, so they are not left after the deposit with
                              no idea how to pay the rest. Hidden when a request
                              is already pending — the Pay Now alert covers that. -->
-                        <div v-if="balanceDue > 0 && !pendingPaymentRequest" class="balance-due-card">
+                        <div v-if="nextPayment && !pendingPaymentRequest" class="balance-due-card">
                             <div class="balance-due-info">
-                                <span class="balance-due-label"><i class="fas fa-wallet"></i> Balance Due</span>
-                                <strong class="balance-due-amount">KSH {{ formatCurrency(balanceDue) }}</strong>
-                                <span class="balance-due-hint">Pay the remaining amount to keep your job moving.</span>
+                                <span class="balance-due-label">
+                                    <i class="fas fa-wallet"></i>
+                                    {{ nextPayment.is_milestone ? 'Next Payment Due' : 'Balance Due' }}
+                                </span>
+                                <strong class="balance-due-amount">KSH {{ formatCurrency(nextPayment.amount) }}</strong>
+                                <span class="balance-due-hint">
+                                    <template v-if="nextPayment.is_milestone">
+                                        {{ nextPayment.label }}<template v-if="balanceDue > nextPayment.amount"> · KSH {{ formatCurrency(balanceDue) }} balance remaining in total</template>
+                                    </template>
+                                    <template v-else>Pay the remaining amount to keep your job moving.</template>
+                                </span>
                             </div>
                             <button
                                 type="button"
@@ -546,7 +554,7 @@
                                 @click="payBalance"
                             >
                                 <i class="fas fa-credit-card"></i>
-                                {{ raisingBalance ? 'Preparing…' : 'Pay Balance' }}
+                                {{ raisingBalance ? 'Preparing…' : (nextPayment.is_milestone ? 'Pay This Installment' : 'Pay Balance') }}
                             </button>
                         </div>
                     </div>
@@ -1114,6 +1122,12 @@ const props = defineProps({
     balanceDue: {
         type: Number,
         default: 0,
+    },
+    // The next single payment the client can raise: the next billing milestone
+    // on a staged job, or the whole balance otherwise. Null when nothing due.
+    nextPayment: {
+        type: Object,
+        default: null,
     },
 })
 

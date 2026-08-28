@@ -132,6 +132,50 @@ class BillingService
     }
 
     /**
+     * The next single payment a client may raise for themselves.
+     *
+     * On a staged job that is the next unbilled billing milestone, so the
+     * client settles the schedule step by step rather than the whole balance
+     * at once. On a job with no schedule it is the whole remaining balance.
+     * Null when nothing is outstanding. The amount is always capped at the
+     * contract.
+     *
+     * @return array{milestone_id: int|null, label: string|null, is_milestone: bool, amount: float}|null
+     */
+    public function nextClientPayment(ServiceRequest $sr): ?array
+    {
+        $remaining = $this->billableRemaining($sr);
+        if ($remaining <= 0.001) {
+            return null;
+        }
+
+        // The earliest milestone that has not yet raised its bill. Billed
+        // milestones carry a payment_request_id; a variation adds its own rows.
+        $milestone = $sr->billingSchedule()
+            ->whereNull('payment_request_id')
+            ->orderBy('sort_order')
+            ->first();
+
+        if ($milestone) {
+            return [
+                'milestone_id' => $milestone->id,
+                'label'        => $milestone->label,
+                'is_milestone' => true,
+                'amount'       => round(min((float) $milestone->amount, $remaining), 2),
+            ];
+        }
+
+        // No schedule (or all milestones billed but a balance remains) — the
+        // whole outstanding amount is payable in one go.
+        return [
+            'milestone_id' => null,
+            'label'        => null,
+            'is_milestone' => false,
+            'amount'       => round($remaining, 2),
+        ];
+    }
+
+    /**
      * Everything the UI and the commands need, computed the same way.
      *
      * The two streams are reported side by side and summed only in the

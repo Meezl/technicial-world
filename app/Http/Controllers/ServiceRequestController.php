@@ -206,9 +206,12 @@ class ServiceRequestController extends Controller
         return Inertia::render('Client/RequestStatus', [
             'serviceRequest' => $serviceRequest,
             // The outstanding contract balance (quote + approved variations,
-            // less what has been billed) so the client can pay it themselves
-            // from this screen without waiting for an invoice.
+            // less what has been billed) — the total still owed, for context.
             'balanceDue' => round($billing->billableRemaining($serviceRequest), 2),
+            // The next single payment the client may raise themselves: the next
+            // billing milestone on a staged job, or the whole balance otherwise.
+            // Drives the Pay Balance card so a staged job is settled step by step.
+            'nextPayment' => $billing->nextClientPayment($serviceRequest),
             // Whether the client can still add, replace or remove their own
             // snag photos — open while the job is being scoped, locked once a
             // technician has started work. Drives the upload form and the
