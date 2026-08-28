@@ -3588,6 +3588,80 @@ class AdminDashboardController extends Controller
     }
 
     /**
+     * Adjust a sub-task technician's agreed fee without going through the full
+     * reassignment flow — the counterpart of updateAssignmentCompensation for
+     * the lead. Keeps the figure on the sub-task and its assignment in step so
+     * the card, the payments and the labor budget all agree.
+     */
+    public function updateSubTaskCompensation(Request $request, ServiceSubTask $serviceSubTask)
+    {
+        $admin = auth()->user();
+        if (!$admin || !in_array($admin->role, ['admin', 'project_manager'], true)) {
+            abort(403);
+        }
+
+        $data = $request->validate([
+            'agreed_compensation' => 'required|numeric|min:0',
+            'compensation_notes' => 'nullable|string|max:1000',
+        ]);
+
+        if (!$serviceSubTask->technician_id) {
+            return redirect()->back()->with('error', 'Assign a technician to this sub-task before setting a fee.');
+        }
+
+        $serviceRequest = $serviceSubTask->serviceRequest;
+
+        // Same labor-budget guard as assigning, so a fee bump can't quietly
+        // blow the approved envelope. Exclude this sub-task's own current fee.
+        try {
+            $this->ensureLaborBudgetCapacity(
+                $serviceRequest,
+                (float) $data['agreed_compensation'],
+                excludeSubTaskId: $serviceSubTask->id
+            );
+        } catch (\Throwable $e) {
+            return redirect()->back()->with('error', $e->getMessage());
+        }
+
+        $oldAmount = (float) ($serviceSubTask->agreed_compensation ?? 0);
+        $newAmount = (float) $data['agreed_compensation'];
+
+        $serviceSubTask->update([
+            'agreed_compensation' => $newAmount,
+            'compensation_notes' => $data['compensation_notes'] ?? $serviceSubTask->compensation_notes,
+        ]);
+
+        // Keep the sub-task's live assignment in step, preserving its status —
+        // a fee change is not a reassignment.
+        $assignment = $this->findActiveSubTaskAssignment($serviceSubTask);
+        if ($assignment) {
+            $assignment->update([
+                'agreed_compensation' => $newAmount,
+                'compensation_notes' => $data['compensation_notes'] ?? $assignment->compensation_notes,
+            ]);
+
+            \App\Models\AuditLog::log(
+                \App\Models\AuditLog::ACTION_UPDATED,
+                $assignment,
+                ['agreed_compensation' => $oldAmount],
+                [
+                    'agreed_compensation' => $newAmount,
+                    'reason' => $data['compensation_notes'] ?? null,
+                    'updated_by' => $admin->name,
+                    'sub_task_id' => $serviceSubTask->id,
+                ]
+            );
+        }
+
+        return redirect()->route('admin.jobs.show', $serviceRequest)->with('success',
+            sprintf('Sub-task fee updated from KES %s to KES %s.',
+                number_format($oldAmount, 2),
+                number_format($newAmount, 2)
+            )
+        );
+    }
+
+    /**
      * Assign a PM to an RFQ.
      */
     public function assignPm(Request $request, ServiceRequest $serviceRequest)

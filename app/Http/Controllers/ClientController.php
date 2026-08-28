@@ -353,6 +353,60 @@ class ClientController extends Controller
         return response()->json(['success' => true, 'message' => 'Quotation declined']);
     }
 
+    /**
+     * Client raises the outstanding balance as a payment request themselves,
+     * so they can settle it from the request-status screen without waiting for
+     * the office to send an invoice. It creates the pending request; the normal
+     * Pay Now / M-Pesa / bank flow then takes over on reload.
+     *
+     * The amount is the whole remaining contract balance (quote + approved
+     * variations, less what has already been billed), capped so it can never
+     * exceed the contract. If a payment is already pending, we send them to
+     * that rather than raising a second one.
+     */
+    public function raiseBalancePayment(ServiceRequest $serviceRequest)
+    {
+        if ($serviceRequest->user_id !== Auth::id()) {
+            abort(403);
+        }
+
+        if ($serviceRequest->rfq_status !== ServiceRequest::RFQ_STATUS_APPROVED) {
+            return back()->with('error', 'A balance can only be paid once the quotation is approved.');
+        }
+
+        $billing = app(\App\Services\BillingService::class);
+
+        // Already have a payment waiting — pay that one, don't stack another.
+        $hasPending = $serviceRequest->paymentRequests()
+            ->whereNull('ticket_id')
+            ->where('status', PaymentRequestModel::STATUS_PENDING)
+            ->exists();
+        if ($hasPending) {
+            return back()->with('warning', 'You already have a payment request awaiting settlement — use Pay Now above.');
+        }
+
+        $balance = round($billing->billableRemaining($serviceRequest), 2);
+        if ($balance <= 0) {
+            return back()->with('warning', 'This job is fully paid — there is no balance outstanding.');
+        }
+
+        $contractValue = $billing->contractValue($serviceRequest);
+        $percentage = $contractValue > 0 ? round(($balance / $contractValue) * 100, 2) : 0;
+
+        PaymentRequestModel::create([
+            'payment_request_id' => PaymentRequestModel::generatePaymentRequestId(),
+            'service_request_id' => $serviceRequest->id,
+            'user_id'            => $serviceRequest->user_id,
+            'requested_by'       => Auth::id(),
+            'percentage'         => $percentage,
+            'amount'             => $balance,
+            'status'             => PaymentRequestModel::STATUS_PENDING,
+            'notes'              => 'Balance payment raised by the client.',
+        ]);
+
+        return back()->with('success', 'Balance payment ready — choose how you would like to pay below.');
+    }
+
     public function confirmArrival(ServiceRequest $serviceRequest)
     {
         // Ensure the service request belongs to the authenticated user
