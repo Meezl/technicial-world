@@ -2494,7 +2494,7 @@ class AdminDashboardController extends Controller
             // Eager-load payment requests so the Request Payment modal can
             // show "Already Billed" / remaining balance and the prior
             // payment history without an extra round-trip.
-            'paymentRequests:id,service_request_id,payment_request_id,amount,percentage,status,payment_method,paid_at,created_at',
+            'paymentRequests:id,service_request_id,ticket_id,payment_request_id,amount,percentage,status,payment_method,paid_at,created_at',
             // Needed for the per-row "action reasons" chip on the RFQ list
             // (see scopeNeedsAdminAction on ServiceRequest for the rules).
             'progressReports:id,service_request_id,is_validated',
@@ -3344,7 +3344,11 @@ class AdminDashboardController extends Controller
         }
 
         $request->validate([
-            'percentage'           => 'required|numeric|min:1|max:100',
+            // Either figure may be sent. `amount` is the one the office
+            // actually holds a receipt for, so when both arrive it wins and
+            // the percentage is re-derived from it — see below.
+            'percentage'           => 'nullable|numeric|min:0|max:100',
+            'amount'               => 'nullable|numeric|min:1',
             'payment_method'       => 'required|in:cash,cheque,bank_deposit,mpesa',
             'cheque_number'        => 'required_if:payment_method,cheque|nullable|string|max:50',
             'bank_reference'       => 'required_if:payment_method,bank_deposit|nullable|string|max:100',
@@ -3358,29 +3362,81 @@ class AdminDashboardController extends Controller
             'evidence'             => 'required_if:payment_method,cheque|required_if:payment_method,bank_deposit|required_if:payment_method,mpesa|nullable|file|mimes:jpg,jpeg,png,pdf|max:10240',
         ]);
 
-        $quoteTotal = (float) $serviceRequest->quote_amount;
-        $amount = round(($request->percentage / 100) * $quoteTotal, 2);
+        if (!$request->filled('percentage') && !$request->filled('amount')) {
+            return response()->json([
+                'error' => 'Either a percentage or a fixed amount is required.',
+            ], 422);
+        }
 
-        $alreadyPaid = (float) PaymentRequest::where('service_request_id', $serviceRequest->id)
-            ->whereIn('status', [PaymentRequest::STATUS_PAID])
-            ->sum('amount');
+        $billing = app(\App\Services\BillingService::class);
 
-        $remaining = round($quoteTotal - $alreadyPaid, 2);
+        // Bill against the contract — the quote plus every approved variation
+        // — not the bare quote. This endpoint used to read `quote_amount`
+        // directly, so on a job carrying an approved variation it measured the
+        // payment against the wrong total and rejected legitimate confirmations
+        // as exceeding the balance. `requestPayment` has always used the
+        // contract value; this now matches it.
+        $contractValue = $billing->contractValue($serviceRequest);
+        if ($contractValue <= 0) {
+            return response()->json([
+                'error' => 'Cannot confirm a payment against a zero-value contract.',
+            ], 422);
+        }
+
+        // A percentage cannot express an arbitrary shilling figure: on a
+        // KES 150,558 job each 0.01% step moves the amount by about KES 15, so
+        // an exact KES 100,000 receipt is unreachable from the percentage side
+        // at the two decimal places the column stores. When the office enters
+        // the amount it actually received, that is the figure of record and the
+        // percentage becomes a derived display value.
+        if ($request->filled('amount')) {
+            $amount = round((float) $request->amount, 2);
+            $percentage = round(($amount / $contractValue) * 100, 2);
+        } else {
+            $percentage = (float) $request->percentage;
+            $amount = round(($percentage / 100) * $contractValue, 2);
+        }
+
+        if ($amount <= 0) {
+            return response()->json([
+                'error' => 'The payment amount must be greater than zero.',
+            ], 422);
+        }
+
+        // Found before the cap is computed because reusing a pending request
+        // replaces its amount rather than adding to it — its own value has to
+        // be handed back as headroom or the job appears over-billed by exactly
+        // the amount being superseded.
+        //
+        // Scoped to `whereNull('ticket_id')`: attendance fees are billed
+        // outside the contract and excluded from `billed()`, so absorbing one
+        // here would convert a ticket fee into a contract payment.
+        $existingPending = PaymentRequest::where('service_request_id', $serviceRequest->id)
+            ->whereNull('ticket_id')
+            ->where('status', PaymentRequest::STATUS_PENDING)
+            ->first();
+
+        $alreadyBilled = $billing->billed($serviceRequest);
+        $remaining = round(
+            $billing->billableRemaining($serviceRequest) + (float) ($existingPending->amount ?? 0),
+            2
+        );
+
         if ($amount > $remaining + 0.001) {
             return response()->json([
                 'error' => sprintf(
-                    'This payment (KES %s) would exceed the remaining balance (KES %s). Total quote is KES %s with KES %s already received.',
+                    'This payment (KES %s) would exceed the remaining balance (KES %s). The contract is worth KES %s with KES %s already billed.',
                     number_format($amount, 2),
                     number_format(max($remaining, 0), 2),
-                    number_format($quoteTotal, 2),
-                    number_format($alreadyPaid, 2)
+                    number_format($contractValue, 2),
+                    number_format($alreadyBilled, 2)
                 ),
             ], 422);
         }
 
         $paymentPayload = [
             'requested_by'         => auth()->id(),
-            'percentage'           => $request->percentage,
+            'percentage'           => $percentage,
             'amount'               => $amount,
             'notes'                => $request->notes,
             'payment_method'       => $request->payment_method,
@@ -3398,10 +3454,7 @@ class AdminDashboardController extends Controller
 
         // Reuse any existing pending payment request for this SR (may exist from an earlier
         // attempt or a mistakenly sent normal request) — update it with the new details.
-        $existingPending = PaymentRequest::where('service_request_id', $serviceRequest->id)
-            ->where('status', PaymentRequest::STATUS_PENDING)
-            ->first();
-
+        // Located above, where the cap needed it.
         if ($existingPending) {
             $existingPending->update($paymentPayload);
             $paymentRequest = $existingPending->fresh();
