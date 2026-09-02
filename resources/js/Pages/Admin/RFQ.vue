@@ -975,15 +975,63 @@
                                 <span class="label">Total Quote:</span>
                                 <span class="value highlight">KSH {{ formatCurrency(selectedRFQ?.quote_amount) }}</span>
                             </div>
+                            <div class="info-row" v-if="approvedVariationTotal > 0">
+                                <span class="label">Approved Variations:</span>
+                                <span class="value">KSH {{ formatCurrency(approvedVariationTotal) }}</span>
+                            </div>
+                            <div class="info-row" v-if="approvedVariationTotal > 0">
+                                <span class="label">Contract Value:</span>
+                                <span class="value highlight">KSH {{ formatCurrency(contractValue) }}</span>
+                            </div>
                         </div>
 
-                        <div class="form-group">
-                            <label>Payment Percentage (%)</label>
-                            <input v-model.number="proxyPaymentForm.percentage" type="number" min="1" max="100" class="form-control" required>
+                        <!-- Enter either figure. The amount is what the office
+                             holds a receipt for, so it is the one submitted;
+                             the percentage is kept in step for reference and
+                             cannot on its own express an exact shilling value. -->
+                        <div class="pr-section" style="margin-bottom:1rem;">
+                            <label class="pr-section-label">Amount Received</label>
+                            <div class="pr-input-grid">
+                                <div class="pr-input-field">
+                                    <label>Percentage</label>
+                                    <div class="pr-input-wrap">
+                                        <input
+                                            v-model.number="proxyPaymentForm.percentage"
+                                            @input="onProxyPercentageInput"
+                                            type="number"
+                                            min="0"
+                                            max="100"
+                                            step="0.01"
+                                            class="pr-input"
+                                        >
+                                        <span class="pr-input-suffix">%</span>
+                                    </div>
+                                </div>
+                                <div class="pr-input-or">or</div>
+                                <div class="pr-input-field">
+                                    <label>Exact Amount</label>
+                                    <div class="pr-input-wrap">
+                                        <span class="pr-input-prefix">KSH</span>
+                                        <input
+                                            v-model.number="proxyPaymentForm.amount"
+                                            @input="onProxyAmountInput"
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            class="pr-input pr-input-with-prefix"
+                                            :placeholder="`Max ${formatCurrency(proxyRemainingAmount)}`"
+                                        >
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="calculated-amount" v-if="proxyPaymentForm.percentage > 0">
+                        <div class="calculated-amount" v-if="proxyResolvedAmount > 0">
                             <span class="label">Amount Confirmed:</span>
-                            <span class="amount">KSH {{ formatCurrency((proxyPaymentForm.percentage / 100) * (selectedRFQ?.quote_amount || 0)) }}</span>
+                            <span class="amount">KSH {{ formatCurrency(proxyResolvedAmount) }}</span>
+                        </div>
+                        <div v-if="proxyCapExceeded" class="pr-info-strip pr-info-error">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <span>This exceeds the remaining balance of KSH {{ formatCurrency(proxyRemainingAmount) }}. Reduce it or raise a variation order first.</span>
                         </div>
 
                         <div class="form-group">
@@ -1054,10 +1102,16 @@
                             class="btn btn-teal"
                             :disabled="isSubmittingProxyPayment
                                 || !proxyPaymentForm.payment_method
+                                || proxyResolvedAmount &lt;= 0
+                                || proxyCapExceeded
                                 || (['cheque','bank_deposit','mpesa'].includes(proxyPaymentForm.payment_method) && !proxyPaymentForm.evidence)"
-                            :title="(['cheque','bank_deposit','mpesa'].includes(proxyPaymentForm.payment_method) &amp;&amp; !proxyPaymentForm.evidence)
-                                ? 'Upload supporting documentation before confirming.'
-                                : ''">
+                            :title="proxyResolvedAmount &lt;= 0
+                                ? 'Enter the amount received.'
+                                : proxyCapExceeded
+                                    ? 'This exceeds the remaining balance on the contract.'
+                                    : (['cheque','bank_deposit','mpesa'].includes(proxyPaymentForm.payment_method) &amp;&amp; !proxyPaymentForm.evidence)
+                                        ? 'Upload supporting documentation before confirming.'
+                                        : ''">
                             <i class="fas fa-check-circle"></i>
                             {{ isSubmittingProxyPayment ? 'Confirming...' : 'Confirm Payment Received' }}
                         </button>
@@ -1446,6 +1500,7 @@ const proxyEvidenceInput = ref(null)
 
 const proxyPaymentForm = ref({
     percentage: 50,
+    amount: null,
     payment_method: '',
     cheque_number: '',
     bank_reference: '',
@@ -1558,6 +1613,36 @@ const onAmountInput = () => {
 
 const resolvedPaymentAmount = computed(() => Number(paymentRequestForm.value.amount) || 0)
 const capExceeded = computed(() => resolvedPaymentAmount.value > remainingAmount.value + 0.001)
+
+// Same two-way binding for the proxy confirmation modal. Percentage alone
+// cannot land on an exact receipt — on a KES 150,558 job each 0.01% step is
+// worth about KES 15 — so the amount is the figure submitted and the
+// percentage trails it as a reference reading.
+const onProxyPercentageInput = () => {
+    const pct = Number(proxyPaymentForm.value.percentage) || 0
+    const total = contractValue.value
+    proxyPaymentForm.value.amount = total > 0 ? Math.round(((pct / 100) * total) * 100) / 100 : null
+}
+const onProxyAmountInput = () => {
+    const amt = Number(proxyPaymentForm.value.amount) || 0
+    const total = contractValue.value
+    proxyPaymentForm.value.percentage = total > 0 ? Math.round(((amt / total) * 100) * 100) / 100 : 0
+}
+
+const proxyResolvedAmount = computed(() => Number(proxyPaymentForm.value.amount) || 0)
+
+// confirmPaymentOnBehalf reuses an existing pending contract request rather
+// than stacking a second one, so that row's amount is headroom rather than
+// spend. Mirrors the cap there — without it the warning fires on figures the
+// server would happily accept. Ticket rows are attendance fees billed outside
+// the contract and are never reused.
+const proxyReusablePending = computed(() =>
+    priorPaymentRequests.value.find((pr) => pr.status === 'pending' && !pr.ticket_id) || null
+)
+const proxyRemainingAmount = computed(() =>
+    Math.max(0, remainingAmount.value + (Number(proxyReusablePending.value?.amount) || 0))
+)
+const proxyCapExceeded = computed(() => proxyResolvedAmount.value > proxyRemainingAmount.value + 0.001)
 
 /**
  * Lock the down-payment row to the value specified on the quotation
@@ -1762,20 +1847,23 @@ const closePaymentModal = () => { showPaymentModal.value = false; selectedRFQ.va
 const openProxyPaymentModal = (rfq) => {
     selectedRFQ.value = rfq
 
-    // Match the percentage to the deposit amount admin set on the quotation
-    // (just like initiatePaymentRequest does for client-initiated RFQs).
-    // If no down payment was specified, fall back to 50%.
+    // Seed with the deposit amount admin set on the quotation (just like
+    // initiatePaymentRequest does for client-initiated RFQs). If no down
+    // payment was specified, fall back to 50% of the contract.
+    //
+    // The base is the contract — quote plus approved variations — so a job
+    // carrying a variation seeds against the figure the client actually owes.
     const downPayment = Number(rfq.quote_down_payment) || 0
-    const total = Number(rfq.quote_amount) || 0
+    const total = contractValueFor(rfq)
     const noPrior = !(rfq.payment_requests || []).some((pr) => !['cancelled', 'failed'].includes(pr.status))
 
-    let initialPercentage = 50
-    if (noPrior && downPayment > 0 && total > 0) {
-        initialPercentage = Math.round(((downPayment / total) * 100) * 100) / 100
-    }
+    const seedAmount = (noPrior && downPayment > 0 && total > 0)
+        ? Math.min(downPayment, total)
+        : Math.round((total * 0.5) * 100) / 100
 
     proxyPaymentForm.value = {
-        percentage: initialPercentage,
+        percentage: total > 0 ? Math.round(((seedAmount / total) * 100) * 100) / 100 : 0,
+        amount: total > 0 ? seedAmount : null,
         payment_method: '',
         cheque_number: '',
         bank_reference: '',
@@ -1796,6 +1884,10 @@ const submitProxyPayment = () => {
     if (!selectedRFQ.value) return
     isSubmittingProxyPayment.value = true
     const fd = new FormData()
+    // Send both: the backend treats `amount` as the figure of record and
+    // re-derives the percentage from it, so the exact receipt is what gets
+    // stored rather than a rounded percentage of the contract.
+    fd.append('amount', proxyPaymentForm.value.amount)
     fd.append('percentage', proxyPaymentForm.value.percentage)
     fd.append('payment_method', proxyPaymentForm.value.payment_method)
     if (proxyPaymentForm.value.cheque_number) fd.append('cheque_number', proxyPaymentForm.value.cheque_number)
