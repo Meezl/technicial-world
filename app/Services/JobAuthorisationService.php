@@ -70,6 +70,15 @@ class JobAuthorisationService
      */
     public function commencementBlocker(ServiceRequest $serviceRequest): ?string
     {
+        // Jobs that were already staffed when this gate shipped are exempt —
+        // see the exempt_existing_jobs_from_commencement_gate migration.
+        // Applying it retrospectively would strand technicians on live sites
+        // over deposits that were taken in cash long before the system
+        // recorded them.
+        if ($serviceRequest->commencement_gated === false) {
+            return null;
+        }
+
         $assignment = $this->assignmentBlocker($serviceRequest);
         if ($assignment !== null) {
             return $assignment;
@@ -180,6 +189,29 @@ class JobAuthorisationService
         ], $user->id);
 
         return $authorisation->fresh();
+    }
+
+    /**
+     * The authorisation a job would be starting on, or null if the client's
+     * own money covers it.
+     *
+     * Answers "is this job about to run on ours?" at the moment work starts —
+     * which is the only moment it can be recorded, since the deposit may well
+     * land afterwards and erase the evidence that it had not.
+     */
+    public function commencementAuthorisation(ServiceRequest $serviceRequest): ?JobAuthorisation
+    {
+        // An exempt job is not running on an authorisation; it predates them.
+        if ($serviceRequest->commencement_gated === false) {
+            return null;
+        }
+
+        if ($this->depositSettled($serviceRequest)) {
+            return null;
+        }
+
+        return $this->liveAuthorisation($serviceRequest, JobAuthorisation::TYPE_PRE_APPROVAL)
+            ?? $this->liveAuthorisation($serviceRequest, JobAuthorisation::TYPE_PRE_DEPOSIT);
     }
 
     public function liveAuthorisation(ServiceRequest $serviceRequest, string $type): ?JobAuthorisation

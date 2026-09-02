@@ -44,7 +44,7 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             'description' => 'Test category',
         ]);
 
-        return ServiceRequest::create(array_merge([
+        $job = ServiceRequest::create(array_merge([
             'request_id' => 'REQ-' . strtoupper(uniqid()),
             'user_id' => $client->id,
             'service_category_id' => $category->id,
@@ -53,7 +53,25 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             'urgency' => 'medium',
             'status' => 'in_progress',
             'progress_percentage' => 20,
+            // These are jobs that have legitimately reached the field, so
+            // they carry the approval and the deposit that got them there.
+            // Without it the commencement gate refuses to let a technician
+            // start, which has nothing to do with what these tests are about.
+            'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
+            'quote_amount' => 200000,
         ], $attributes));
+
+        \App\Models\PaymentRequest::create([
+            'payment_request_id' => \App\Models\PaymentRequest::generatePaymentRequestId(),
+            'service_request_id' => $job->id,
+            'user_id' => $client->id,
+            'requested_by' => $client->id,
+            'status' => \App\Models\PaymentRequest::STATUS_PAID,
+            'percentage' => 30,
+            'amount' => 60000,
+        ]);
+
+        return $job;
     }
 
     public function test_sub_task_technician_sees_the_project_in_their_jobs_list(): void
