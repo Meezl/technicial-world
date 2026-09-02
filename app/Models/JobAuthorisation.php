@@ -21,6 +21,8 @@ class JobAuthorisation extends Model
         'authorised_by',
         'authorised_at',
         'expires_at',
+        'expiry_warning_sent_at',
+        'lapse_notified_at',
         'exposure_cap',
         'revoked_by',
         'revoked_at',
@@ -30,6 +32,8 @@ class JobAuthorisation extends Model
     protected $casts = [
         'authorised_at' => 'datetime',
         'expires_at' => 'datetime',
+        'expiry_warning_sent_at' => 'datetime',
+        'lapse_notified_at' => 'datetime',
         'revoked_at' => 'datetime',
         'exposure_cap' => 'decimal:2',
     ];
