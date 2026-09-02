@@ -164,6 +164,40 @@
                             </div>
                         </div>
 
+                        <!-- What is currently carrying this job, and what is
+                             holding it up. Shown together on purpose: an
+                             authorisation is only reassuring next to its
+                             expiry, and a refusal is only actionable next to
+                             the reason for it. -->
+                        <div v-if="liveAuthorisations.length" class="ja-banner ja-banner-live">
+                            <i class="fas fa-unlock-alt"></i>
+                            <div class="ja-banner-body">
+                                <strong>Running under advance authorisation</strong>
+                                <p v-for="authorisation in liveAuthorisations" :key="authorisation.id">
+                                    {{ authorisationLabel(authorisation.type) }} — authorised by
+                                    {{ authorisation.authoriser?.name || 'an admin' }},
+                                    lapses {{ formatDateTime(authorisation.expires_at) }}.
+                                    <span class="ja-reason">{{ authorisation.reason }}</span>
+                                </p>
+                            </div>
+                        </div>
+
+                        <div v-if="assignmentBlocker" class="ja-banner ja-banner-blocked">
+                            <i class="fas fa-lock"></i>
+                            <div class="ja-banner-body">
+                                <strong>Assignment is on hold</strong>
+                                <p>{{ assignmentBlocker }}</p>
+                            </div>
+                        </div>
+
+                        <div v-else-if="commencementBlocker" class="ja-banner ja-banner-warn">
+                            <i class="fas fa-hourglass-half"></i>
+                            <div class="ja-banner-body">
+                                <strong>Staffing allowed, work not yet</strong>
+                                <p>{{ commencementBlocker }}</p>
+                            </div>
+                        </div>
+
                         <div v-if="primaryTechnician" class="assignment-profile-card">
                             <div class="assignment-profile-top">
                                 <div class="assignment-avatar">{{ getInitials(primaryTechnician.user.name) }}</div>
@@ -2046,6 +2080,14 @@ const props = defineProps({
     technicianVisibleKinds: {
         type: Array,
         default: () => []
+    },
+    gating: {
+        type: Object,
+        default: () => ({ assignment_blocker: null, commencement_blocker: null, live_authorisations: [] })
+    },
+    approvalEvidence: {
+        type: Object,
+        default: null
     }
 })
 
@@ -2395,19 +2437,38 @@ const assignmentForm = reactive({
 const progressValidationForms = reactive({})
 
 // Computed
+// Statuses where staffing the job is a sensible thing to be doing at all.
+// This is about the stage of the work, not about permission — whether the
+// client's approval or money is in place is the server's answer, below.
 const assignableStatuses = ['pending', 'ready_for_assignment', 'assigned', 'in_progress', 'suspended', 'delayed', 'reassigned']
 
-const canAssignTechnician = computed(() => {
-    return assignableStatuses.includes(props.job.status)
-})
+// The pre-money stages. Reachable only while something authorises them, which
+// is why the button appears here rather than being hidden outright: the office
+// needs to see that the option exists and what is currently carrying it.
+const preFundingStatuses = ['awaiting_quote_approval', 'awaiting_payment', 'payment_pending_approval']
 
-const canReassignTechnician = computed(() => {
-    return assignableStatuses.includes(props.job.status) && !['completed', 'cancelled'].includes(props.job.status)
-})
+// The gate itself. Answered by JobAuthorisationService on the server so the
+// button and the endpoint cannot disagree — the page previously guessed from
+// status alone, which is how it came to hide an action the backend allowed.
+const assignmentBlocker = computed(() => props.gating?.assignment_blocker ?? null)
+const commencementBlocker = computed(() => props.gating?.commencement_blocker ?? null)
+const liveAuthorisations = computed(() => props.gating?.live_authorisations ?? [])
+
+const atAssignableStage = computed(() =>
+    assignableStatuses.includes(props.job.status) || preFundingStatuses.includes(props.job.status)
+)
+
+const canAssignTechnician = computed(() => atAssignableStage.value && !assignmentBlocker.value)
+
+const canReassignTechnician = computed(() =>
+    canAssignTechnician.value && !['completed', 'cancelled'].includes(props.job.status)
+)
 
 const canAddSubTasks = computed(() => {
     return assignableStatuses.includes(props.job.status)
 })
+
+const authorisationLabel = (type) => props.gating?.authorisation_types?.[type] || type
 
 const completedSubTasks = computed(() => {
     return props.job.sub_tasks?.filter(st => st.status === 'completed').length || 0
@@ -5417,4 +5478,43 @@ defineOptions({
 }
 .backfill-banner strong { display: block; color: #92400e; }
 .backfill-banner .btn { white-space: nowrap; flex-shrink: 0; }
+
+/* Advance-authorisation state on the assignment card. */
+.ja-banner {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    padding: 0.85rem 1rem;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    margin-bottom: 1rem;
+    font-size: 0.88rem;
+    line-height: 1.45;
+}
+.ja-banner i { margin-top: 2px; flex-shrink: 0; }
+.ja-banner-body { display: flex; flex-direction: column; gap: 2px; }
+.ja-banner-body strong { font-weight: 700; }
+.ja-banner-body p { margin: 0; }
+.ja-reason { display: block; opacity: 0.85; font-style: italic; }
+
+.ja-banner-live {
+    background: #ECFDF5;
+    border-color: #A7F3D0;
+    color: #065F46;
+}
+.ja-banner-live i { color: #059669; }
+
+.ja-banner-blocked {
+    background: #FEF2F2;
+    border-color: #FECACA;
+    color: #991B1B;
+}
+.ja-banner-blocked i { color: #DC2626; }
+
+.ja-banner-warn {
+    background: #FFFBEB;
+    border-color: #FDE68A;
+    color: #92400E;
+}
+.ja-banner-warn i { color: #D97706; }
 </style>

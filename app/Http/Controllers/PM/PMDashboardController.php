@@ -13,6 +13,7 @@ use App\Models\JobAssignment;
 use App\Models\CompensationAmendment;
 use App\Models\ProgressReport;
 use App\Services\QuotationService;
+use App\Services\JobAuthorisationService;
 use App\Services\JobService;
 use App\Services\ProgressService;
 use App\Services\TechnicianPaymentService;
@@ -29,6 +30,7 @@ class PMDashboardController extends Controller
         private ProgressService $progressService,
         private TechnicianPaymentService $paymentService,
         private NotificationService $notificationService,
+        private JobAuthorisationService $authorisations,
     ) {}
 
     /**
@@ -288,6 +290,13 @@ class PMDashboardController extends Controller
             'expected_end' => 'required|date|after:expected_start',
         ]);
 
+        // This path had no approval check of any kind, so a PM could staff a
+        // job whose quotation the client had never seen — and the admin gate
+        // it bypassed was the only thing anybody was relying on.
+        if ($blocker = $this->authorisations->assignmentBlocker($serviceRequest)) {
+            return redirect()->back()->with('error', $blocker);
+        }
+
         $technician = Technician::findOrFail($request->technician_id);
 
         // Create job assignment record
@@ -349,6 +358,12 @@ class PMDashboardController extends Controller
             'technician_id' => 'required|exists:technicians,id',
             'reason' => 'required|string|min:10',
         ]);
+
+        // Reassignment is an assignment. Gating only the first one would leave
+        // the same hole one step further along.
+        if ($blocker = $this->authorisations->assignmentBlocker($serviceRequest)) {
+            return redirect()->back()->with('error', $blocker);
+        }
 
         $this->jobService->reassign($serviceRequest, $request->technician_id, $request->reason);
         $this->notificationService->notifyJobAssignment($serviceRequest->fresh());

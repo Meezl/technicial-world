@@ -213,6 +213,11 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::post('/jobs/{serviceRequest}/assign', [AdminDashboardController::class, 'assignTechnician'])->name('admin.jobs.assign');
     Route::post('/jobs/{serviceRequest}/assign-lead', [AdminDashboardController::class, 'assignLeadTechnician'])->name('admin.jobs.assign-lead');
     Route::post('/jobs/{serviceRequest}/assignment-fee', [AdminDashboardController::class, 'updateAssignmentCompensation'])->name('admin.jobs.assignment.fee');
+
+    // Advance authorisation — running a job ahead of the client's approval or
+    // deposit, on a named admin's authority and with an expiry.
+    Route::post('/jobs/{serviceRequest}/authorisations', [AdminDashboardController::class, 'storeJobAuthorisation'])->name('admin.jobs.authorisations.store');
+    Route::post('/job-authorisations/{jobAuthorisation}/revoke', [AdminDashboardController::class, 'revokeJobAuthorisation'])->name('admin.jobs.authorisations.revoke');
     Route::post('/progress-reports/{progressReport}/validate', [AdminDashboardController::class, 'validateProgress'])->name('admin.progress.validate');
     // Release a settled batch to the client — one collective report, one email.
     Route::post('/jobs/{serviceRequest}/release-reports', [AdminDashboardController::class, 'releaseReportsToClient'])->name('admin.jobs.release-reports');
