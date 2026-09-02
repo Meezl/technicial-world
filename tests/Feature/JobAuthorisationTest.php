@@ -255,7 +255,7 @@ class JobAuthorisationTest extends TestCase
         $this->authoriseFor($sr, $admin, JobAuthorisation::TYPE_PRE_APPROVAL, '-1 hour');
     }
 
-    public function test_the_two_types_are_independent(): void
+    public function test_pre_deposit_covers_an_approved_job_whose_money_has_not_landed(): void
     {
         [$sr, , $admin] = $this->makeJob(['rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED]);
 
@@ -265,6 +265,64 @@ class JobAuthorisationTest extends TestCase
 
         $this->authoriseFor($sr, $admin, JobAuthorisation::TYPE_PRE_DEPOSIT);
         $this->assertTrue($this->service()->canCommence($sr));
+    }
+
+    /**
+     * A pre-approval carries the job outright. Holding the crew back over a
+     * deposit the client has not been asked for, on a job that client has not
+     * approved either, would refuse in the deposit's name something the
+     * authorisation has already conceded.
+     */
+    public function test_a_pre_approval_lets_work_start_without_a_deposit(): void
+    {
+        [$sr, , $admin] = $this->makeJob();
+
+        $this->assertFalse($this->service()->canAssign($sr));
+        $this->assertFalse($this->service()->canCommence($sr));
+
+        $this->authoriseFor($sr, $admin, JobAuthorisation::TYPE_PRE_APPROVAL);
+
+        $this->assertTrue($this->service()->canAssign($sr));
+        $this->assertTrue($this->service()->canCommence($sr));
+        $this->assertNull($this->service()->commencementBlocker($sr));
+    }
+
+    /** Withdrawing a pre-approval closes both halves again, not just staffing. */
+    public function test_withdrawing_a_pre_approval_closes_commencement_too(): void
+    {
+        [$sr, , $admin] = $this->makeJob();
+
+        $authorisation = $this->authoriseFor($sr, $admin, JobAuthorisation::TYPE_PRE_APPROVAL);
+        $this->service()->revoke($authorisation, $admin, 'Client disputed the scope after all.');
+
+        $this->assertFalse($this->service()->canAssign($sr));
+        $this->assertFalse($this->service()->canCommence($sr));
+    }
+
+    /**
+     * The normal route is untouched: a job approved and paid the ordinary way
+     * never consults an authorisation, and none exists for it.
+     */
+    public function test_the_ordinary_route_needs_no_authorisation_at_all(): void
+    {
+        [$sr, $client, $admin] = $this->makeJob(['rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED]);
+
+        PaymentRequest::create([
+            'payment_request_id' => PaymentRequest::generatePaymentRequestId(),
+            'service_request_id' => $sr->id,
+            'user_id' => $client->id,
+            'requested_by' => $admin->id,
+            'status' => PaymentRequest::STATUS_PAID,
+            'percentage' => 30,
+            'amount' => 45167.40,
+        ]);
+
+        $sr->refresh();
+
+        $this->assertTrue($this->service()->canAssign($sr));
+        $this->assertTrue($this->service()->canCommence($sr));
+        $this->assertCount(0, $this->service()->liveAuthorisations($sr));
+        $this->assertSame(0, JobAuthorisation::where('service_request_id', $sr->id)->count());
     }
 
     public function test_a_settled_deposit_removes_the_need_for_an_authorisation(): void
@@ -354,6 +412,32 @@ class JobAuthorisationTest extends TestCase
         ])->assertSessionHasErrors('expires_at');
 
         $this->assertSame(0, JobAuthorisation::where('service_request_id', $sr->id)->count());
+    }
+
+    public function test_the_reason_field_is_mandatory_on_the_endpoint(): void
+    {
+        [$sr, , $admin] = $this->makeJob();
+
+        $this->actingAs($admin)->post(route('admin.jobs.authorisations.store', $sr), [
+            'type' => JobAuthorisation::TYPE_PRE_APPROVAL,
+            'expires_at' => now()->addDays(3)->toDateTimeString(),
+        ])->assertSessionHasErrors('reason');
+
+        $this->assertSame(0, JobAuthorisation::where('service_request_id', $sr->id)->count());
+        $this->assertFalse($this->service()->canAssign($sr->fresh()));
+    }
+
+    public function test_withdrawing_needs_a_reason_of_its_own(): void
+    {
+        [$sr, , $admin] = $this->makeJob();
+        $authorisation = $this->authoriseFor($sr, $admin, JobAuthorisation::TYPE_PRE_APPROVAL);
+
+        $this->actingAs($admin)
+            ->post(route('admin.jobs.authorisations.revoke', $authorisation), ['reason' => 'no'])
+            ->assertSessionHasErrors('reason');
+
+        $this->assertNull($authorisation->fresh()->revoked_at);
+        $this->assertTrue($this->service()->canAssign($sr->fresh()));
     }
 
     public function test_recording_an_authorisation_is_itself_audited(): void

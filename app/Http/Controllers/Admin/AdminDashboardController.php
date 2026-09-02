@@ -368,6 +368,7 @@ class AdminDashboardController extends Controller
                 'commencement_blocker' => $authorisations->commencementBlocker($serviceRequest),
                 'live_authorisations' => $authorisations->liveAuthorisations($serviceRequest)->values(),
                 'authorisation_types' => \App\Models\JobAuthorisation::TYPES,
+                'authorisation_descriptions' => \App\Models\JobAuthorisation::TYPE_DESCRIPTIONS,
             ],
             'approvalEvidence' => $serviceRequest->approvalEvidence(),
         ]);

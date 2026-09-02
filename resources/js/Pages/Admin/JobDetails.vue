@@ -173,12 +173,20 @@
                             <i class="fas fa-unlock-alt"></i>
                             <div class="ja-banner-body">
                                 <strong>Running under advance authorisation</strong>
-                                <p v-for="authorisation in liveAuthorisations" :key="authorisation.id">
-                                    {{ authorisationLabel(authorisation.type) }} — authorised by
-                                    {{ authorisation.authoriser?.name || 'an admin' }},
-                                    lapses {{ formatDateTime(authorisation.expires_at) }}.
-                                    <span class="ja-reason">{{ authorisation.reason }}</span>
-                                </p>
+                                <div v-for="authorisation in liveAuthorisations" :key="authorisation.id" class="ja-live-row">
+                                    <p>
+                                        {{ authorisationLabel(authorisation.type) }} — authorised by
+                                        {{ authorisation.authoriser?.name || 'an admin' }},
+                                        lapses {{ formatDateTime(authorisation.expires_at) }}.
+                                        <template v-if="authorisation.exposure_cap">
+                                            Capped at KSH {{ formatCurrency(authorisation.exposure_cap) }}.
+                                        </template>
+                                        <span class="ja-reason">{{ authorisation.reason }}</span>
+                                    </p>
+                                    <button type="button" class="ja-inline-btn ja-inline-btn-quiet" @click="openRevokeModal(authorisation)">
+                                        Withdraw
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
@@ -187,6 +195,9 @@
                             <div class="ja-banner-body">
                                 <strong>Assignment is on hold</strong>
                                 <p>{{ assignmentBlocker }}</p>
+                                <button type="button" class="ja-inline-btn" @click="openAuthorisationModal">
+                                    <i class="fas fa-key"></i> Authorise in advance
+                                </button>
                             </div>
                         </div>
 
@@ -195,6 +206,9 @@
                             <div class="ja-banner-body">
                                 <strong>Staffing allowed, work not yet</strong>
                                 <p>{{ commencementBlocker }}</p>
+                                <button type="button" class="ja-inline-btn" @click="openAuthorisationModal">
+                                    <i class="fas fa-key"></i> Authorise start without deposit
+                                </button>
                             </div>
                         </div>
 
@@ -1558,6 +1572,106 @@
         </div>
 
         <!-- Budget Modal -->
+        <!-- Advance authorisation. The reason is mandatory and the expiry is
+             mandatory, because the failure mode here is not a bad decision but
+             a decision nobody remembers making. -->
+        <div v-if="showAuthorisationModal" class="modal-overlay">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h3>Authorise this job in advance</h3>
+                    <button @click="closeAuthorisationModal" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="ja-modal-notice">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span>
+                            This records a decision to carry {{ job.request_id }} ahead of the client.
+                            It is logged against your name and lapses on the date you set.
+                        </span>
+                    </div>
+
+                    <form @submit.prevent="submitAuthorisation">
+                        <div class="form-group">
+                            <label>What is being authorised *</label>
+                            <select v-model="authorisationForm.type" class="form-control" required>
+                                <option v-for="(label, value) in gating.authorisation_types" :key="value" :value="value">
+                                    {{ label }}
+                                </option>
+                            </select>
+                            <small class="ja-help">{{ selectedAuthorisationDescription }}</small>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Reason / details *</label>
+                            <textarea
+                                v-model="authorisationForm.reason"
+                                rows="3"
+                                class="form-control"
+                                required
+                                placeholder="e.g. Client PO confirmed by email; hard copy follows by courier Monday."
+                            ></textarea>
+                            <small class="ja-help">
+                                Written for somebody reading this in six weeks with no memory of the conversation.
+                                Minimum 15 characters.
+                            </small>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Lapses on *</label>
+                                <input type="datetime-local" v-model="authorisationForm.expires_at" class="form-control" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Exposure cap (KSH)</label>
+                                <input type="number" v-model="authorisationForm.exposure_cap" step="0.01" min="0" class="form-control" placeholder="Optional">
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button @click="closeAuthorisationModal" class="btn btn-secondary">Cancel</button>
+                    <button
+                        @click="submitAuthorisation"
+                        class="btn btn-primary"
+                        :disabled="!authorisationIsComplete || savingAuthorisation"
+                        :title="authorisationIsComplete ? '' : 'A reason of at least 15 characters and an expiry date are required.'"
+                    >
+                        {{ savingAuthorisation ? 'Recording…' : 'Record authorisation' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Withdrawing needs its own reason: the row stays, and why it stopped
+             applying is as much a part of the record as why it was granted. -->
+        <div v-if="revokingAuthorisation" class="modal-overlay">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h3>Withdraw authorisation</h3>
+                    <button @click="revokingAuthorisation = null" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="ja-help" style="margin-bottom:0.75rem;">
+                        {{ authorisationLabel(revokingAuthorisation.type) }}, authorised by
+                        {{ revokingAuthorisation.authoriser?.name || 'an admin' }}.
+                        The job is gated again from the moment you withdraw it.
+                    </p>
+                    <div class="form-group">
+                        <label>Reason for withdrawing *</label>
+                        <textarea v-model="revokeReason" rows="3" class="form-control" required
+                            placeholder="e.g. Client went quiet after two follow-ups; withdrawing cover."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button @click="revokingAuthorisation = null" class="btn btn-secondary">Cancel</button>
+                    <button @click="submitRevocation" class="btn btn-danger"
+                        :disabled="revokeReason.trim().length < 10 || savingAuthorisation">
+                        {{ savingAuthorisation ? 'Withdrawing…' : 'Withdraw' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div v-if="showBudgetModal" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
@@ -2469,6 +2583,87 @@ const canAddSubTasks = computed(() => {
 })
 
 const authorisationLabel = (type) => props.gating?.authorisation_types?.[type] || type
+
+// ---- Advance authorisation ----
+
+const showAuthorisationModal = ref(false)
+const revokingAuthorisation = ref(null)
+const revokeReason = ref('')
+const savingAuthorisation = ref(false)
+
+const authorisationForm = ref({
+    type: 'pre_approval',
+    reason: '',
+    expires_at: '',
+    exposure_cap: null,
+})
+
+const selectedAuthorisationDescription = computed(
+    () => props.gating?.authorisation_descriptions?.[authorisationForm.value.type] || ''
+)
+
+// Mirrors the server rules rather than approximating them, so the button
+// disabling and the validation failure never disagree.
+const authorisationIsComplete = computed(() =>
+    authorisationForm.value.reason.trim().length >= 15 && !!authorisationForm.value.expires_at
+)
+
+const openAuthorisationModal = () => {
+    // Default to whichever gate is actually holding this job up, so the
+    // common case needs no thought — and a week out, which is long enough to
+    // be useful and short enough that nobody forgets it is running.
+    const defaultExpiry = new Date()
+    defaultExpiry.setDate(defaultExpiry.getDate() + 7)
+
+    authorisationForm.value = {
+        type: assignmentBlocker.value ? 'pre_approval' : 'pre_deposit',
+        reason: '',
+        // datetime-local wants local time with no zone suffix.
+        expires_at: new Date(defaultExpiry.getTime() - defaultExpiry.getTimezoneOffset() * 60000)
+            .toISOString()
+            .slice(0, 16),
+        exposure_cap: null,
+    }
+    showAuthorisationModal.value = true
+}
+
+const closeAuthorisationModal = () => {
+    showAuthorisationModal.value = false
+}
+
+const submitAuthorisation = () => {
+    if (!authorisationIsComplete.value || savingAuthorisation.value) return
+    savingAuthorisation.value = true
+
+    router.post(`/admin/jobs/${props.job.id}/authorisations`, {
+        type: authorisationForm.value.type,
+        reason: authorisationForm.value.reason,
+        expires_at: authorisationForm.value.expires_at,
+        exposure_cap: authorisationForm.value.exposure_cap || null,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => { showAuthorisationModal.value = false },
+        onFinish: () => { savingAuthorisation.value = false },
+    })
+}
+
+const openRevokeModal = (authorisation) => {
+    revokingAuthorisation.value = authorisation
+    revokeReason.value = ''
+}
+
+const submitRevocation = () => {
+    if (revokeReason.value.trim().length < 10 || savingAuthorisation.value) return
+    savingAuthorisation.value = true
+
+    router.post(`/admin/job-authorisations/${revokingAuthorisation.value.id}/revoke`, {
+        reason: revokeReason.value,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => { revokingAuthorisation.value = null },
+        onFinish: () => { savingAuthorisation.value = false },
+    })
+}
 
 const completedSubTasks = computed(() => {
     return props.job.sub_tasks?.filter(st => st.status === 'completed').length || 0
@@ -5517,4 +5712,58 @@ defineOptions({
     color: #92400E;
 }
 .ja-banner-warn i { color: #D97706; }
+
+.ja-live-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    justify-content: space-between;
+}
+.ja-live-row + .ja-live-row { margin-top: 0.5rem; }
+
+.ja-inline-btn {
+    align-self: flex-start;
+    margin-top: 0.5rem;
+    background: #ffffff;
+    border: 1px solid currentColor;
+    border-radius: 8px;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    font-family: inherit;
+    color: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.ja-inline-btn:hover { background: rgba(255, 255, 255, 0.65); }
+.ja-inline-btn-quiet {
+    margin-top: 0;
+    border-color: transparent;
+    background: transparent;
+    text-decoration: underline;
+    padding: 0.2rem 0.3rem;
+}
+
+.ja-modal-notice {
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-start;
+    background: #FFFBEB;
+    border: 1px solid #FDE68A;
+    color: #92400E;
+    border-radius: 10px;
+    padding: 0.75rem 0.9rem;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+    line-height: 1.45;
+}
+.ja-modal-notice i { margin-top: 2px; color: #D97706; flex-shrink: 0; }
+
+.ja-help {
+    display: block;
+    margin-top: 4px;
+    font-size: 0.78rem;
+    color: #64748B;
+    line-height: 1.4;
+}
 </style>

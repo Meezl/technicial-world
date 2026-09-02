@@ -79,6 +79,16 @@ class JobAuthorisationService
             return null;
         }
 
+        // A pre-approval covers commencement as well as staffing. Authorising
+        // a job the client has not approved at all, and then holding the crew
+        // back for a deposit that same client has not been asked for yet, is a
+        // distinction without a difference in practice — the office has
+        // already decided to carry this job. Pre-deposit remains its own type
+        // for the commoner case: an approved job whose money has not landed.
+        if ($this->liveAuthorisation($serviceRequest, JobAuthorisation::TYPE_PRE_APPROVAL)) {
+            return null;
+        }
+
         if ($this->liveAuthorisation($serviceRequest, JobAuthorisation::TYPE_PRE_DEPOSIT)) {
             return null;
         }
