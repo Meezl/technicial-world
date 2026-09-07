@@ -54,6 +54,12 @@ Route::middleware('auth')->group(function () {
 
     Route::put('password', [PasswordController::class, 'update'])->name('password.update');
 
+    // Forced change for an account still on the password that was mailed to
+    // it. Named separately from password.update because RequirePasswordChange
+    // must let these two through while holding everything else.
+    Route::get('set-password', [PasswordController::class, 'showChangeForm'])->name('password.change');
+    Route::post('set-password', [PasswordController::class, 'changeForced'])->name('password.change.update');
+
     Route::post('logout', [AuthenticatedSessionController::class, 'destroy'])
         ->name('logout');
 });

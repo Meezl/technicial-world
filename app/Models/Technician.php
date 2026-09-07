@@ -67,6 +67,7 @@ class Technician extends Model
         'trades',
         'location',
         'kra_pin',
+        'national_id',
         'availability',
         'rating',
         'total_jobs',

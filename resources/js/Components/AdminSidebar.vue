@@ -21,6 +21,7 @@ const navItems = [
     { key: 'dashboard', href: '/admin/dashboard', icon: 'fas fa-tachometer-alt', label: 'Dashboard', caption: 'Overall activity' },
     { key: 'projects', href: '/admin/projects/dashboard', icon: 'fas fa-project-diagram', label: 'Projects', caption: 'Timelines and delivery' },
     { key: 'rfq', href: '/admin/rfq', icon: 'fas fa-file-alt', label: 'RFQ Management', caption: 'Quotes and approvals' },
+    { key: 'archive', href: '/admin/archive', icon: 'fas fa-box-archive', label: 'Archive', caption: 'Completed and cancelled' },
     { key: 'technicians', href: '/admin/technicians', icon: 'fas fa-hard-hat', label: 'Technicians', caption: 'Field teams and reports' },
     { key: 'users', href: '/admin/users', icon: 'fas fa-users', label: 'Users', caption: 'Accounts and roles' },
     { key: 'jobs', href: '/admin/jobs', icon: 'fas fa-tasks', label: 'Jobs', caption: 'Live execution status' },

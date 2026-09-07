@@ -269,6 +269,9 @@
                                             <span :class="['origin-badge', rfq.submission_mode === 'admin_proxy' ? 'proxy' : 'self']">
                                                 {{ getSubmissionModeLabel(rfq.submission_mode) }}
                                             </span>
+                                            <span v-if="rfq.quotation_draft" class="origin-badge draft-badge" title="A quotation is part-priced on this request">
+                                                <i class="fas fa-pen-ruler"></i> Draft
+                                            </span>
                                         </div>
                                     </td>
                                     <td>
@@ -319,8 +322,13 @@
                                             <button @click="viewRFQ(rfq)" class="btn btn-sm btn-info" title="View Details">
                                                 <i class="fas fa-eye"></i>
                                             </button>
-                                            <button v-if="rfq.rfq_status === 'pending'" @click="reviewRFQ(rfq)" class="btn btn-sm btn-primary" title="Create Quote">
-                                                <i class="fas fa-file-invoice-dollar"></i>
+                                            <button
+                                                v-if="rfq.rfq_status === 'pending'"
+                                                @click="reviewRFQ(rfq)"
+                                                :class="['btn', 'btn-sm', rfq.quotation_draft ? 'btn-warning' : 'btn-primary']"
+                                                :title="rfq.quotation_draft ? 'Continue editing the saved draft' : 'Create Quote'"
+                                            >
+                                                <i :class="rfq.quotation_draft ? 'fas fa-pen-to-square' : 'fas fa-file-invoice-dollar'"></i>
                                             </button>
                                             <button
                                                 v-if="rfq.rfq_status === 'approved' && !isRfqFullyPaid(rfq)"
@@ -419,13 +427,23 @@
                             <span :class="['origin-badge', rfq.submission_mode === 'admin_proxy' ? 'proxy' : 'self']">
                                 {{ getSubmissionModeLabel(rfq.submission_mode) }}
                             </span>
+                            <!-- So a half-priced quote is visible without
+                                 opening every request to find out. -->
+                            <span v-if="rfq.quotation_draft" class="origin-badge draft-badge" title="A quotation is part-priced on this request">
+                                <i class="fas fa-pen-ruler"></i> Draft in progress
+                            </span>
 
                             <div class="action-buttons mobile-actions">
                                 <button @click="viewRFQ(rfq)" class="btn btn-sm btn-info">
                                     <i class="fas fa-eye"></i> View
                                 </button>
-                                <button v-if="rfq.rfq_status === 'pending'" @click="reviewRFQ(rfq)" class="btn btn-sm btn-primary">
-                                    <i class="fas fa-file-invoice-dollar"></i> Quote
+                                <button
+                                    v-if="rfq.rfq_status === 'pending'"
+                                    @click="reviewRFQ(rfq)"
+                                    :class="['btn', 'btn-sm', rfq.quotation_draft ? 'btn-warning' : 'btn-primary']"
+                                >
+                                    <i :class="rfq.quotation_draft ? 'fas fa-pen-to-square' : 'fas fa-file-invoice-dollar'"></i>
+                                    {{ rfq.quotation_draft ? 'Continue editing' : 'Quote' }}
                                 </button>
                                 <button
                                     v-if="rfq.rfq_status === 'approved' && !isRfqFullyPaid(rfq)"
@@ -729,6 +747,21 @@
                 </div>
 
                 <div class="modal-body">
+                    <!-- Says whose figures these are and when they were left.
+                         A draft picked up silently is indistinguishable from a
+                         form that remembered something it should not have. -->
+                    <div v-if="restoredFromDraft" class="qd-banner">
+                        <i class="fas fa-clock-rotate-left"></i>
+                        <div>
+                            <strong>Picked up where this was left off</strong>
+                            <p>
+                                Draft saved {{ draftSavedLabel }}<template v-if="draftSavedBy"> by {{ draftSavedBy }}</template>.
+                                Any files attached before were not kept — re-attach them before sending.
+                            </p>
+                        </div>
+                        <button type="button" class="qd-link" @click="discardDraft">Start fresh</button>
+                    </div>
+
                     <div class="request-summary">
                         <div class="summary-card">
                             <h4><i class="fas fa-user"></i> {{ selectedRFQ?.user?.name }}</h4>
@@ -935,15 +968,38 @@
                     </div>
                 </div>
 
-                <div class="modal-footer">
-                    <button type="button" @click="rejectRFQ" class="btn btn-danger">
-                        <i class="fas fa-times"></i> Reject Request
-                    </button>
-                    <button @click="closeReviewModal" class="btn btn-secondary">Cancel</button>
-                    <button @click="submitQuote" class="btn btn-success" :disabled="!canSubmitQuote || isSubmittingQuote">
-                        <i class="fas fa-paper-plane"></i>
-                        {{ isSubmittingQuote ? 'Sending...' : (isRevision ? 'Send Revised Quotation' : 'Send Quotation') }}
-                    </button>
+                <div class="modal-footer qd-footer">
+                    <!-- Draft state lives next to Cancel on purpose: that is
+                         the button the office presses when it has to leave,
+                         and it needs to be obvious there that nothing is
+                         about to be lost. -->
+                    <div class="qd-status">
+                        <span v-if="draftSaving" class="qd-saving">
+                            <i class="fas fa-circle-notch fa-spin"></i> Saving draft…
+                        </span>
+                        <span v-else-if="draftSavedAt" class="qd-saved">
+                            <i class="fas fa-check-circle"></i>
+                            Draft saved {{ draftSavedLabel }}
+                            <button type="button" class="qd-link" @click="discardDraft">Discard</button>
+                        </span>
+                        <span v-else-if="draftError" class="qd-error">
+                            <i class="fas fa-exclamation-triangle"></i> {{ draftError }}
+                        </span>
+                    </div>
+
+                    <div class="qd-actions">
+                        <button type="button" @click="rejectRFQ" class="btn btn-danger">
+                            <i class="fas fa-times"></i> Reject Request
+                        </button>
+                        <button type="button" @click="saveDraftNow" class="btn btn-secondary" :disabled="draftSaving">
+                            <i class="fas fa-save"></i> Save draft
+                        </button>
+                        <button @click="closeReviewModal" class="btn btn-secondary">Close</button>
+                        <button @click="submitQuote" class="btn btn-success" :disabled="!canSubmitQuote || isSubmittingQuote">
+                            <i class="fas fa-paper-plane"></i>
+                            {{ isSubmittingQuote ? 'Sending...' : (isRevision ? 'Send Revised Quotation' : 'Send Quotation') }}
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1415,9 +1471,10 @@
 <script setup>
 import AdminSidebar from '../../Components/AdminSidebar.vue'
 import CurrencyInput from '../../Components/CurrencyInput.vue'
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { Link, router, usePage } from '@inertiajs/vue3'
 import axios from 'axios'
+import debounce from 'lodash/debounce'
 
 const inertiaPage = usePage()
 const flashSuccess = ref('')
@@ -1765,9 +1822,53 @@ const canSubmitPaymentRequest = computed(() =>
 // --- Modal actions ---
 const viewRFQ = (rfq) => { selectedRFQ.value = rfq; showViewModal.value = true }
 const closeViewModal = () => { showViewModal.value = false; selectedRFQ.value = null }
-const editRFQ = () => { showViewModal.value = false; showReviewModal.value = true; resetQuotationForm() }
-const reviewRFQ = (rfq) => { selectedRFQ.value = rfq; resetQuotationForm(); showReviewModal.value = true }
-const closeReviewModal = () => { showReviewModal.value = false; selectedRFQ.value = null; resetQuotationForm() }
+/**
+ * Open the quotation modal, resuming a parked draft if there is one.
+ *
+ * The form is always reset first: restoring over whatever the previous job
+ * left in component state is how a draft for one client ends up carrying a
+ * line item priced for another.
+ */
+const openQuotationFor = async (rfq) => {
+    selectedRFQ.value = rfq
+    draftLoading.value = true
+    resetQuotationForm()
+    clearDraftState()
+    await nextTick()
+    draftLoading.value = false
+
+    await applyDraft(rfq)
+    showReviewModal.value = true
+}
+
+const editRFQ = () => { showViewModal.value = false; openQuotationFor(selectedRFQ.value) }
+const reviewRFQ = (rfq) => { openQuotationFor(rfq) }
+
+/**
+ * Closing is no longer losing. Flush anything typed since the last autosave
+ * so "Close" and "Save draft then Close" are the same act — the office should
+ * not have to remember which button preserves their work.
+ */
+const closeReviewModal = async () => {
+    autosaveDraft.cancel()
+
+    if (selectedRFQ.value && showReviewModal.value && draftHasContent() && !draftLoading.value) {
+        await persistDraft({ silent: true })
+    }
+
+    const hadDraft = draftSavedAt.value !== null
+
+    showReviewModal.value = false
+    selectedRFQ.value = null
+    resetQuotationForm()
+    clearDraftState()
+
+    // Only when something was actually parked — closing an untouched modal
+    // should not cost a round trip.
+    if (hadDraft) {
+        refreshList()
+    }
+}
 const closeRejectModal = () => { showRejectModal.value = false; rejectionReason.value = '' }
 const rejectRFQ = () => { showRejectModal.value = true }
 
@@ -1921,15 +2022,180 @@ const closeApproveOnBehalfModal = () => {
     proxyApprovalNote.value = ''
 }
 
+// ---- Quotation drafts ----
+//
+// The modal used to hold everything in component state and persist only on
+// send, which is why closing it felt like losing an hour. A draft is parked
+// per service request, restored on reopen, and cleared once the quote goes.
+
+const draftSaving = ref(false)
+const draftSavedAt = ref(null)
+const draftSavedBy = ref(null)
+const draftError = ref(null)
+const restoredFromDraft = ref(false)
+
+// Suppresses autosave while the form is being populated. Without it, opening
+// the modal — or restoring a draft — immediately writes the form back as a
+// new draft, which would resurrect a discarded one on the next open.
+const draftLoading = ref(false)
+
+const draftSavedLabel = computed(() => {
+    if (!draftSavedAt.value) return ''
+    const saved = new Date(draftSavedAt.value)
+    if (Number.isNaN(saved.getTime())) return ''
+
+    const seconds = Math.round((Date.now() - saved.getTime()) / 1000)
+    if (seconds < 60) return 'just now'
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`
+
+    const sameDay = saved.toDateString() === new Date().toDateString()
+    return sameDay
+        ? `at ${saved.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`
+        : `on ${saved.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}`
+})
+
+/** The form's own shape, minus the files — a File cannot survive JSON. */
+const draftPayload = () => ({
+    materials: quotationForm.value.materials,
+    labor_cost: quotationForm.value.labor_cost,
+    transport_cost: quotationForm.value.transport_cost,
+    down_payment: quotationForm.value.down_payment,
+    duration_weeks: quotationForm.value.duration_weeks,
+    duration_extra_days: quotationForm.value.duration_extra_days,
+    notes: quotationForm.value.notes,
+    billing_milestones: quotationForm.value.billing_milestones,
+})
+
+/** Has the office actually typed anything worth keeping? */
+const draftHasContent = () => {
+    const f = quotationForm.value
+    return Boolean(
+        (f.materials || []).some(m => m.name || Number(m.unit_price) > 0) ||
+        Number(f.labor_cost) > 0 ||
+        Number(f.transport_cost) > 0 ||
+        Number(f.down_payment) > 0 ||
+        (f.notes || '').trim() ||
+        (f.billing_milestones || []).length,
+    )
+}
+
+const persistDraft = async ({ silent = false } = {}) => {
+    if (!selectedRFQ.value) return
+    if (!silent) draftSaving.value = true
+    draftError.value = null
+
+    try {
+        const { data } = await axios.post(`/admin/rfq/${selectedRFQ.value.id}/quotation-draft`, {
+            payload: draftPayload(),
+            is_revision: isRevision.value,
+        })
+        draftSavedAt.value = data.draft?.saved_at || new Date().toISOString()
+        draftSavedBy.value = data.draft?.saved_by || null
+    } catch (e) {
+        // Autosave failing quietly is the one thing that would make this worse
+        // than no drafts: the office would trust a save that never happened.
+        draftError.value = 'Draft not saved — check your connection.'
+    } finally {
+        draftSaving.value = false
+    }
+}
+
+/**
+ * Pull the list's own props back down so the row picks up its draft.
+ *
+ * Drafts save over axios rather than Inertia — a redirect on a debounce while
+ * somebody is typing would re-render the page and take the focus out of the
+ * field they are in. The cost is that `rfqs` goes stale, so the badge and the
+ * "Continue editing" button only appeared after a manual refresh. This asks
+ * for that one prop back, which is cheap and leaves the modal untouched.
+ *
+ * Deliberately not called from the autosave: a reload mid-keystroke is the
+ * exact disruption the axios call was avoiding.
+ */
+const refreshList = () => {
+    router.reload({ only: ['rfqs', 'stats'], preserveScroll: true, preserveState: true })
+}
+
+const saveDraftNow = async () => {
+    await persistDraft()
+    refreshList()
+}
+
+// Autosave trails typing rather than racing it. Long enough that a line item
+// is finished before it is stored, short enough that a closed tab costs
+// seconds rather than the session.
+const autosaveDraft = debounce(() => {
+    if (draftLoading.value || !showReviewModal.value || !draftHasContent()) return
+    persistDraft({ silent: true })
+}, 2500)
+
+watch(quotationForm, () => autosaveDraft(), { deep: true })
+
+const clearDraftState = () => {
+    autosaveDraft.cancel()
+    draftSaving.value = false
+    draftSavedAt.value = null
+    draftSavedBy.value = null
+    draftError.value = null
+    restoredFromDraft.value = false
+}
+
+const discardDraft = async () => {
+    if (!selectedRFQ.value) return
+    if (!confirm('Discard this draft and start the quotation fresh?')) return
+
+    autosaveDraft.cancel()
+    try {
+        await axios.delete(`/admin/rfq/${selectedRFQ.value.id}/quotation-draft`)
+    } catch (e) {
+        draftError.value = 'Could not discard the draft.'
+        return
+    }
+
+    draftLoading.value = true
+    resetQuotationForm()
+    clearDraftState()
+    await nextTick()
+    draftLoading.value = false
+
+    refreshList()
+}
+
+/**
+ * Populate the form from a parked draft, if there is one.
+ *
+ * Merged over the form's defaults rather than replacing it, so a draft saved
+ * before a field existed does not restore that field as undefined.
+ */
+const applyDraft = async (rfq) => {
+    const draft = rfq?.quotation_draft
+    if (!draft?.payload) return false
+
+    draftLoading.value = true
+    quotationForm.value = { ...quotationForm.value, ...draft.payload }
+    isRevision.value = Boolean(draft.is_revision)
+    draftSavedAt.value = draft.updated_at
+    draftSavedBy.value = draft.saved_by?.name || null
+    restoredFromDraft.value = true
+
+    await nextTick()
+    draftLoading.value = false
+    return true
+}
+
 const resetQuotationForm = () => {
     quotationForm.value = {
         materials: [{ name: '', quantity: 1, unit_price: 0 }],
         labor_cost: 0,
         transport_cost: 0,
         down_payment: null,
+        // These two were declared on the form but missing here, so a duration
+        // typed on one quotation survived into the next one opened.
+        duration_weeks: 0,
+        duration_extra_days: 0,
         notes: '',
         materials_file: null,
-    materials_files: [],
+        materials_files: [],
         billing_milestones: [],
     }
     isRevision.value = false
@@ -1941,9 +2207,15 @@ const resetQuotationForm = () => {
  * and re-send. Marks isRevision so the backend sends the revised-quote
  * email instead of the original.
  */
-const reviseExistingQuotation = (rfq) => {
+const reviseExistingQuotation = async (rfq) => {
     if (!rfq) return
     selectedRFQ.value = rfq
+
+    // Populating the form fires the deep watcher; hold autosave off until the
+    // values are in place, or opening a revision immediately saves the sent
+    // quote back as a draft.
+    draftLoading.value = true
+    clearDraftState()
 
     const existingMaterials = Array.isArray(rfq.quote_materials) && rfq.quote_materials.length
         ? rfq.quote_materials.map((m) => ({
@@ -1969,6 +2241,14 @@ const reviseExistingQuotation = (rfq) => {
     }
 
     isRevision.value = true
+
+    // A revision already half-priced is still a draft. Prefer it over the
+    // figures on the sent quote, or the office loses the revision each time
+    // they step away and lands back on the numbers they were changing.
+    await nextTick()
+    draftLoading.value = false
+    await applyDraft(rfq)
+
     showViewModal.value = false
     showReviewModal.value = true
 }
@@ -3126,4 +3406,66 @@ defineOptions({ layout: null })
 .urgency-high { background: #FEE2E2; color: #991B1B; }
 .paid-pill { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.2rem 0.5rem; border-radius: 999px; background: #DCFCE7; color: #166534; font-size: 0.7rem; font-weight: 700; }
 .paid-pill i { font-size: 0.65rem; }
+
+/* ---- Quotation drafts ---- */
+
+.draft-badge {
+    background: #FEF3C7;
+    color: #92400E;
+    border: 1px solid #FDE68A;
+    margin-left: 0.4rem;
+}
+
+.qd-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+.qd-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-left: auto;
+}
+.qd-status {
+    font-size: 0.82rem;
+    display: flex;
+    align-items: center;
+    min-height: 1.2rem;
+}
+.qd-saving { color: #64748B; }
+.qd-saved { color: #047857; display: inline-flex; align-items: center; gap: 0.35rem; }
+.qd-error { color: #B91C1C; display: inline-flex; align-items: center; gap: 0.35rem; }
+
+.qd-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+    opacity: 0.85;
+}
+.qd-link:hover { opacity: 1; }
+
+.qd-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1rem;
+    background: #FFFBEB;
+    border: 1px solid #FDE68A;
+    border-radius: 10px;
+    color: #92400E;
+    font-size: 0.86rem;
+    line-height: 1.45;
+}
+.qd-banner i.fa-clock-rotate-left { margin-top: 2px; color: #D97706; flex-shrink: 0; }
+.qd-banner strong { display: block; margin-bottom: 2px; }
+.qd-banner p { margin: 0; }
+.qd-banner .qd-link { margin-left: auto; white-space: nowrap; }
 </style>

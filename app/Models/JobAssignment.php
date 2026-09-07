@@ -11,6 +11,7 @@ class JobAssignment extends Model
         'service_request_id',
         'service_sub_task_id',
         'technician_id',
+        'role_on_job',
         'assigned_by',
         'agreed_compensation',
         'compensation_notes',
@@ -18,6 +19,7 @@ class JobAssignment extends Model
         'status',
         'expected_start',
         'expected_end',
+        'attendance_dates',
         'actual_start',
         'actual_end',
         'reassignment_reason',
@@ -27,6 +29,7 @@ class JobAssignment extends Model
     protected $casts = [
         'agreed_compensation' => 'decimal:2',
         'attachments' => 'array',
+        'attendance_dates' => 'array',
         'expected_start' => 'datetime',
         'expected_end' => 'datetime',
         'actual_start' => 'datetime',
@@ -42,6 +45,38 @@ class JobAssignment extends Model
     public function serviceRequest(): BelongsTo
     {
         return $this->belongsTo(ServiceRequest::class);
+    }
+
+    /**
+     * When the client should expect this person, in words.
+     *
+     * Discrete dates win over the range when they are set: a specialist who
+     * comes on the 4th and again on the 8th is not on site for the four days
+     * between, and a range would tell the client to expect them throughout.
+     */
+    public function attendanceLabel(): string
+    {
+        $dates = collect($this->attendance_dates ?? [])
+            ->filter()
+            ->map(fn ($date) => \Carbon\Carbon::parse($date))
+            ->sort()
+            ->map(fn ($date) => $date->format('d.m.Y'))
+            ->values();
+
+        if ($dates->isNotEmpty()) {
+            return $dates->implode(', ');
+        }
+
+        if (!$this->expected_start) {
+            return 'To be confirmed';
+        }
+
+        $start = $this->expected_start->format('d.m.Y');
+        if (!$this->expected_end || $this->expected_end->isSameDay($this->expected_start)) {
+            return $start;
+        }
+
+        return $start . ' - ' . $this->expected_end->format('d.m.Y');
     }
 
     public function subTask(): BelongsTo

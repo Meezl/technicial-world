@@ -455,6 +455,15 @@ class ServiceRequest extends Model
         );
     }
 
+    /**
+     * The half-priced quotation parked against this job, if any. One per
+     * request rather than per admin — see the quotation_drafts migration.
+     */
+    public function quotationDraft()
+    {
+        return $this->hasOne(QuotationDraft::class);
+    }
+
     public function quotations()
     {
         return $this->hasMany(Quotation::class)->orderBy('version', 'desc');
@@ -540,6 +549,95 @@ class ServiceRequest extends Model
         return $this->hasMany(JobAssignment::class);
     }
 
+    /** Assignments that still mean somebody is coming. */
+    public function liveAssignments()
+    {
+        return $this->hasMany(JobAssignment::class)
+            ->whereIn('status', self::LIVE_ASSIGNMENT_STATUSES)
+            ->orderBy('id');
+    }
+
+    /**
+     * Who the client should expect on site, and when.
+     *
+     * One reading for three audiences — the admin roster panel, the client's
+     * request-status page, and the attendance notice email. The office builds
+     * this table by hand today, and the three copies disagreeing is precisely
+     * the failure that produces a technician turned away at the gate.
+     *
+     * The lead is listed first regardless of when they were assigned: the
+     * client's first question is who is answerable for the job, and on the
+     * notice that is the top row.
+     *
+     * @return array<int, array{ref: int, name: string, national_id: string|null, role: string, attendance: string, is_lead: bool}>
+     */
+    public function attendanceRoster(): array
+    {
+        $assignments = $this->relationLoaded('liveAssignments')
+            ? $this->getRelation('liveAssignments')
+            : $this->liveAssignments()->with('technician.user')->get();
+
+        return $assignments
+            ->filter(fn ($assignment) => $assignment->technician && $assignment->technician->user)
+            ->sortByDesc(fn ($assignment) => $this->isLeadTechnician($assignment->technician_id) ? 1 : 0)
+            ->values()
+            ->map(function ($assignment, $index) {
+                $isLead = $this->isLeadTechnician($assignment->technician_id);
+
+                return [
+                    'ref' => $index + 1,
+                    'assignment_id' => $assignment->id,
+                    'name' => $assignment->technician->user->name,
+                    'national_id' => $assignment->technician->national_id,
+                    // Falls back to a plain description rather than blank: a
+                    // roster row with no role tells the client nothing about
+                    // why that person is at their gate.
+                    'role' => $assignment->role_on_job
+                        ?: ($isLead ? 'Lead Technician — answerable for the whole assignment' : 'Technician'),
+                    'attendance' => $assignment->attendanceLabel(),
+                    'is_lead' => $isLead,
+                ];
+            })
+            ->all();
+    }
+
+    /**
+     * The outer dates across the whole crew, for the notice's opening line
+     * ("will be visiting your property between X and Y").
+     *
+     * @return array{start: \Carbon\Carbon|null, end: \Carbon\Carbon|null}
+     */
+    public function attendanceWindow(): array
+    {
+        $dates = collect();
+
+        foreach ($this->liveAssignments()->get() as $assignment) {
+            foreach (($assignment->attendance_dates ?? []) as $date) {
+                if ($date) {
+                    $dates->push(\Carbon\Carbon::parse($date));
+                }
+            }
+            if ($assignment->expected_start) {
+                $dates->push($assignment->expected_start);
+            }
+            if ($assignment->expected_end) {
+                $dates->push($assignment->expected_end);
+            }
+        }
+
+        // Nobody has dates yet — fall back to the job's own schedule so the
+        // notice can still be sent rather than refusing over a blank column.
+        if ($dates->isEmpty()) {
+            if ($this->commencement_at) $dates->push($this->commencement_at);
+            if ($this->target_completion_at) $dates->push($this->target_completion_at);
+        }
+
+        return [
+            'start' => $dates->min(),
+            'end' => $dates->max(),
+        ];
+    }
+
     public function stateLogs()
     {
         return $this->hasMany(JobStateLog::class)->orderBy('created_at', 'desc');
@@ -604,6 +702,66 @@ class ServiceRequest extends Model
     public function scopeAssignedToPm($query, int $pmId)
     {
         return $query->where('assigned_pm_id', $pmId);
+    }
+
+    /**
+     * Requests that are finished, one way or another.
+     *
+     * `completed_pending_confirmation` is deliberately absent: the work is
+     * done but the client has not confirmed it, so it is still waiting on
+     * somebody and belongs in the working list.
+     *
+     * A rejected quotation is also absent. A declined quote is often re-quoted
+     * after a conversation about price, and filing it away would hide a live
+     * negotiation.
+     */
+    public const TERMINAL_STATUSES = [
+        self::STATUS_COMPLETED,
+        self::STATUS_CLOSED,
+        self::STATUS_ARCHIVED,
+        self::STATUS_CANCELLED,
+    ];
+
+    /** Finished work — the archive. */
+    public function scopeArchived($query)
+    {
+        return $query->whereIn('status', self::TERMINAL_STATUSES);
+    }
+
+    /** Anything still needing somebody to do something. */
+    public function scopeActive($query)
+    {
+        return $query->whereNotIn('status', self::TERMINAL_STATUSES);
+    }
+
+    /**
+     * How this request ended, for filing.
+     *
+     * Cancelled is kept separate from completed because they are different
+     * questions: "what did we deliver last year" and "what did we lose and
+     * why" are not answered by the same list.
+     */
+    public function archiveOutcome(): ?string
+    {
+        if (!in_array($this->status, self::TERMINAL_STATUSES, true)) {
+            return null;
+        }
+
+        return $this->status === self::STATUS_CANCELLED ? 'cancelled' : 'completed';
+    }
+
+    /**
+     * When this request left the working list.
+     *
+     * Falls back through the timestamps a finished job might have, ending at
+     * updated_at — a request with no completion date still has to file
+     * somewhere, and an unfiled row is one nobody can find.
+     */
+    public function archivedAt(): ?\Carbon\Carbon
+    {
+        return $this->completed_date
+            ?? $this->client_confirmation_date
+            ?? $this->updated_at;
     }
 
     /**
@@ -702,15 +860,6 @@ class ServiceRequest extends Model
     public function isSplitIntoSubTasks(): bool
     {
         return $this->subTasks()->exists();
-    }
-
-    public function scopeActive($query)
-    {
-        return $query->whereNotIn('status', [
-            self::STATUS_CLOSED,
-            self::STATUS_ARCHIVED,
-            self::STATUS_CANCELLED,
-        ]);
     }
 
     /**

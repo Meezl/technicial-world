@@ -207,6 +207,10 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::post('/technicians/{technician}/profile-changes', [AdminDashboardController::class, 'approveTechnicianProfileChanges'])->name('admin.technicians.profile-changes.act');
     Route::get('/technician-documents/{document}/download', [AdminDashboardController::class, 'showTechnicianDocument'])->name('admin.technicians.documents.show');
 
+    // Finished work, out of the working list but not out of reach.
+    Route::get('/archive', [\App\Http\Controllers\Admin\ArchiveController::class, 'index'])->name('admin.archive');
+    Route::post('/archive/{serviceRequest}/reopen', [\App\Http\Controllers\Admin\ArchiveController::class, 'reopen'])->name('admin.archive.reopen');
+
     // Job management
     Route::get('/jobs', [AdminDashboardController::class, 'jobs'])->name('admin.jobs');
     Route::get('/jobs/{serviceRequest}', [AdminDashboardController::class, 'showJob'])->name('admin.jobs.show');
@@ -216,6 +220,11 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
 
     // Advance authorisation — running a job ahead of the client's approval or
     // deposit, on a named admin's authority and with an expiry.
+    // Who the client should expect on site, and telling them.
+    Route::post('/job-assignments/{jobAssignment}/roster', [AdminDashboardController::class, 'updateRosterEntry'])->name('admin.jobs.roster.update');
+    Route::post('/technicians/{technician}/national-id', [AdminDashboardController::class, 'updateTechnicianNationalId'])->name('admin.technicians.national-id');
+    Route::post('/jobs/{serviceRequest}/attendance-notice', [AdminDashboardController::class, 'sendAttendanceNotice'])->name('admin.jobs.attendance-notice');
+
     Route::post('/jobs/{serviceRequest}/authorisations', [AdminDashboardController::class, 'storeJobAuthorisation'])->name('admin.jobs.authorisations.store');
     Route::post('/job-authorisations/{jobAuthorisation}/revoke', [AdminDashboardController::class, 'revokeJobAuthorisation'])->name('admin.jobs.authorisations.revoke');
     Route::post('/progress-reports/{progressReport}/validate', [AdminDashboardController::class, 'validateProgress'])->name('admin.progress.validate');
@@ -286,6 +295,9 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     // User Management
     Route::get('/users', [AdminDashboardController::class, 'users'])->name('admin.users');
     Route::post('/users', [AdminDashboardController::class, 'storeUser'])->name('admin.users.store');
+    // The credentials mail is the only copy of the generated password, so a
+    // bounce or a spam folder needs a way back that is not deleting the account.
+    Route::post('/users/{user}/resend-credentials', [AdminDashboardController::class, 'resendUserCredentials'])->name('admin.users.resend-credentials');
     Route::put('/users/{user}', [AdminDashboardController::class, 'updateUser'])->name('admin.users.update');
     Route::delete('/users/{user}', [AdminDashboardController::class, 'destroyUser'])->name('admin.users.destroy');
 
@@ -307,6 +319,11 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::post('/jobs/{serviceRequest}/deduplicate-payments', [AdminDashboardController::class, 'deduplicatePayments'])->name('admin.jobs.deduplicate-payments');
     Route::post('/schedule-extensions/{scheduleExtension}/decide', [\App\Http\Controllers\ScheduleExtensionController::class, 'adminDecide'])->name('admin.schedule-extensions.decide');
     Route::post('/rfq/{serviceRequest}/confirm-payment-on-behalf', [AdminDashboardController::class, 'confirmPaymentOnBehalf'])->name('admin.rfq.confirm-payment-on-behalf');
+
+    // Parked quotations. Saved on a debounce while the admin is still typing,
+    // so these answer JSON rather than redirecting the page underneath them.
+    Route::post('/rfq/{serviceRequest}/quotation-draft', [AdminDashboardController::class, 'saveQuotationDraft'])->name('admin.rfq.draft.save');
+    Route::delete('/rfq/{serviceRequest}/quotation-draft', [AdminDashboardController::class, 'discardQuotationDraft'])->name('admin.rfq.draft.discard');
 
     // Reports
     Route::get('/reports', [AdminDashboardController::class, 'reports'])->name('admin.reports');

@@ -624,6 +624,41 @@
                         </div>
                     </div>
 
+                    <!-- Who to expect at the gate. The client had to ask the
+                         office by email for this; now it is on their own page,
+                         built from the same record as the notice they are sent. -->
+                    <div v-if="attendanceRoster.length" class="crew-panel">
+                        <h4><i class="fas fa-users"></i> Who to expect on site</h4>
+                        <p class="crew-intro">
+                            These are the people assigned to your job. Please have their names and
+                            ID numbers ready for anyone controlling access to the property.
+                        </p>
+
+                        <div class="crew-scroll">
+                            <table class="crew-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>ID No.</th>
+                                        <th>Role</th>
+                                        <th>Expected</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="member in attendanceRoster" :key="member.assignment_id">
+                                        <td>
+                                            {{ member.name }}
+                                            <span v-if="member.is_lead" class="crew-lead">Lead</span>
+                                        </td>
+                                        <td>{{ member.national_id || '—' }}</td>
+                                        <td>{{ member.role }}</td>
+                                        <td>{{ member.attendance }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
                     <div class="detail-section">
                         <h4><i class="fas fa-clipboard-list"></i> Description</h4>
                         <p class="description-text">{{ serviceRequest.description }}</p>
@@ -1099,6 +1134,16 @@ const props = defineProps({
     serviceRequest: {
         type: Object,
         required: true
+    },
+    // Who is coming to the property and when — the same reading the office's
+    // attendance notice is built from, so the page and the email agree.
+    attendanceRoster: {
+        type: Array,
+        default: () => []
+    },
+    attendanceWindow: {
+        type: Object,
+        default: () => ({ start: null, end: null })
     },
     // Bank transfer details rendered on the Bank Deposit payment form.
     // Nullable so an unset config just hides the block instead of crashing.
@@ -3012,5 +3057,49 @@ defineOptions({
 .refund-owed i { color: #15803D; margin-top: .2rem; }
 .refund-owed strong { color: #14532D; font-size: .95rem; }
 .refund-owed p { margin: .25rem 0 0; font-size: .82rem; color: #166534; line-height: 1.5; }
-</style>
 
+/* ---- Who to expect on site ---- */
+.crew-panel {
+    margin-top: 1.25rem;
+    padding: 1rem 1.1rem;
+    background: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 12px;
+}
+.crew-panel h4 {
+    margin: 0 0 0.3rem;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: #0F172A;
+}
+.crew-intro { margin: 0 0 0.85rem; font-size: 0.84rem; color: #64748B; line-height: 1.5; }
+.crew-scroll { overflow-x: auto; }
+.crew-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.crew-table th,
+.crew-table td {
+    border-bottom: 1px solid #E2E8F0;
+    padding: 0.55rem 0.65rem;
+    text-align: left;
+    vertical-align: top;
+}
+.crew-table th {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #64748B;
+    white-space: nowrap;
+}
+.crew-lead {
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: #DBEAFE;
+    color: #1E40AF;
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+</style>

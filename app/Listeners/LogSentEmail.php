@@ -19,7 +19,6 @@ class LogSentEmail
     {
         try {
             $message = $event->message;
-            $envelope = $message->getEnvelope();
             $data = $event->data ?? [];
 
             $addressList = fn ($addresses) => collect($addresses)
@@ -45,16 +44,27 @@ class LogSentEmail
                 ];
             }
 
-            $from = $envelope->getSender();
+            // Read the addresses off the message rather than the envelope.
+            // $event->message is a Symfony Mime\Email, which has no
+            // getEnvelope() — that lives on $event->sent. Calling it here threw
+            // on every send, so nothing has reached the email archive since
+            // this listener was written, and the failure was swallowed by the
+            // catch below.
+            //
+            // The message's own accessors are the better source anyway: the
+            // envelope merges to, cc and bcc into one recipient list, which
+            // would have flattened the three columns this row keeps apart.
+            $to = $addressList($message->getTo());
+            $from = $message->getFrom()[0] ?? null;
 
             // Try to resolve a related model from $data (Mailables typically
             // share their context, including `serviceRequest`, `paymentRequest`, etc.)
-            [$relatedType, $relatedId, $userId] = $this->resolveRelated($data, $addressList($envelope->getRecipients()));
+            [$relatedType, $relatedId, $userId] = $this->resolveRelated($data, $to);
 
             EmailLog::create([
                 'mailable_class' => isset($data['mailable_class']) ? $data['mailable_class'] : (isset($data['__mailable_class']) ? $data['__mailable_class'] : null),
                 'subject'        => $message->getSubject() ?? '(no subject)',
-                'to'             => $addressList($envelope->getRecipients()),
+                'to'             => $to,
                 'cc'             => $addressList($message->getCc()),
                 'bcc'            => $addressList($message->getBcc()),
                 'from_address'   => $from?->getAddress(),

@@ -104,6 +104,13 @@
                                             <button @click="editUser(user)" class="btn btn-sm btn-primary" title="Edit">
                                                 <i class="fas fa-edit"></i>
                                             </button>
+                                            <button
+                                                @click="resendCredentials(user)"
+                                                class="btn btn-sm btn-secondary"
+                                                title="Email fresh sign-in details"
+                                            >
+                                                <i class="fas fa-key"></i>
+                                            </button>
                                             <button v-if="user.role !== 'admin'" @click="deleteUser(user)" class="btn btn-sm btn-danger" title="Delete">
                                                 <i class="fas fa-trash"></i>
                                             </button>
@@ -185,14 +192,20 @@
                                     </select>
                                 </div>
                             </div>
+                            <!-- No password fields. One is generated and emailed
+                                 to the user, who is made to replace it on first
+                                 sign-in. An admin-invented password has to reach
+                                 the user by some channel outside the system. -->
                             <div class="form-row" v-if="showCreateModal">
-                                <div class="form-group">
-                                    <label>Password *</label>
-                                    <input v-model="userForm.password" type="password" class="form-control" :required="showCreateModal">
-                                </div>
-                                <div class="form-group">
-                                    <label>Confirm Password *</label>
-                                    <input v-model="userForm.password_confirmation" type="password" class="form-control" :required="showCreateModal">
+                                <div class="password-notice">
+                                    <i class="fas fa-envelope"></i>
+                                    <div>
+                                        <strong>Sign-in details are emailed automatically</strong>
+                                        <p>
+                                            A single-use password is generated and sent to the address above,
+                                            copied to the office archive. They will set their own on first sign-in.
+                                        </p>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -431,8 +444,6 @@ const userForm = reactive({
     email: '',
     phone: '',
     role: '',
-    password: '',
-    password_confirmation: '',
     specialization: '',
     location: '',
     availability: 'available',
@@ -491,8 +502,6 @@ const resetForm = () => {
         email: '',
         phone: '',
         role: '',
-        password: '',
-        password_confirmation: '',
         specialization: '',
         location: '',
         availability: 'available',
@@ -534,6 +543,17 @@ const viewUser = (user) => {
     showViewModal.value = true
 }
 
+/**
+ * Reissue and re-send. The credentials mail is the only copy of that password,
+ * so a bounce or a spam folder otherwise means deleting the account and
+ * starting over.
+ */
+const resendCredentials = (user) => {
+    if (!confirm(`Email a new single-use password to ${user.email}? Their current password stops working.`)) return
+
+    router.post(`/admin/users/${user.id}/resend-credentials`, {}, { preserveScroll: true })
+}
+
 const editUser = (user) => {
     selectedUser.value = user
     Object.assign(userForm, {
@@ -541,8 +561,6 @@ const editUser = (user) => {
         email: user.email,
         phone: user.phone || '',
         role: user.role,
-        password: '',
-        password_confirmation: '',
         specialization: user.technician?.specialization || '',
         location: user.technician?.location || '',
         availability: user.technician?.availability || 'available',
@@ -1081,4 +1099,23 @@ defineOptions({
         padding: 1rem !important;
     }
 }
+
+/* Explains where the password went, in place of the fields that used to be
+   here — a form that silently drops two required inputs reads as a bug. */
+.password-notice {
+    display: flex;
+    gap: 0.7rem;
+    align-items: flex-start;
+    width: 100%;
+    padding: 0.85rem 1rem;
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 10px;
+    color: #1E40AF;
+    font-size: 0.86rem;
+    line-height: 1.45;
+}
+.password-notice i { margin-top: 2px; color: #2563EB; flex-shrink: 0; }
+.password-notice strong { display: block; margin-bottom: 2px; }
+.password-notice p { margin: 0; }
 </style>

@@ -40,10 +40,19 @@ class User extends Authenticatable implements MustVerifyEmail
     /**
      * The attributes that are mass assignable.
      */
+    /**
+     * Only accounts issued a password by an admin carry this. Defaulted here
+     * so a fresh instance reads false rather than null before it is saved.
+     */
+    protected $attributes = [
+        'must_change_password' => false,
+    ];
+
     protected $fillable = [
         'name',
         'email',
         'password',
+        'must_change_password',
         'role',
         'phone',
         'address',
@@ -68,6 +77,7 @@ class User extends Authenticatable implements MustVerifyEmail
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'must_change_password' => 'boolean',
             'last_login_at' => 'datetime',
             'is_active' => 'boolean',
         ];

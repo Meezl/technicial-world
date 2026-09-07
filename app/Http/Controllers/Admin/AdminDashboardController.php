@@ -371,6 +371,10 @@ class AdminDashboardController extends Controller
                 'authorisation_descriptions' => \App\Models\JobAuthorisation::TYPE_DESCRIPTIONS,
             ],
             'approvalEvidence' => $serviceRequest->approvalEvidence(),
+            // Who the client is expecting and when — the same reading the
+            // notice email and the client's own page use.
+            'attendanceRoster' => $serviceRequest->attendanceRoster(),
+            'attendanceWindow' => $serviceRequest->attendanceWindow(),
         ]);
     }
 
@@ -2526,6 +2530,9 @@ class AdminDashboardController extends Controller
             // (see scopeNeedsAdminAction on ServiceRequest for the rules).
             'progressReports:id,service_request_id,is_validated',
             'compensationAmendments:id,service_request_id,status',
+            // So the list can badge a job whose quote is half-priced, and the
+            // modal can offer to pick it back up.
+            'quotationDraft.savedBy:id,name',
         ]);
 
         // Approved variations raise the contract above the original quote, so
@@ -2557,15 +2564,27 @@ class AdminDashboardController extends Controller
         // live on `rfq_status`, while delivery statuses (awaiting_payment,
         // ready_for_assignment, en_route, in_progress) live on the main `status`
         // column. Route each value to the correct column.
-        if ($status = $request->input('status')) {
-            if ($status !== 'all') {
-                $rfqStatuses = ['pending', 'quoted', 'approved', 'rejected'];
-                if (in_array($status, $rfqStatuses, true)) {
-                    $query->where('rfq_status', $status);
-                } else {
-                    $query->where('status', $status);
-                }
+        $status = $request->input('status');
+
+        if ($status && $status !== 'all') {
+            $rfqStatuses = ['pending', 'quoted', 'approved', 'rejected'];
+            if (in_array($status, $rfqStatuses, true)) {
+                $query->where('rfq_status', $status);
+            } else {
+                $query->where('status', $status);
             }
+        }
+
+        // Finished work leaves the working list. 114 requests, most of them
+        // done, sat in the same list as live work — which is the complaint.
+        //
+        // Skipped when the admin has explicitly filtered to a terminal status:
+        // asking for cancelled requests and being shown none would read as the
+        // filter being broken rather than as a rule being applied.
+        $explicitlyTerminal = in_array($status, ServiceRequest::TERMINAL_STATUSES, true);
+
+        if (!$explicitlyTerminal) {
+            $query->whereNotIn('status', ServiceRequest::TERMINAL_STATUSES);
         }
 
         if ($origin = $request->input('origin')) {
@@ -2812,6 +2831,11 @@ class AdminDashboardController extends Controller
             ]);
         }
 
+        // The draft has served its purpose. Leaving it would put a "Draft in
+        // progress" badge on a job that has just been quoted, and offer to
+        // restore superseded figures over the ones the client has been sent.
+        \App\Models\QuotationDraft::where('service_request_id', $serviceRequest->id)->delete();
+
         $message = $isRevision
             ? "Revised quotation (revision #{$updateData['quote_revision_count']}) sent to client."
             : 'Quotation sent to client successfully!';
@@ -3042,7 +3066,9 @@ class AdminDashboardController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
-            'password' => 'required|string|min:8|confirmed',
+            // No password field: it is generated below and mailed to the user.
+            // An admin inventing a password means it has to reach the user by
+            // some channel outside the system, which in practice is WhatsApp.
             'phone' => 'nullable|string|max:20',
             'role' => ['required', Rule::in(User::ROLES)],
             'specialization' => 'nullable|required_if:role,technician|string|max:255',
@@ -3060,11 +3086,16 @@ class AdminDashboardController extends Controller
                 ->withInput();
         }
 
+        // Generated rather than chosen, and single use. See
+        // AccountCredentialsNotification for why it cannot stay permanent.
+        $temporaryPassword = Str::password(14, symbols: false);
+
         // Create user
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
-            'password' => Hash::make($request->password),
+            'password' => Hash::make($temporaryPassword),
+            'must_change_password' => true,
             'phone' => $request->phone,
             'role' => $request->role,
             'email_verified_at' => now() // Auto-verify admin created users
@@ -3084,7 +3115,64 @@ class AdminDashboardController extends Controller
             ]);
         }
 
-        return redirect()->route('admin.users')->with('success', 'User created successfully!');
+        // Sent inline, not queued: a queue failure here leaves an account
+        // nobody can sign into and no trace of why. If the mail fails the
+        // admin needs to know now, while they still have the person in front
+        // of them — so say so rather than reporting a clean success.
+        try {
+            $user->notify(new \App\Notifications\AccountCredentialsNotification($temporaryPassword));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Account credentials mail failed', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return redirect()->route('admin.users')->with(
+                'warning',
+                "{$user->name}'s account was created, but the credentials email could not be sent. "
+                . 'Use "Resend credentials" on their row to try again.'
+            );
+        }
+
+        return redirect()->route('admin.users')->with(
+            'success',
+            "User created. Their sign-in details have been emailed to {$user->email}."
+        );
+    }
+
+    /**
+     * Issue a fresh temporary password and mail it again.
+     *
+     * The credentials mail is the only copy of that password, so a bounce, a
+     * typo in the address, or a spam folder otherwise means deleting the
+     * account and starting again.
+     */
+    public function resendUserCredentials(User $user)
+    {
+        $temporaryPassword = Str::password(14, symbols: false);
+
+        $user->update([
+            'password' => Hash::make($temporaryPassword),
+            'must_change_password' => true,
+        ]);
+
+        try {
+            $user->notify(new \App\Notifications\AccountCredentialsNotification($temporaryPassword));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Account credentials resend failed', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return back()->with('error', 'Could not send the credentials email. Check the address and try again.');
+        }
+
+        AuditLog::log(AuditLog::ACTION_UPDATED, $user, null, [
+            'credentials_reissued_by' => auth()->id(),
+            'reason' => 'Admin reissued account credentials',
+        ]);
+
+        return back()->with('success', "New sign-in details emailed to {$user->email}.");
     }
 
     public function updateUser(Request $request, User $user)
@@ -3542,6 +3630,151 @@ class AdminDashboardController extends Controller
             'success' => true,
             'message' => "Payment of KSH " . number_format($amount, 2) . " confirmed on behalf of client.",
         ]);
+    }
+
+    // ==================== ATTENDANCE ROSTER ====================
+
+    /**
+     * Set what a technician is on this job to do, and which days to expect
+     * them.
+     *
+     * Both live on the assignment rather than the technician: the same person
+     * is a gang member on one job and the lead on the next, and their dates
+     * differ per job by definition.
+     */
+    public function updateRosterEntry(Request $request, JobAssignment $jobAssignment)
+    {
+        $request->validate([
+            'role_on_job' => 'nullable|string|max:255',
+            'expected_start' => 'nullable|date',
+            'expected_end' => 'nullable|date|after_or_equal:expected_start',
+            // Discrete days for somebody who is not on site throughout.
+            'attendance_dates' => 'nullable|array|max:60',
+            'attendance_dates.*' => 'required|date',
+        ]);
+
+        $dates = collect($request->input('attendance_dates', []))
+            ->filter()
+            ->map(fn ($date) => \Carbon\Carbon::parse($date)->toDateString())
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+
+        $jobAssignment->update([
+            'role_on_job' => $request->input('role_on_job'),
+            'expected_start' => $request->input('expected_start'),
+            'expected_end' => $request->input('expected_end'),
+            'attendance_dates' => $dates ?: null,
+        ]);
+
+        return back()->with('success', 'Attendance details updated.');
+    }
+
+    /** The technician's national ID, which is what site security checks. */
+    public function updateTechnicianNationalId(Request $request, Technician $technician)
+    {
+        $request->validate([
+            'national_id' => 'nullable|string|max:20',
+        ]);
+
+        $technician->update(['national_id' => $request->input('national_id')]);
+
+        return back()->with('success', 'ID number updated.');
+    }
+
+    /**
+     * Send the client the notice the office writes by hand today.
+     *
+     * Sent inline rather than queued: this goes out when a crew is about to
+     * travel, and a queue failure would leave the office believing the client
+     * had been told.
+     */
+    public function sendAttendanceNotice(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'notes' => 'nullable|string|max:1000',
+        ]);
+
+        $serviceRequest->loadMissing('user');
+
+        if (!$serviceRequest->user?->email) {
+            return back()->with('error', 'This client has no email address on file.');
+        }
+
+        $roster = $serviceRequest->attendanceRoster();
+        if (empty($roster)) {
+            return back()->with('error', 'Assign at least one technician before sending an attendance notice.');
+        }
+
+        try {
+            Mail::to($serviceRequest->user->email)
+                ->send(new \App\Mail\TechnicianAttendanceNotice($serviceRequest, $request->input('notes')));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Attendance notice failed', [
+                'service_request_id' => $serviceRequest->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return back()->with('error', 'Could not send the attendance notice. The client has not been told.');
+        }
+
+        // Recorded so "did we tell the client?" has an answer that is not
+        // somebody's memory of sending an email.
+        AuditLog::log(AuditLog::ACTION_UPDATED, $serviceRequest, null, [
+            'attendance_notice_sent_to' => $serviceRequest->user->email,
+            'crew_size' => count($roster),
+            'sent_by' => auth()->id(),
+        ]);
+
+        return back()->with('success', 'Attendance notice sent to ' . $serviceRequest->user->email . '.');
+    }
+
+    // ==================== QUOTATION DRAFTS ====================
+
+    /**
+     * Park a half-priced quotation so the modal stops being a trap.
+     *
+     * Upserted per service request, not per admin: pricing a job is office
+     * work. If a colleague started it and was called away, the next person
+     * should find their figures rather than a blank form.
+     *
+     * Returns JSON rather than a redirect because this is called on a debounce
+     * while the admin is still typing — an Inertia redirect would re-render
+     * the page underneath them and take the focus out of the field.
+     */
+    public function saveQuotationDraft(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'payload' => 'required|array',
+            'is_revision' => 'nullable|boolean',
+        ]);
+
+        $draft = \App\Models\QuotationDraft::updateOrCreate(
+            ['service_request_id' => $serviceRequest->id],
+            [
+                'saved_by' => auth()->id(),
+                'payload' => \App\Models\QuotationDraft::sanitisePayload($request->input('payload')),
+                'is_revision' => $request->boolean('is_revision'),
+            ]
+        );
+
+        $draft->load('savedBy:id,name');
+
+        return response()->json([
+            'success' => true,
+            'draft' => [
+                'saved_at' => $draft->updated_at->toIso8601String(),
+                'saved_by' => $draft->savedBy?->name,
+            ],
+        ]);
+    }
+
+    public function discardQuotationDraft(ServiceRequest $serviceRequest)
+    {
+        \App\Models\QuotationDraft::where('service_request_id', $serviceRequest->id)->delete();
+
+        return response()->json(['success' => true]);
     }
 
     // ==================== ADVANCE AUTHORISATION ====================

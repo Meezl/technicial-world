@@ -115,4 +115,18 @@ return [
         'name' => env('MAIL_FROM_NAME', 'Example'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Office Archive Address
+    |--------------------------------------------------------------------------
+    |
+    | BCC'd on account credentials so the office keeps a record that an
+    | account was issued, without that record being the credential itself.
+    | Configurable because a hard-coded address in a notification is a change
+    | request every time the business reorganises its mailboxes.
+    |
+    */
+
+    'office_archive' => env('MAIL_OFFICE_ARCHIVE', 'info@technicianworld.co.ke'),
+
 ];
