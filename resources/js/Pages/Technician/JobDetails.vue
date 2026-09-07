@@ -617,10 +617,23 @@
                 <p v-else class="empty-text">No progress reports submitted yet.</p>
             </section>
 
+            <!-- The office has not cleared this job to start. Said here rather
+                 than left to a failed tap on site, where the technician has
+                 already travelled. -->
+            <div v-if="commencementBlocker" class="commencement-hold">
+                <i class="fas fa-pause-circle"></i>
+                <div>
+                    <strong>Do not start this job yet</strong>
+                    <p>{{ commencementBlocker }}</p>
+                </div>
+            </div>
+
             <section class="floating-actions">
                 <button
                     v-if="job.status === 'assigned'"
                     class="btn btn-primary"
+                    :disabled="!!commencementBlocker"
+                    :title="commencementBlocker || ''"
                     @click="updateStatus('en_route')"
                 >
                     Start Job
@@ -628,6 +641,8 @@
                 <button
                     v-else-if="job.status === 'in_progress' && !job.technician_arrived"
                     class="btn btn-primary"
+                    :disabled="!!commencementBlocker"
+                    :title="commencementBlocker || ''"
                     @click="updateStatus('on_site')"
                 >
                     Arrived On Site
@@ -673,6 +688,7 @@ const props = defineProps({
     isLeadTechnician: { type: Boolean, default: false },
     scope: { type: Object, default: () => ({}) },
     assignmentFiles: { type: Array, default: () => [] },
+    commencementBlocker: { type: String, default: null },
 })
 
 // What was quoted, what to install, and the dates being held to. Deliberately
@@ -1539,5 +1555,34 @@ defineOptions({ layout: null })
     .subtask-meta {
         flex-direction: column;
     }
+}
+
+/* Office hold on starting work. Muted rather than alarming — this is a
+   normal state on a job whose paperwork is still moving, not a fault. */
+.commencement-hold {
+    display: flex;
+    gap: 0.7rem;
+    align-items: flex-start;
+    margin: 0 1rem 0.75rem;
+    padding: 0.85rem 1rem;
+    background: #FFFBEB;
+    border: 1px solid #FDE68A;
+    border-radius: 12px;
+    color: #92400E;
+    font-size: 0.88rem;
+    line-height: 1.45;
+}
+.commencement-hold i {
+    margin-top: 2px;
+    color: #D97706;
+    font-size: 1.05rem;
+    flex-shrink: 0;
+}
+.commencement-hold strong { display: block; margin-bottom: 2px; }
+.commencement-hold p { margin: 0; }
+
+.floating-actions .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 </style>

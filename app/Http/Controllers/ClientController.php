@@ -291,6 +291,19 @@ class ClientController extends Controller
         try {
             $updateData = [
                 'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
+                // Proof of approval. The admin proxy path has always recorded
+                // its approver, timestamp and note; a client approving from
+                // their own portal recorded nothing but the status, so the
+                // busier half of the pipeline was the half with no evidence.
+                //
+                // The revision is the field that settles a dispute: the guard
+                // above has just established which version of the figures was
+                // on screen, and without persisting it that knowledge is lost
+                // the moment the quote is revised again.
+                'client_quote_approved_by' => Auth::id(),
+                'client_quote_approved_at' => now(),
+                'approved_quote_revision' => $currentRevision,
+                'approved_quote_amount' => $serviceRequest->quote_amount,
             ];
 
             // Transition status to awaiting_payment when quotation is approved
@@ -302,6 +315,22 @@ class ClientController extends Controller
             }
 
             $serviceRequest->update($updateData);
+
+            // AuditLog stamps the IP and user agent of the request that
+            // approved, which is the part a client cannot later disown.
+            \App\Models\AuditLog::log(
+                \App\Models\AuditLog::ACTION_APPROVAL,
+                $serviceRequest,
+                ['rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED],
+                [
+                    'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
+                    'approved_by' => Auth::id(),
+                    'approved_at' => now()->toDateTimeString(),
+                    'approved_quote_revision' => $currentRevision,
+                    'approved_quote_amount' => (string) $serviceRequest->quote_amount,
+                    'channel' => 'client_portal',
+                ]
+            );
 
             // #4 — If this approval is for a REVISED quote and the job already
             // has validated progress, retrigger any milestones whose threshold

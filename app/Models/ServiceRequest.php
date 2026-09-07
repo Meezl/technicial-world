@@ -28,6 +28,10 @@ class ServiceRequest extends Model
         'proxy_quote_approved_by',
         'proxy_quote_approved_at',
         'proxy_quote_approval_note',
+        'client_quote_approved_by',
+        'client_quote_approved_at',
+        'approved_quote_revision',
+        'approved_quote_amount',
         'rfq_status',
         'quote_amount',
         'quote_materials',
@@ -57,6 +61,7 @@ class ServiceRequest extends Model
         'scheduled_date',
         'started_at',
         'assigned_at',
+        'commencement_gated',
         'completed_date',
         'completion_notes',
         'client_confirmed_completion',
@@ -97,9 +102,13 @@ class ServiceRequest extends Model
         'scheduled_date' => 'datetime',
         'started_at' => 'datetime',
         'assigned_at' => 'datetime',
+        'commencement_gated' => 'boolean',
         'completed_date' => 'datetime',
         'client_confirmation_date' => 'datetime',
         'proxy_quote_approved_at' => 'datetime',
+        'client_quote_approved_at' => 'datetime',
+        'approved_quote_revision' => 'integer',
+        'approved_quote_amount' => 'decimal:2',
         'suspended_at' => 'datetime',
         'resumed_at' => 'datetime',
         'preferred_date' => 'date',
@@ -230,6 +239,71 @@ class ServiceRequest extends Model
     public function proxyQuoteApprover()
     {
         return $this->belongsTo(User::class, 'proxy_quote_approved_by');
+    }
+
+    public function clientQuoteApprover()
+    {
+        return $this->belongsTo(User::class, 'client_quote_approved_by');
+    }
+
+    /** Live and lapsed decisions to run this job ahead of the client's money. */
+    public function authorisations()
+    {
+        return $this->hasMany(JobAuthorisation::class)->orderByDesc('id');
+    }
+
+    /**
+     * Who approved the quotation, however it was approved.
+     *
+     * One reading for both routes so the approval certificate, the job header
+     * and any dispute all quote the same record rather than each re-deriving
+     * it from whichever set of columns happens to be populated.
+     *
+     * @return array{approved: bool, channel: string|null, approver_id: int|null, approved_at: \Carbon\Carbon|null, revision: int|null, amount: string|null, note: string|null}
+     */
+    public function approvalEvidence(): array
+    {
+        $none = [
+            'approved' => false,
+            'channel' => null,
+            'approver_id' => null,
+            'approved_at' => null,
+            'revision' => null,
+            'amount' => null,
+            'note' => null,
+        ];
+
+        if ($this->rfq_status !== self::RFQ_STATUS_APPROVED) {
+            return $none;
+        }
+
+        if ($this->client_quote_approved_by) {
+            return [
+                'approved' => true,
+                'channel' => 'client_portal',
+                'approver_id' => $this->client_quote_approved_by,
+                'approved_at' => $this->client_quote_approved_at,
+                'revision' => $this->approved_quote_revision,
+                'amount' => $this->approved_quote_amount,
+                'note' => null,
+            ];
+        }
+
+        if ($this->proxy_quote_approved_by) {
+            return [
+                'approved' => true,
+                'channel' => 'admin_proxy',
+                'approver_id' => $this->proxy_quote_approved_by,
+                'approved_at' => $this->proxy_quote_approved_at,
+                'revision' => $this->approved_quote_revision,
+                'amount' => $this->approved_quote_amount,
+                'note' => $this->proxy_quote_approval_note,
+            ];
+        }
+
+        // Approved before this evidence was recorded. Saying so is more useful
+        // than implying the record exists.
+        return array_merge($none, ['approved' => true, 'channel' => 'legacy']);
     }
 
     public function subTasks()

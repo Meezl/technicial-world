@@ -229,6 +229,13 @@ class TechnicianController extends Controller
             'isLeadTechnician' => $serviceRequest->isLeadTechnician($technician->id),
             'scope' => $this->jobScopeForTechnician($serviceRequest),
             'assignmentFiles' => $this->assignmentFilesFor($serviceRequest, $technician->id),
+            // Why the start buttons are unavailable, if they are. Sent as the
+            // reason rather than a boolean so the technician is told what is
+            // happening instead of finding a dead control — and deliberately
+            // only while the job has not started, matching the gate itself.
+            'commencementBlocker' => $serviceRequest->started_at
+                ? null
+                : app(\App\Services\JobAuthorisationService::class)->commencementBlocker($serviceRequest),
         ]);
     }
 
@@ -925,6 +932,43 @@ class TechnicianController extends Controller
                 'Only the lead technician can mark the whole job complete. ' .
                 'Update your sub-task to 100% and the lead will close the job.'
             );
+        }
+
+        // The hard stop on exposure. Assignment is paperwork and costs nothing
+        // if the job falls through; going to site is where labour and
+        // materials start being consumed, so this is the gate that actually
+        // protects the money — see JobAuthorisationService.
+        //
+        // Scoped to jobs that have not started. A lapse mid-job is the
+        // office's problem to chase, and stranding a technician who is already
+        // on site would turn an administrative oversight into a site incident.
+        // `completed` is never gated for the same reason: work that has
+        // happened must always be closable.
+        if (in_array($action, ['en_route', 'on_site'], true) && !$serviceRequest->started_at) {
+            $authorisations = app(\App\Services\JobAuthorisationService::class);
+
+            if ($blocker = $authorisations->commencementBlocker($serviceRequest)) {
+                return back()->with('error', $blocker);
+            }
+
+            // Starting on the office's money rather than the client's is
+            // exactly what the exposure report needs to count, and the moment
+            // it happens is the only time it can be recorded.
+            if ($authorisation = $authorisations->commencementAuthorisation($serviceRequest)) {
+                \App\Models\AuditLog::log(
+                    \App\Models\AuditLog::ACTION_STATE_CHANGED,
+                    $serviceRequest,
+                    ['started_at' => null],
+                    [
+                        'commenced_at' => now()->toDateTimeString(),
+                        'commenced_under_authorisation' => $authorisation->id,
+                        'authorisation_type' => $authorisation->type,
+                        'authorised_by' => $authorisation->authorised_by,
+                        'expires_at' => $authorisation->expires_at?->toDateTimeString(),
+                        'technician_id' => $technician->id,
+                    ]
+                );
+            }
         }
 
         if ($action === 'en_route') {

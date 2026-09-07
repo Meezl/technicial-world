@@ -268,7 +268,7 @@ class AdminDashboardController extends Controller
         ]);
     }
 
-    public function showJob(ServiceRequest $serviceRequest)
+    public function showJob(ServiceRequest $serviceRequest, \App\Services\JobAuthorisationService $authorisations)
     {
         $job = $serviceRequest->load([
             'user',
@@ -328,6 +328,12 @@ class AdminDashboardController extends Controller
             'refunds.approver:id,name',
             'compensationAmendments.variationOrder:id,vo_number,net_amount',
             'compensationAmendments.technician.user:id,name',
+            // Decisions to run this job ahead of the client's money, live and
+            // spent, so the page can show what is carrying it.
+            'authorisations.authoriser:id,name',
+            'authorisations.revoker:id,name',
+            'clientQuoteApprover:id,name',
+            'proxyQuoteApprover:id,name',
         ]);
 
         $technicians = Technician::with('user')
@@ -353,6 +359,18 @@ class AdminDashboardController extends Controller
             // The running total behind the quotation form: original quote,
             // every variation, and the value after each one.
             'variationLedger' => app(\App\Services\VariationOrderService::class)->ledger($serviceRequest),
+            // Whether this job may be staffed and started yet, answered by the
+            // same service the endpoints enforce with. The page must not
+            // re-derive it from status — that is exactly how the UI and the
+            // backend came to disagree about what "assignable" meant.
+            'gating' => [
+                'assignment_blocker' => $authorisations->assignmentBlocker($serviceRequest),
+                'commencement_blocker' => $authorisations->commencementBlocker($serviceRequest),
+                'live_authorisations' => $authorisations->liveAuthorisations($serviceRequest)->values(),
+                'authorisation_types' => \App\Models\JobAuthorisation::TYPES,
+                'authorisation_descriptions' => \App\Models\JobAuthorisation::TYPE_DESCRIPTIONS,
+            ],
+            'approvalEvidence' => $serviceRequest->approvalEvidence(),
         ]);
     }
 
@@ -967,9 +985,11 @@ class AdminDashboardController extends Controller
             return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', 'This service request has sub-tasks. Please assign technicians to individual sub-tasks.');
         }
 
-        // Check if RFQ has been approved (if RFQ workflow is enabled)
-        if ($serviceRequest->rfq_status && $serviceRequest->rfq_status !== ServiceRequest::RFQ_STATUS_APPROVED) {
-            return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', 'Cannot assign technician until RFQ is approved by client.');
+        // Quote approved, or an admin has authorised assignment in advance.
+        // One shared gate rather than an inline check, so the PM path and the
+        // sub-task path cannot drift from this one again.
+        if ($blocker = app(\App\Services\JobAuthorisationService::class)->assignmentBlocker($serviceRequest)) {
+            return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', $blocker);
         }
 
         // #24 — block re-picking the same technician on reassignment.
@@ -1092,6 +1112,13 @@ class AdminDashboardController extends Controller
             'agreed_compensation' => 'required|numeric|min:0',
             'compensation_notes' => 'nullable|string|max:1000',
         ]);
+
+        // Staffing a project lead-first reached none of the approval checks the
+        // single-technician route applied, so this was a way to put a crew on
+        // an unapproved job without the gate ever being consulted.
+        if ($blocker = app(\App\Services\JobAuthorisationService::class)->assignmentBlocker($serviceRequest)) {
+            return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', $blocker);
+        }
 
         $technician = Technician::findOrFail($request->technician_id);
         $currentLeadTechnicianId = $serviceRequest->lead_technician_id;
@@ -2927,6 +2954,10 @@ class AdminDashboardController extends Controller
             'proxy_quote_approved_by' => auth()->id(),
             'proxy_quote_approved_at' => now(),
             'proxy_quote_approval_note' => $request->note,
+            // Recorded on both approval routes so the certificate and any
+            // dispute read the same fields whichever way the job was approved.
+            'approved_quote_revision' => (int) ($serviceRequest->quote_revision_count ?? 0),
+            'approved_quote_amount' => $serviceRequest->quote_amount,
         ];
 
         if (in_array($serviceRequest->status, [
@@ -3513,6 +3544,63 @@ class AdminDashboardController extends Controller
         ]);
     }
 
+    // ==================== ADVANCE AUTHORISATION ====================
+
+    /**
+     * Authorise a job to run ahead of the client's approval or deposit.
+     *
+     * The reason is mandatory and the expiry is mandatory. Both exist because
+     * the failure mode here is not a bad decision, it is a decision nobody
+     * remembers making: an override with no stated grounds and no end date
+     * quietly becomes the route everything takes.
+     */
+    public function storeJobAuthorisation(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'type' => 'required|in:' . implode(',', array_keys(\App\Models\JobAuthorisation::TYPES)),
+            // Long enough to be a reason rather than a shrug. "urgent" is not
+            // something anybody can act on six weeks later.
+            'reason' => 'required|string|min:15|max:1000',
+            'expires_at' => 'required|date|after:now',
+            'exposure_cap' => 'nullable|numeric|min:0',
+        ]);
+
+        try {
+            $authorisation = app(\App\Services\JobAuthorisationService::class)->authorise(
+                $serviceRequest,
+                $request->type,
+                auth()->user(),
+                $request->reason,
+                \Carbon\Carbon::parse($request->expires_at),
+                $request->filled('exposure_cap') ? (float) $request->exposure_cap : null
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return back()->withErrors($e->errors());
+        }
+
+        return back()->with('success', sprintf(
+            '%s authorisation recorded. It lapses on %s unless renewed.',
+            $authorisation->label(),
+            $authorisation->expires_at->format('d M Y H:i')
+        ));
+    }
+
+    public function revokeJobAuthorisation(Request $request, \App\Models\JobAuthorisation $jobAuthorisation)
+    {
+        $request->validate([
+            'reason' => 'required|string|min:10|max:500',
+        ]);
+
+        if ($jobAuthorisation->revoked_at !== null) {
+            return back()->with('error', 'That authorisation has already been withdrawn.');
+        }
+
+        app(\App\Services\JobAuthorisationService::class)
+            ->revoke($jobAuthorisation, auth()->user(), $request->reason);
+
+        return back()->with('success', 'Authorisation withdrawn. The job is gated again from now on.');
+    }
+
     // ==================== SUB-TASK MANAGEMENT ====================
 
     public function addSubTask(Request $request, ServiceRequest $serviceRequest)
@@ -3580,9 +3668,11 @@ class AdminDashboardController extends Controller
         $technician = Technician::findOrFail($request->technician_id);
         $serviceRequest = $serviceSubTask->serviceRequest;
 
-        // Check if RFQ has been approved (if RFQ workflow is enabled)
-        if ($serviceRequest->rfq_status && $serviceRequest->rfq_status !== ServiceRequest::RFQ_STATUS_APPROVED) {
-            return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', 'Cannot assign technician until RFQ is approved by client.');
+        // Quote approved, or an admin has authorised assignment in advance.
+        // One shared gate rather than an inline check, so the PM path and the
+        // sub-task path cannot drift from this one again.
+        if ($blocker = app(\App\Services\JobAuthorisationService::class)->assignmentBlocker($serviceRequest)) {
+            return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', $blocker);
         }
 
         $this->ensureLaborBudgetCapacity(
