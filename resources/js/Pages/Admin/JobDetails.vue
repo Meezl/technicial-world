@@ -363,7 +363,7 @@
                     <!-- What the office currently types by hand into an email
                          before every visit. Held here so the client's page, the
                          notice and this table cannot disagree. -->
-                    <article class="job-shell-card" v-if="attendanceRoster.length">
+                    <article class="job-shell-card" v-if="attendanceRoster.length || canAssignTechnician">
                         <div class="job-card-header">
                             <div>
                                 <span class="section-kicker">Attendance</span>
@@ -374,7 +374,14 @@
                                 </p>
                             </div>
                             <div class="header-actions-row">
-                                <button class="btn btn-primary btn-sm" @click="showNoticeModal = true">
+                                <button class="btn btn-secondary btn-sm" @click="openCrewModal">
+                                    <i class="fas fa-user-plus"></i> Add crew member
+                                </button>
+                                <button
+                                    v-if="attendanceRoster.length"
+                                    class="btn btn-primary btn-sm"
+                                    @click="showNoticeModal = true"
+                                >
                                     <i class="fas fa-envelope"></i> Send attendance notice
                                 </button>
                             </div>
@@ -396,8 +403,16 @@
                                     <tr v-for="member in attendanceRoster" :key="member.assignment_id">
                                         <td>{{ member.ref }}.</td>
                                         <td>
-                                            {{ member.name }}
-                                            <span v-if="member.is_lead" class="roster-lead">Lead</span>
+                                            <span class="roster-name">
+                                                <img v-if="member.photo_url" :src="member.photo_url" class="roster-avatar" alt="">
+                                                <span v-else class="roster-avatar roster-avatar-empty">
+                                                    <i class="fas fa-user"></i>
+                                                </span>
+                                                <span>
+                                                    {{ member.name }}
+                                                    <span v-if="member.is_lead" class="roster-lead">Lead</span>
+                                                </span>
+                                            </span>
                                         </td>
                                         <!-- Missing IDs are called out rather than left blank:
                                              an empty cell on the notice is the one that gets
@@ -409,14 +424,30 @@
                                         <td>{{ member.role }}</td>
                                         <td>{{ member.attendance }}</td>
                                         <td class="roster-actions">
-                                            <button class="btn btn-sm btn-secondary" @click="openRosterEditor(member)">
+                                            <button class="btn btn-sm btn-secondary" @click="openRosterEditor(member)" title="Edit role and dates">
                                                 <i class="fas fa-pen"></i>
+                                            </button>
+                                            <!-- Not offered for whoever carries the job: taking
+                                                 them off is a reassignment, which has its own
+                                                 flow, notification and reason. -->
+                                            <button
+                                                v-if="!member.is_lead && !member.is_primary"
+                                                class="btn btn-sm btn-danger"
+                                                @click="removeCrewMember(member)"
+                                                title="Remove from crew"
+                                            >
+                                                <i class="fas fa-user-minus"></i>
                                             </button>
                                         </td>
                                     </tr>
                                 </tbody>
                             </table>
                         </div>
+
+                        <p v-if="!attendanceRoster.length" class="roster-empty">
+                            Nobody is on this job yet. Assign a technician above, or add crew members
+                            here — a gang member or a lead's right-hand man needs no sub-task of their own.
+                        </p>
 
                         <p v-if="rosterMissingIds.length" class="roster-warning">
                             <i class="fas fa-triangle-exclamation"></i>
@@ -1636,6 +1667,79 @@
         </div>
 
         <!-- Budget Modal -->
+        <!-- Adding somebody to the crew. Not a sub-task: a gang member or a
+             lead's right-hand man carries no separate scope, no progress of
+             their own, and often no separate fee. -->
+        <div v-if="showCrewModal" class="modal-overlay">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h3>Add crew member</h3>
+                    <button @click="showCrewModal = false" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Technician *</label>
+                        <select v-model="crewForm.technician_id" class="form-control">
+                            <option value="">Select a technician…</option>
+                            <option v-for="tech in availableForCrew" :key="tech.id" :value="tech.id">
+                                {{ tech.user?.name }}<template v-if="tech.specialization"> — {{ tech.specialization }}</template>
+                            </option>
+                        </select>
+                        <small class="roster-help" v-if="!availableForCrew.length">
+                            Everyone on the books is already on this job.
+                        </small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Role on this job *</label>
+                        <input v-model="crewForm.role_on_job" type="text" class="form-control"
+                            placeholder="e.g. Roof Installation Gang Member">
+                        <small class="roster-help">What this person is here to do, in the client's words.</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Agreed fee <span class="roster-optional">(optional)</span></label>
+                        <input v-model="crewForm.agreed_compensation" type="number" step="0.01" min="0"
+                            class="form-control" placeholder="Leave blank if paid through the lead">
+                        <small class="roster-help">
+                            Left blank, this person is recorded as paid through the technician who
+                            brought them, and nothing is allocated against the labour budget.
+                        </small>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>On site from</label>
+                            <input v-model="crewForm.expected_start" type="date" class="form-control">
+                        </div>
+                        <div class="form-group">
+                            <label>Until</label>
+                            <input v-model="crewForm.expected_end" type="date" class="form-control">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Specific days only <span class="roster-optional">(optional)</span></label>
+                        <div v-for="(date, index) in crewForm.attendance_dates" :key="index" class="roster-date-row">
+                            <input v-model="crewForm.attendance_dates[index]" type="date" class="form-control">
+                            <button type="button" class="btn btn-sm btn-danger" @click="crewForm.attendance_dates.splice(index, 1)">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-secondary" @click="crewForm.attendance_dates.push('')">
+                            <i class="fas fa-plus"></i> Add a day
+                        </button>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button @click="showCrewModal = false" class="btn btn-secondary">Cancel</button>
+                    <button @click="submitCrewMember" class="btn btn-primary" :disabled="!crewFormReady || savingCrew">
+                        {{ savingCrew ? 'Adding…' : 'Add to crew' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Editing one crew member's line on the notice. -->
         <div v-if="rosterEditing" class="modal-overlay">
             <div class="modal-content" @click.stop>
@@ -1648,6 +1752,26 @@
                         <label>ID number</label>
                         <input v-model="rosterForm.national_id" type="text" class="form-control" placeholder="e.g. 37853277">
                         <small class="roster-help">Stored on the technician — it follows them to every job.</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Passport photo</label>
+                        <div class="roster-photo-row">
+                            <img v-if="rosterEditing.photo_url" :src="rosterEditing.photo_url" class="roster-photo-preview" alt="">
+                            <span v-else class="roster-photo-preview roster-photo-empty">
+                                <i class="fas fa-user"></i>
+                            </span>
+                            <input
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+                                class="form-control"
+                                @change="rosterForm.passport_photo = $event.target.files[0] || null"
+                            >
+                        </div>
+                        <small class="roster-help">
+                            Shown to the client alongside the name and ID, so whoever is on the gate
+                            can match a face. Uploading replaces the current photo.
+                        </small>
                     </div>
 
                     <div class="form-group">
@@ -2766,6 +2890,72 @@ const rosterMissingIds = computed(() =>
     attendanceRoster.value.filter(m => !m.national_id).map(m => m.name)
 )
 
+const showCrewModal = ref(false)
+const savingCrew = ref(false)
+
+const crewForm = reactive({
+    technician_id: '',
+    role_on_job: '',
+    agreed_compensation: null,
+    expected_start: '',
+    expected_end: '',
+    attendance_dates: [],
+})
+
+// Anybody not already on the job. Offering somebody who is already on it
+// would only produce the duplicate the server refuses.
+const availableForCrew = computed(() => {
+    const onJob = new Set(attendanceRoster.value.map(m => {
+        const a = assignmentFor(m.assignment_id)
+        return a?.technician_id
+    }).filter(Boolean))
+
+    return (props.technicians || []).filter(t => !onJob.has(t.id))
+})
+
+const crewFormReady = computed(() =>
+    Boolean(crewForm.technician_id) && crewForm.role_on_job.trim().length > 0
+)
+
+const openCrewModal = () => {
+    Object.assign(crewForm, {
+        technician_id: '',
+        role_on_job: '',
+        agreed_compensation: null,
+        // Default to the job's own window so the common case needs no typing.
+        expected_start: toDateInput(props.job.commencement_at),
+        expected_end: toDateInput(props.job.target_completion_at),
+        attendance_dates: [],
+    })
+    showCrewModal.value = true
+}
+
+const submitCrewMember = () => {
+    if (!crewFormReady.value || savingCrew.value) return
+    savingCrew.value = true
+
+    router.post(`/admin/jobs/${props.job.id}/crew`, {
+        technician_id: crewForm.technician_id,
+        role_on_job: crewForm.role_on_job,
+        agreed_compensation: crewForm.agreed_compensation || null,
+        expected_start: crewForm.expected_start || null,
+        expected_end: crewForm.expected_end || null,
+        attendance_dates: crewForm.attendance_dates.filter(Boolean),
+    }, {
+        preserveScroll: true,
+        onSuccess: () => { showCrewModal.value = false },
+        onFinish: () => { savingCrew.value = false },
+    })
+}
+
+const removeCrewMember = (member) => {
+    if (!confirm(`Remove ${member.name} from the crew? The client should be sent an updated notice.`)) return
+
+    router.post(`/admin/job-assignments/${member.assignment_id}/remove-from-crew`, {}, {
+        preserveScroll: true,
+    })
+}
+
 const rosterEditing = ref(null)
 const savingRoster = ref(false)
 const showNoticeModal = ref(false)
@@ -2774,6 +2964,7 @@ const noticeNotes = ref('')
 
 const rosterForm = reactive({
     national_id: '',
+    passport_photo: null,
     role_on_job: '',
     expected_start: '',
     expected_end: '',
@@ -2784,7 +2975,30 @@ const rosterForm = reactive({
 const assignmentFor = (assignmentId) =>
     (props.job.job_assignments || []).find(a => a.id === assignmentId)
 
-const toDateInput = (value) => (value ? String(value).slice(0, 10) : '')
+/**
+ * A stored date, as a value a <input type="date"> will accept.
+ *
+ * Not a slice of the ISO string. The app runs in Africa/Nairobi and dates are
+ * stored as local midnight, which Laravel serializes as the previous day at
+ * 21:00Z — so slicing shows every date a day early, and saving it back shifts
+ * the real one earlier each time the row is edited.
+ *
+ * Formatting from the parsed date in the viewer's own timezone puts it back:
+ * the office and the sites are in the same zone as the server.
+ */
+const toDateInput = (value) => {
+    if (!value) return ''
+
+    // Already a plain Y-m-d — attendance_dates are stored that way — so there
+    // is nothing to convert and nothing to get wrong.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return String(value)
+
+    const parsed = new Date(value)
+    if (Number.isNaN(parsed.getTime())) return ''
+
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`
+}
 
 const openRosterEditor = (member) => {
     const assignment = assignmentFor(member.assignment_id)
@@ -2792,6 +3006,9 @@ const openRosterEditor = (member) => {
     rosterEditing.value = member
     Object.assign(rosterForm, {
         national_id: member.national_id || '',
+        // Never pre-populated: a File cannot be reconstructed from a URL, and
+        // an empty field correctly means "leave the photo alone".
+        passport_photo: null,
         role_on_job: assignment?.role_on_job || '',
         expected_start: toDateInput(assignment?.expected_start),
         expected_end: toDateInput(assignment?.expected_end),
@@ -2825,12 +3042,22 @@ const saveRosterEntry = () => {
     )
 
     const idChanged = (rosterForm.national_id || '') !== (rosterEditing.value.national_id || '')
+    const identityChanged = idChanged || rosterForm.passport_photo !== null
 
-    if (idChanged && technicianId) {
+    if (identityChanged && technicianId) {
         router.post(
-            `/admin/technicians/${technicianId}/national-id`,
-            { national_id: rosterForm.national_id || null },
-            { preserveScroll: true, onSuccess: saveAssignment, onError: () => { savingRoster.value = false } }
+            `/admin/technicians/${technicianId}/identity`,
+            {
+                national_id: rosterForm.national_id || null,
+                passport_photo: rosterForm.passport_photo,
+            },
+            {
+                // A file has to go as multipart, and Inertia will not guess.
+                forceFormData: true,
+                preserveScroll: true,
+                onSuccess: saveAssignment,
+                onError: () => { savingRoster.value = false },
+            }
         )
     } else {
         saveAssignment()
@@ -6080,6 +6307,19 @@ defineOptions({
 }
 
 .roster-help { display: block; margin-top: 4px; font-size: 0.78rem; color: #64748B; line-height: 1.4; }
+
+.roster-empty {
+    margin: 0.5rem 0 0;
+    padding: 1rem;
+    background: #F8FAFC;
+    border: 1px dashed #CBD5E1;
+    border-radius: 10px;
+    color: #64748B;
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+.roster-actions { white-space: nowrap; }
+.roster-actions .btn + .btn { margin-left: 0.3rem; }
 .roster-optional { font-weight: 400; color: #94A3B8; }
 
 .roster-date-row { display: flex; gap: 0.5rem; margin-bottom: 0.45rem; }
@@ -6097,4 +6337,39 @@ defineOptions({
 }
 .roster-preview-role { color: #475569; }
 .roster-preview-dates { margin-left: auto; color: #64748B; white-space: nowrap; }
+
+.roster-name { display: inline-flex; align-items: center; gap: 0.55rem; }
+.roster-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+    border: 1px solid #E2E8F0;
+    background: #F1F5F9;
+}
+.roster-avatar-empty {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #94A3B8;
+    font-size: 0.85rem;
+}
+.roster-photo-row { display: flex; align-items: center; gap: 0.75rem; }
+.roster-photo-row .form-control { flex: 1; }
+.roster-photo-preview {
+    width: 52px;
+    height: 52px;
+    border-radius: 8px;
+    object-fit: cover;
+    flex-shrink: 0;
+    border: 1px solid #E2E8F0;
+    background: #F1F5F9;
+}
+.roster-photo-empty {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #94A3B8;
+}
 </style>

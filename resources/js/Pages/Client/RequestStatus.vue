@@ -638,6 +638,7 @@
                             <table class="crew-table">
                                 <thead>
                                     <tr>
+                                        <th></th>
                                         <th>Name</th>
                                         <th>ID No.</th>
                                         <th>Role</th>
@@ -646,6 +647,14 @@
                                 </thead>
                                 <tbody>
                                     <tr v-for="member in attendanceRoster" :key="member.assignment_id">
+                                        <!-- The photo is the point of this column: a name and a
+                                             number confirm a card, a face confirms the person. -->
+                                        <td class="crew-photo-cell">
+                                            <img v-if="member.photo_url" :src="member.photo_url" class="crew-avatar" alt="">
+                                            <span v-else class="crew-avatar crew-avatar-empty">
+                                                <i class="fas fa-user"></i>
+                                            </span>
+                                        </td>
                                         <td>
                                             {{ member.name }}
                                             <span v-if="member.is_lead" class="crew-lead">Lead</span>
@@ -3101,5 +3110,23 @@ defineOptions({
     font-size: 0.66rem;
     font-weight: 700;
     text-transform: uppercase;
+}
+
+.crew-photo-cell { width: 52px; }
+.crew-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    object-fit: cover;
+    display: block;
+    border: 1px solid #E2E8F0;
+    background: #F1F5F9;
+}
+.crew-avatar-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #94A3B8;
+    font-size: 0.9rem;
 }
 </style>

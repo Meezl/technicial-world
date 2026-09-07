@@ -569,7 +569,7 @@ class ServiceRequest extends Model
      * client's first question is who is answerable for the job, and on the
      * notice that is the top row.
      *
-     * @return array<int, array{ref: int, name: string, national_id: string|null, role: string, attendance: string, is_lead: bool}>
+     * @return array<int, array{ref: int, name: string, national_id: string|null, photo_url: string|null, role: string, attendance: string, is_lead: bool}>
      */
     public function attendanceRoster(): array
     {
@@ -589,6 +589,11 @@ class ServiceRequest extends Model
                     'assignment_id' => $assignment->id,
                     'name' => $assignment->technician->user->name,
                     'national_id' => $assignment->technician->national_id,
+                    // A passport photo, so whoever is on the gate can match a
+                    // face to the name rather than only a number on a card.
+                    'photo_url' => $assignment->technician->profile_photo_path
+                        ? '/storage/' . $assignment->technician->profile_photo_path
+                        : null,
                     // Falls back to a plain description rather than blank: a
                     // roster row with no role tells the client nothing about
                     // why that person is at their gate.
@@ -596,6 +601,9 @@ class ServiceRequest extends Model
                         ?: ($isLead ? 'Lead Technician — answerable for the whole assignment' : 'Technician'),
                     'attendance' => $assignment->attendanceLabel(),
                     'is_lead' => $isLead,
+                    // Whoever carries the job cannot be removed as a crew
+                    // member: taking them off is a reassignment.
+                    'is_primary' => (int) $this->technician_id === (int) $assignment->technician_id,
                 ];
             })
             ->all();

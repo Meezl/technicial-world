@@ -3671,16 +3671,166 @@ class AdminDashboardController extends Controller
         return back()->with('success', 'Attendance details updated.');
     }
 
-    /** The technician's national ID, which is what site security checks. */
-    public function updateTechnicianNationalId(Request $request, Technician $technician)
+    /**
+     * Put another person on the job without inventing work for them.
+     *
+     * A gang member or a lead's right-hand man is not a sub-task: they carry
+     * no separate scope, no progress of their own and often no separate fee.
+     * Until now the only ways onto a job were to become the primary
+     * technician — which displaces whoever held it — or to be given a
+     * sub-task, so a three-man roofing gang had to be modelled as three
+     * pieces of work that do not exist.
+     *
+     * This writes the assignment row directly, with service_sub_task_id left
+     * null, which is the shape the roster has always read.
+     */
+    public function addCrewMember(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'technician_id' => 'required|exists:technicians,id',
+            'role_on_job' => 'required|string|max:255',
+            // Optional on purpose: a right-hand man is frequently paid through
+            // the technician who brought them, and forcing a figure here would
+            // invent a separate payable that nobody owes.
+            'agreed_compensation' => 'nullable|numeric|min:0',
+            'expected_start' => 'nullable|date',
+            'expected_end' => 'nullable|date|after_or_equal:expected_start',
+            'attendance_dates' => 'nullable|array|max:60',
+            'attendance_dates.*' => 'required|date',
+        ]);
+
+        $alreadyOnJob = JobAssignment::where('service_request_id', $serviceRequest->id)
+            ->where('technician_id', $request->technician_id)
+            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
+            ->exists();
+
+        if ($alreadyOnJob) {
+            return back()->with('error', 'That technician is already on this job. Edit their row to change their role or dates.');
+        }
+
+        $compensation = (float) ($request->input('agreed_compensation') ?? 0);
+
+        // Only check the labour budget when there is a fee to check. A crew
+        // member on zero has nothing to allocate, and running the guard would
+        // refuse them on a job whose budget is merely unset.
+        if ($compensation > 0) {
+            $this->ensureLaborBudgetCapacity($serviceRequest, $compensation);
+        }
+
+        $dates = collect($request->input('attendance_dates', []))
+            ->filter()
+            ->map(fn ($date) => \Carbon\Carbon::parse($date)->toDateString())
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+
+        $technician = Technician::with('user')->findOrFail($request->technician_id);
+
+        JobAssignment::create([
+            'service_request_id' => $serviceRequest->id,
+            // Deliberately null: this person carries no separate scope.
+            'service_sub_task_id' => null,
+            'technician_id' => $technician->id,
+            'role_on_job' => $request->role_on_job,
+            'assigned_by' => auth()->id(),
+            'agreed_compensation' => $compensation,
+            'compensation_notes' => $compensation > 0
+                ? null
+                : 'Crew member — paid through the lead rather than separately.',
+            'status' => JobAssignment::STATUS_PENDING,
+            'expected_start' => $request->input('expected_start'),
+            'expected_end' => $request->input('expected_end'),
+            'attendance_dates' => $dates ?: null,
+        ]);
+
+        AuditLog::log(AuditLog::ACTION_ASSIGNMENT, $serviceRequest, null, [
+            'crew_member_added' => $technician->user?->name,
+            'technician_id' => $technician->id,
+            'role_on_job' => $request->role_on_job,
+            'agreed_compensation' => $compensation,
+            'added_by' => auth()->id(),
+        ]);
+
+        return back()->with('success', ($technician->user?->name ?? 'Technician') . ' added to the crew.');
+    }
+
+    /**
+     * Take somebody off the crew.
+     *
+     * The row is retired rather than deleted — who was on a job and when is
+     * the sort of thing that gets asked about months later, and a deleted row
+     * answers nothing.
+     *
+     * Refuses on the primary and the lead: removing them is a reassignment,
+     * which has its own flow, its own notification and its own reason.
+     */
+    public function removeCrewMember(Request $request, JobAssignment $jobAssignment)
+    {
+        $request->validate([
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        $serviceRequest = $jobAssignment->serviceRequest;
+
+        $isPrimary = (int) $serviceRequest->technician_id === (int) $jobAssignment->technician_id;
+        $isLead = (int) $serviceRequest->lead_technician_id === (int) $jobAssignment->technician_id;
+
+        if ($isPrimary || $isLead) {
+            return back()->with('error', 'Use Reassign Technician to change who is carrying this job.');
+        }
+
+        if ($jobAssignment->service_sub_task_id) {
+            return back()->with('error', 'This technician holds a sub-task. Change it from the sub-task instead.');
+        }
+
+        $jobAssignment->update([
+            'status' => JobAssignment::STATUS_REASSIGNED,
+            'reassignment_reason' => $request->input('reason') ?: 'Removed from the crew.',
+            'actual_end' => now(),
+        ]);
+
+        return back()->with('success', 'Removed from the crew. The client should be sent an updated attendance notice.');
+    }
+
+    /**
+     * The technician's national ID and passport photo — what the gate checks.
+     *
+     * Both live on the technician rather than the assignment: a person's face
+     * and ID number do not change per job, and re-uploading a photo for every
+     * job would guarantee that most rows have none.
+     */
+    public function updateTechnicianIdentity(Request $request, Technician $technician)
     {
         $request->validate([
             'national_id' => 'nullable|string|max:20',
+            // Passport photographs off a phone are routinely several MB, so
+            // the ceiling is generous; the mime list stays narrow.
+            'passport_photo' => 'nullable|image|mimes:jpg,jpeg,png,webp,heic,heif|max:8192',
         ]);
 
-        $technician->update(['national_id' => $request->input('national_id')]);
+        $updates = [];
 
-        return back()->with('success', 'ID number updated.');
+        if ($request->exists('national_id')) {
+            $updates['national_id'] = $request->input('national_id');
+        }
+
+        if ($request->hasFile('passport_photo')) {
+            // Replace rather than accumulate — the old photo is of no use to
+            // anybody once a new one is on file.
+            if ($technician->profile_photo_path) {
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($technician->profile_photo_path);
+            }
+
+            $updates['profile_photo_path'] = $request->file('passport_photo')
+                ->store('technician-photos/' . $technician->id, 'public');
+        }
+
+        if ($updates) {
+            $technician->update($updates);
+        }
+
+        return back()->with('success', 'Technician details updated.');
     }
 
     /**

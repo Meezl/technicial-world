@@ -222,7 +222,11 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     // deposit, on a named admin's authority and with an expiry.
     // Who the client should expect on site, and telling them.
     Route::post('/job-assignments/{jobAssignment}/roster', [AdminDashboardController::class, 'updateRosterEntry'])->name('admin.jobs.roster.update');
-    Route::post('/technicians/{technician}/national-id', [AdminDashboardController::class, 'updateTechnicianNationalId'])->name('admin.technicians.national-id');
+    // A gang member or a lead's right-hand man — on the job, but carrying no
+    // sub-task of their own.
+    Route::post('/jobs/{serviceRequest}/crew', [AdminDashboardController::class, 'addCrewMember'])->name('admin.jobs.crew.add');
+    Route::post('/job-assignments/{jobAssignment}/remove-from-crew', [AdminDashboardController::class, 'removeCrewMember'])->name('admin.jobs.crew.remove');
+    Route::post('/technicians/{technician}/identity', [AdminDashboardController::class, 'updateTechnicianIdentity'])->name('admin.technicians.identity');
     Route::post('/jobs/{serviceRequest}/attendance-notice', [AdminDashboardController::class, 'sendAttendanceNotice'])->name('admin.jobs.attendance-notice');
 
     Route::post('/jobs/{serviceRequest}/authorisations', [AdminDashboardController::class, 'storeJobAuthorisation'])->name('admin.jobs.authorisations.store');
