@@ -322,8 +322,13 @@
                                             <button @click="viewRFQ(rfq)" class="btn btn-sm btn-info" title="View Details">
                                                 <i class="fas fa-eye"></i>
                                             </button>
-                                            <button v-if="rfq.rfq_status === 'pending'" @click="reviewRFQ(rfq)" class="btn btn-sm btn-primary" title="Create Quote">
-                                                <i class="fas fa-file-invoice-dollar"></i>
+                                            <button
+                                                v-if="rfq.rfq_status === 'pending'"
+                                                @click="reviewRFQ(rfq)"
+                                                :class="['btn', 'btn-sm', rfq.quotation_draft ? 'btn-warning' : 'btn-primary']"
+                                                :title="rfq.quotation_draft ? 'Continue editing the saved draft' : 'Create Quote'"
+                                            >
+                                                <i :class="rfq.quotation_draft ? 'fas fa-pen-to-square' : 'fas fa-file-invoice-dollar'"></i>
                                             </button>
                                             <button
                                                 v-if="rfq.rfq_status === 'approved' && !isRfqFullyPaid(rfq)"
@@ -432,8 +437,13 @@
                                 <button @click="viewRFQ(rfq)" class="btn btn-sm btn-info">
                                     <i class="fas fa-eye"></i> View
                                 </button>
-                                <button v-if="rfq.rfq_status === 'pending'" @click="reviewRFQ(rfq)" class="btn btn-sm btn-primary">
-                                    <i class="fas fa-file-invoice-dollar"></i> Quote
+                                <button
+                                    v-if="rfq.rfq_status === 'pending'"
+                                    @click="reviewRFQ(rfq)"
+                                    :class="['btn', 'btn-sm', rfq.quotation_draft ? 'btn-warning' : 'btn-primary']"
+                                >
+                                    <i :class="rfq.quotation_draft ? 'fas fa-pen-to-square' : 'fas fa-file-invoice-dollar'"></i>
+                                    {{ rfq.quotation_draft ? 'Continue editing' : 'Quote' }}
                                 </button>
                                 <button
                                     v-if="rfq.rfq_status === 'approved' && !isRfqFullyPaid(rfq)"
@@ -1846,10 +1856,18 @@ const closeReviewModal = async () => {
         await persistDraft({ silent: true })
     }
 
+    const hadDraft = draftSavedAt.value !== null
+
     showReviewModal.value = false
     selectedRFQ.value = null
     resetQuotationForm()
     clearDraftState()
+
+    // Only when something was actually parked — closing an untouched modal
+    // should not cost a round trip.
+    if (hadDraft) {
+        refreshList()
+    }
 }
 const closeRejectModal = () => { showRejectModal.value = false; rejectionReason.value = '' }
 const rejectRFQ = () => { showRejectModal.value = true }
@@ -2082,7 +2100,26 @@ const persistDraft = async ({ silent = false } = {}) => {
     }
 }
 
-const saveDraftNow = () => persistDraft()
+/**
+ * Pull the list's own props back down so the row picks up its draft.
+ *
+ * Drafts save over axios rather than Inertia — a redirect on a debounce while
+ * somebody is typing would re-render the page and take the focus out of the
+ * field they are in. The cost is that `rfqs` goes stale, so the badge and the
+ * "Continue editing" button only appeared after a manual refresh. This asks
+ * for that one prop back, which is cheap and leaves the modal untouched.
+ *
+ * Deliberately not called from the autosave: a reload mid-keystroke is the
+ * exact disruption the axios call was avoiding.
+ */
+const refreshList = () => {
+    router.reload({ only: ['rfqs', 'stats'], preserveScroll: true, preserveState: true })
+}
+
+const saveDraftNow = async () => {
+    await persistDraft()
+    refreshList()
+}
 
 // Autosave trails typing rather than racing it. Long enough that a line item
 // is finished before it is stored, short enough that a closed tab costs
@@ -2120,6 +2157,8 @@ const discardDraft = async () => {
     clearDraftState()
     await nextTick()
     draftLoading.value = false
+
+    refreshList()
 }
 
 /**
