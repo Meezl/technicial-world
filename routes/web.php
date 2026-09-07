@@ -207,6 +207,10 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::post('/technicians/{technician}/profile-changes', [AdminDashboardController::class, 'approveTechnicianProfileChanges'])->name('admin.technicians.profile-changes.act');
     Route::get('/technician-documents/{document}/download', [AdminDashboardController::class, 'showTechnicianDocument'])->name('admin.technicians.documents.show');
 
+    // Finished work, out of the working list but not out of reach.
+    Route::get('/archive', [\App\Http\Controllers\Admin\ArchiveController::class, 'index'])->name('admin.archive');
+    Route::post('/archive/{serviceRequest}/reopen', [\App\Http\Controllers\Admin\ArchiveController::class, 'reopen'])->name('admin.archive.reopen');
+
     // Job management
     Route::get('/jobs', [AdminDashboardController::class, 'jobs'])->name('admin.jobs');
     Route::get('/jobs/{serviceRequest}', [AdminDashboardController::class, 'showJob'])->name('admin.jobs.show');

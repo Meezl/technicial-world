@@ -2564,15 +2564,27 @@ class AdminDashboardController extends Controller
         // live on `rfq_status`, while delivery statuses (awaiting_payment,
         // ready_for_assignment, en_route, in_progress) live on the main `status`
         // column. Route each value to the correct column.
-        if ($status = $request->input('status')) {
-            if ($status !== 'all') {
-                $rfqStatuses = ['pending', 'quoted', 'approved', 'rejected'];
-                if (in_array($status, $rfqStatuses, true)) {
-                    $query->where('rfq_status', $status);
-                } else {
-                    $query->where('status', $status);
-                }
+        $status = $request->input('status');
+
+        if ($status && $status !== 'all') {
+            $rfqStatuses = ['pending', 'quoted', 'approved', 'rejected'];
+            if (in_array($status, $rfqStatuses, true)) {
+                $query->where('rfq_status', $status);
+            } else {
+                $query->where('status', $status);
             }
+        }
+
+        // Finished work leaves the working list. 114 requests, most of them
+        // done, sat in the same list as live work — which is the complaint.
+        //
+        // Skipped when the admin has explicitly filtered to a terminal status:
+        // asking for cancelled requests and being shown none would read as the
+        // filter being broken rather than as a rule being applied.
+        $explicitlyTerminal = in_array($status, ServiceRequest::TERMINAL_STATUSES, true);
+
+        if (!$explicitlyTerminal) {
+            $query->whereNotIn('status', ServiceRequest::TERMINAL_STATUSES);
         }
 
         if ($origin = $request->input('origin')) {

@@ -705,6 +705,66 @@ class ServiceRequest extends Model
     }
 
     /**
+     * Requests that are finished, one way or another.
+     *
+     * `completed_pending_confirmation` is deliberately absent: the work is
+     * done but the client has not confirmed it, so it is still waiting on
+     * somebody and belongs in the working list.
+     *
+     * A rejected quotation is also absent. A declined quote is often re-quoted
+     * after a conversation about price, and filing it away would hide a live
+     * negotiation.
+     */
+    public const TERMINAL_STATUSES = [
+        self::STATUS_COMPLETED,
+        self::STATUS_CLOSED,
+        self::STATUS_ARCHIVED,
+        self::STATUS_CANCELLED,
+    ];
+
+    /** Finished work — the archive. */
+    public function scopeArchived($query)
+    {
+        return $query->whereIn('status', self::TERMINAL_STATUSES);
+    }
+
+    /** Anything still needing somebody to do something. */
+    public function scopeActive($query)
+    {
+        return $query->whereNotIn('status', self::TERMINAL_STATUSES);
+    }
+
+    /**
+     * How this request ended, for filing.
+     *
+     * Cancelled is kept separate from completed because they are different
+     * questions: "what did we deliver last year" and "what did we lose and
+     * why" are not answered by the same list.
+     */
+    public function archiveOutcome(): ?string
+    {
+        if (!in_array($this->status, self::TERMINAL_STATUSES, true)) {
+            return null;
+        }
+
+        return $this->status === self::STATUS_CANCELLED ? 'cancelled' : 'completed';
+    }
+
+    /**
+     * When this request left the working list.
+     *
+     * Falls back through the timestamps a finished job might have, ending at
+     * updated_at — a request with no completion date still has to file
+     * somewhere, and an unfiled row is one nobody can find.
+     */
+    public function archivedAt(): ?\Carbon\Carbon
+    {
+        return $this->completed_date
+            ?? $this->client_confirmation_date
+            ?? $this->updated_at;
+    }
+
+    /**
      * Statuses of a JobAssignment that still mean "this technician works
      * on this job". Declined and reassigned rows are history, not access.
      */
@@ -800,15 +860,6 @@ class ServiceRequest extends Model
     public function isSplitIntoSubTasks(): bool
     {
         return $this->subTasks()->exists();
-    }
-
-    public function scopeActive($query)
-    {
-        return $query->whereNotIn('status', [
-            self::STATUS_CLOSED,
-            self::STATUS_ARCHIVED,
-            self::STATUS_CANCELLED,
-        ]);
     }
 
     /**
