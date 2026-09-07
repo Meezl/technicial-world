@@ -455,6 +455,15 @@ class ServiceRequest extends Model
         );
     }
 
+    /**
+     * The half-priced quotation parked against this job, if any. One per
+     * request rather than per admin — see the quotation_drafts migration.
+     */
+    public function quotationDraft()
+    {
+        return $this->hasOne(QuotationDraft::class);
+    }
+
     public function quotations()
     {
         return $this->hasMany(Quotation::class)->orderBy('version', 'desc');

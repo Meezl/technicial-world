@@ -2526,6 +2526,9 @@ class AdminDashboardController extends Controller
             // (see scopeNeedsAdminAction on ServiceRequest for the rules).
             'progressReports:id,service_request_id,is_validated',
             'compensationAmendments:id,service_request_id,status',
+            // So the list can badge a job whose quote is half-priced, and the
+            // modal can offer to pick it back up.
+            'quotationDraft.savedBy:id,name',
         ]);
 
         // Approved variations raise the contract above the original quote, so
@@ -2811,6 +2814,11 @@ class AdminDashboardController extends Controller
                 'error' => $e->getMessage(),
             ]);
         }
+
+        // The draft has served its purpose. Leaving it would put a "Draft in
+        // progress" badge on a job that has just been quoted, and offer to
+        // restore superseded figures over the ones the client has been sent.
+        \App\Models\QuotationDraft::where('service_request_id', $serviceRequest->id)->delete();
 
         $message = $isRevision
             ? "Revised quotation (revision #{$updateData['quote_revision_count']}) sent to client."
@@ -3606,6 +3614,53 @@ class AdminDashboardController extends Controller
             'success' => true,
             'message' => "Payment of KSH " . number_format($amount, 2) . " confirmed on behalf of client.",
         ]);
+    }
+
+    // ==================== QUOTATION DRAFTS ====================
+
+    /**
+     * Park a half-priced quotation so the modal stops being a trap.
+     *
+     * Upserted per service request, not per admin: pricing a job is office
+     * work. If a colleague started it and was called away, the next person
+     * should find their figures rather than a blank form.
+     *
+     * Returns JSON rather than a redirect because this is called on a debounce
+     * while the admin is still typing — an Inertia redirect would re-render
+     * the page underneath them and take the focus out of the field.
+     */
+    public function saveQuotationDraft(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'payload' => 'required|array',
+            'is_revision' => 'nullable|boolean',
+        ]);
+
+        $draft = \App\Models\QuotationDraft::updateOrCreate(
+            ['service_request_id' => $serviceRequest->id],
+            [
+                'saved_by' => auth()->id(),
+                'payload' => \App\Models\QuotationDraft::sanitisePayload($request->input('payload')),
+                'is_revision' => $request->boolean('is_revision'),
+            ]
+        );
+
+        $draft->load('savedBy:id,name');
+
+        return response()->json([
+            'success' => true,
+            'draft' => [
+                'saved_at' => $draft->updated_at->toIso8601String(),
+                'saved_by' => $draft->savedBy?->name,
+            ],
+        ]);
+    }
+
+    public function discardQuotationDraft(ServiceRequest $serviceRequest)
+    {
+        \App\Models\QuotationDraft::where('service_request_id', $serviceRequest->id)->delete();
+
+        return response()->json(['success' => true]);
     }
 
     // ==================== ADVANCE AUTHORISATION ====================

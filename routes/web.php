@@ -311,6 +311,11 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::post('/schedule-extensions/{scheduleExtension}/decide', [\App\Http\Controllers\ScheduleExtensionController::class, 'adminDecide'])->name('admin.schedule-extensions.decide');
     Route::post('/rfq/{serviceRequest}/confirm-payment-on-behalf', [AdminDashboardController::class, 'confirmPaymentOnBehalf'])->name('admin.rfq.confirm-payment-on-behalf');
 
+    // Parked quotations. Saved on a debounce while the admin is still typing,
+    // so these answer JSON rather than redirecting the page underneath them.
+    Route::post('/rfq/{serviceRequest}/quotation-draft', [AdminDashboardController::class, 'saveQuotationDraft'])->name('admin.rfq.draft.save');
+    Route::delete('/rfq/{serviceRequest}/quotation-draft', [AdminDashboardController::class, 'discardQuotationDraft'])->name('admin.rfq.draft.discard');
+
     // Reports
     Route::get('/reports', [AdminDashboardController::class, 'reports'])->name('admin.reports');
     Route::get('/reports/rfq-revenue', [AdminDashboardController::class, 'rfqRevenueReport'])->name('admin.reports.rfq');
