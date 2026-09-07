@@ -286,6 +286,9 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     // User Management
     Route::get('/users', [AdminDashboardController::class, 'users'])->name('admin.users');
     Route::post('/users', [AdminDashboardController::class, 'storeUser'])->name('admin.users.store');
+    // The credentials mail is the only copy of the generated password, so a
+    // bounce or a spam folder needs a way back that is not deleting the account.
+    Route::post('/users/{user}/resend-credentials', [AdminDashboardController::class, 'resendUserCredentials'])->name('admin.users.resend-credentials');
     Route::put('/users/{user}', [AdminDashboardController::class, 'updateUser'])->name('admin.users.update');
     Route::delete('/users/{user}', [AdminDashboardController::class, 'destroyUser'])->name('admin.users.destroy');
 

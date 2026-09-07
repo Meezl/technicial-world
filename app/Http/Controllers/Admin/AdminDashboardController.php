@@ -3042,7 +3042,9 @@ class AdminDashboardController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
-            'password' => 'required|string|min:8|confirmed',
+            // No password field: it is generated below and mailed to the user.
+            // An admin inventing a password means it has to reach the user by
+            // some channel outside the system, which in practice is WhatsApp.
             'phone' => 'nullable|string|max:20',
             'role' => ['required', Rule::in(User::ROLES)],
             'specialization' => 'nullable|required_if:role,technician|string|max:255',
@@ -3060,11 +3062,16 @@ class AdminDashboardController extends Controller
                 ->withInput();
         }
 
+        // Generated rather than chosen, and single use. See
+        // AccountCredentialsNotification for why it cannot stay permanent.
+        $temporaryPassword = Str::password(14, symbols: false);
+
         // Create user
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
-            'password' => Hash::make($request->password),
+            'password' => Hash::make($temporaryPassword),
+            'must_change_password' => true,
             'phone' => $request->phone,
             'role' => $request->role,
             'email_verified_at' => now() // Auto-verify admin created users
@@ -3084,7 +3091,64 @@ class AdminDashboardController extends Controller
             ]);
         }
 
-        return redirect()->route('admin.users')->with('success', 'User created successfully!');
+        // Sent inline, not queued: a queue failure here leaves an account
+        // nobody can sign into and no trace of why. If the mail fails the
+        // admin needs to know now, while they still have the person in front
+        // of them — so say so rather than reporting a clean success.
+        try {
+            $user->notify(new \App\Notifications\AccountCredentialsNotification($temporaryPassword));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Account credentials mail failed', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return redirect()->route('admin.users')->with(
+                'warning',
+                "{$user->name}'s account was created, but the credentials email could not be sent. "
+                . 'Use "Resend credentials" on their row to try again.'
+            );
+        }
+
+        return redirect()->route('admin.users')->with(
+            'success',
+            "User created. Their sign-in details have been emailed to {$user->email}."
+        );
+    }
+
+    /**
+     * Issue a fresh temporary password and mail it again.
+     *
+     * The credentials mail is the only copy of that password, so a bounce, a
+     * typo in the address, or a spam folder otherwise means deleting the
+     * account and starting again.
+     */
+    public function resendUserCredentials(User $user)
+    {
+        $temporaryPassword = Str::password(14, symbols: false);
+
+        $user->update([
+            'password' => Hash::make($temporaryPassword),
+            'must_change_password' => true,
+        ]);
+
+        try {
+            $user->notify(new \App\Notifications\AccountCredentialsNotification($temporaryPassword));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Account credentials resend failed', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return back()->with('error', 'Could not send the credentials email. Check the address and try again.');
+        }
+
+        AuditLog::log(AuditLog::ACTION_UPDATED, $user, null, [
+            'credentials_reissued_by' => auth()->id(),
+            'reason' => 'Admin reissued account credentials',
+        ]);
+
+        return back()->with('success', "New sign-in details emailed to {$user->email}.");
     }
 
     public function updateUser(Request $request, User $user)

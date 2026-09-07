@@ -1,5 +1,15 @@
 <script setup>
 import { Link } from '@inertiajs/vue3';
+
+// Defaults reproduce what this layout has always said, so the six pages
+// already using it are unchanged. Only the set-password screen overrides
+// them — "Welcome Back" and an invitation to register both read as mistakes
+// to somebody who is already signed in and being asked to finish setting up.
+defineProps({
+    title: { type: String, default: 'Welcome Back' },
+    subtitle: { type: String, default: 'Sign in to access your dashboard' },
+    showRegister: { type: Boolean, default: true },
+});
 </script>
 
 <template>
@@ -32,13 +42,13 @@ import { Link } from '@inertiajs/vue3';
             <div class="auth-form-wrapper">
                 <div class="auth-form-header">
                     <Link href="/" class="mobile-logo">TECHNICIAN WORLD</Link>
-                    <h2>Welcome Back</h2>
-                    <p>Sign in to access your dashboard</p>
+                    <h2>{{ title }}</h2>
+                    <p>{{ subtitle }}</p>
                 </div>
                 <div class="auth-form-content">
                     <slot />
                 </div>
-                <div class="auth-form-footer">
+                <div class="auth-form-footer" v-if="showRegister">
                     <p>Don't have an account? <Link :href="route('register')" class="auth-link">Sign Up</Link></p>
                 </div>
             </div>
