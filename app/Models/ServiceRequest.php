@@ -549,6 +549,95 @@ class ServiceRequest extends Model
         return $this->hasMany(JobAssignment::class);
     }
 
+    /** Assignments that still mean somebody is coming. */
+    public function liveAssignments()
+    {
+        return $this->hasMany(JobAssignment::class)
+            ->whereIn('status', self::LIVE_ASSIGNMENT_STATUSES)
+            ->orderBy('id');
+    }
+
+    /**
+     * Who the client should expect on site, and when.
+     *
+     * One reading for three audiences — the admin roster panel, the client's
+     * request-status page, and the attendance notice email. The office builds
+     * this table by hand today, and the three copies disagreeing is precisely
+     * the failure that produces a technician turned away at the gate.
+     *
+     * The lead is listed first regardless of when they were assigned: the
+     * client's first question is who is answerable for the job, and on the
+     * notice that is the top row.
+     *
+     * @return array<int, array{ref: int, name: string, national_id: string|null, role: string, attendance: string, is_lead: bool}>
+     */
+    public function attendanceRoster(): array
+    {
+        $assignments = $this->relationLoaded('liveAssignments')
+            ? $this->getRelation('liveAssignments')
+            : $this->liveAssignments()->with('technician.user')->get();
+
+        return $assignments
+            ->filter(fn ($assignment) => $assignment->technician && $assignment->technician->user)
+            ->sortByDesc(fn ($assignment) => $this->isLeadTechnician($assignment->technician_id) ? 1 : 0)
+            ->values()
+            ->map(function ($assignment, $index) {
+                $isLead = $this->isLeadTechnician($assignment->technician_id);
+
+                return [
+                    'ref' => $index + 1,
+                    'assignment_id' => $assignment->id,
+                    'name' => $assignment->technician->user->name,
+                    'national_id' => $assignment->technician->national_id,
+                    // Falls back to a plain description rather than blank: a
+                    // roster row with no role tells the client nothing about
+                    // why that person is at their gate.
+                    'role' => $assignment->role_on_job
+                        ?: ($isLead ? 'Lead Technician — answerable for the whole assignment' : 'Technician'),
+                    'attendance' => $assignment->attendanceLabel(),
+                    'is_lead' => $isLead,
+                ];
+            })
+            ->all();
+    }
+
+    /**
+     * The outer dates across the whole crew, for the notice's opening line
+     * ("will be visiting your property between X and Y").
+     *
+     * @return array{start: \Carbon\Carbon|null, end: \Carbon\Carbon|null}
+     */
+    public function attendanceWindow(): array
+    {
+        $dates = collect();
+
+        foreach ($this->liveAssignments()->get() as $assignment) {
+            foreach (($assignment->attendance_dates ?? []) as $date) {
+                if ($date) {
+                    $dates->push(\Carbon\Carbon::parse($date));
+                }
+            }
+            if ($assignment->expected_start) {
+                $dates->push($assignment->expected_start);
+            }
+            if ($assignment->expected_end) {
+                $dates->push($assignment->expected_end);
+            }
+        }
+
+        // Nobody has dates yet — fall back to the job's own schedule so the
+        // notice can still be sent rather than refusing over a blank column.
+        if ($dates->isEmpty()) {
+            if ($this->commencement_at) $dates->push($this->commencement_at);
+            if ($this->target_completion_at) $dates->push($this->target_completion_at);
+        }
+
+        return [
+            'start' => $dates->min(),
+            'end' => $dates->max(),
+        ];
+    }
+
     public function stateLogs()
     {
         return $this->hasMany(JobStateLog::class)->orderBy('created_at', 'desc');

@@ -216,6 +216,11 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
 
     // Advance authorisation — running a job ahead of the client's approval or
     // deposit, on a named admin's authority and with an expiry.
+    // Who the client should expect on site, and telling them.
+    Route::post('/job-assignments/{jobAssignment}/roster', [AdminDashboardController::class, 'updateRosterEntry'])->name('admin.jobs.roster.update');
+    Route::post('/technicians/{technician}/national-id', [AdminDashboardController::class, 'updateTechnicianNationalId'])->name('admin.technicians.national-id');
+    Route::post('/jobs/{serviceRequest}/attendance-notice', [AdminDashboardController::class, 'sendAttendanceNotice'])->name('admin.jobs.attendance-notice');
+
     Route::post('/jobs/{serviceRequest}/authorisations', [AdminDashboardController::class, 'storeJobAuthorisation'])->name('admin.jobs.authorisations.store');
     Route::post('/job-authorisations/{jobAuthorisation}/revoke', [AdminDashboardController::class, 'revokeJobAuthorisation'])->name('admin.jobs.authorisations.revoke');
     Route::post('/progress-reports/{progressReport}/validate', [AdminDashboardController::class, 'validateProgress'])->name('admin.progress.validate');

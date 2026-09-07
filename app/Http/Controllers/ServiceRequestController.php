@@ -205,6 +205,11 @@ class ServiceRequestController extends Controller
 
         return Inertia::render('Client/RequestStatus', [
             'serviceRequest' => $serviceRequest,
+            // Who is coming to their property and when. The client currently
+            // has to ask the office by email for this; it is the same reading
+            // the attendance notice is built from, so the two cannot disagree.
+            'attendanceRoster' => $serviceRequest->attendanceRoster(),
+            'attendanceWindow' => $serviceRequest->attendanceWindow(),
             // The outstanding contract balance (quote + approved variations,
             // less what has been billed) — the total still owed, for context.
             'balanceDue' => round($billing->billableRemaining($serviceRequest), 2),

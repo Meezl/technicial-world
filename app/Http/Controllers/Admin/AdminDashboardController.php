@@ -371,6 +371,10 @@ class AdminDashboardController extends Controller
                 'authorisation_descriptions' => \App\Models\JobAuthorisation::TYPE_DESCRIPTIONS,
             ],
             'approvalEvidence' => $serviceRequest->approvalEvidence(),
+            // Who the client is expecting and when — the same reading the
+            // notice email and the client's own page use.
+            'attendanceRoster' => $serviceRequest->attendanceRoster(),
+            'attendanceWindow' => $serviceRequest->attendanceWindow(),
         ]);
     }
 
@@ -3614,6 +3618,104 @@ class AdminDashboardController extends Controller
             'success' => true,
             'message' => "Payment of KSH " . number_format($amount, 2) . " confirmed on behalf of client.",
         ]);
+    }
+
+    // ==================== ATTENDANCE ROSTER ====================
+
+    /**
+     * Set what a technician is on this job to do, and which days to expect
+     * them.
+     *
+     * Both live on the assignment rather than the technician: the same person
+     * is a gang member on one job and the lead on the next, and their dates
+     * differ per job by definition.
+     */
+    public function updateRosterEntry(Request $request, JobAssignment $jobAssignment)
+    {
+        $request->validate([
+            'role_on_job' => 'nullable|string|max:255',
+            'expected_start' => 'nullable|date',
+            'expected_end' => 'nullable|date|after_or_equal:expected_start',
+            // Discrete days for somebody who is not on site throughout.
+            'attendance_dates' => 'nullable|array|max:60',
+            'attendance_dates.*' => 'required|date',
+        ]);
+
+        $dates = collect($request->input('attendance_dates', []))
+            ->filter()
+            ->map(fn ($date) => \Carbon\Carbon::parse($date)->toDateString())
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+
+        $jobAssignment->update([
+            'role_on_job' => $request->input('role_on_job'),
+            'expected_start' => $request->input('expected_start'),
+            'expected_end' => $request->input('expected_end'),
+            'attendance_dates' => $dates ?: null,
+        ]);
+
+        return back()->with('success', 'Attendance details updated.');
+    }
+
+    /** The technician's national ID, which is what site security checks. */
+    public function updateTechnicianNationalId(Request $request, Technician $technician)
+    {
+        $request->validate([
+            'national_id' => 'nullable|string|max:20',
+        ]);
+
+        $technician->update(['national_id' => $request->input('national_id')]);
+
+        return back()->with('success', 'ID number updated.');
+    }
+
+    /**
+     * Send the client the notice the office writes by hand today.
+     *
+     * Sent inline rather than queued: this goes out when a crew is about to
+     * travel, and a queue failure would leave the office believing the client
+     * had been told.
+     */
+    public function sendAttendanceNotice(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'notes' => 'nullable|string|max:1000',
+        ]);
+
+        $serviceRequest->loadMissing('user');
+
+        if (!$serviceRequest->user?->email) {
+            return back()->with('error', 'This client has no email address on file.');
+        }
+
+        $roster = $serviceRequest->attendanceRoster();
+        if (empty($roster)) {
+            return back()->with('error', 'Assign at least one technician before sending an attendance notice.');
+        }
+
+        try {
+            Mail::to($serviceRequest->user->email)
+                ->send(new \App\Mail\TechnicianAttendanceNotice($serviceRequest, $request->input('notes')));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Attendance notice failed', [
+                'service_request_id' => $serviceRequest->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return back()->with('error', 'Could not send the attendance notice. The client has not been told.');
+        }
+
+        // Recorded so "did we tell the client?" has an answer that is not
+        // somebody's memory of sending an email.
+        AuditLog::log(AuditLog::ACTION_UPDATED, $serviceRequest, null, [
+            'attendance_notice_sent_to' => $serviceRequest->user->email,
+            'crew_size' => count($roster),
+            'sent_by' => auth()->id(),
+        ]);
+
+        return back()->with('success', 'Attendance notice sent to ' . $serviceRequest->user->email . '.');
     }
 
     // ==================== QUOTATION DRAFTS ====================

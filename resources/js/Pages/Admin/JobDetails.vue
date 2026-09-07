@@ -360,6 +360,70 @@
                         </div>
                     </article>
 
+                    <!-- What the office currently types by hand into an email
+                         before every visit. Held here so the client's page, the
+                         notice and this table cannot disagree. -->
+                    <article class="job-shell-card" v-if="attendanceRoster.length">
+                        <div class="job-card-header">
+                            <div>
+                                <span class="section-kicker">Attendance</span>
+                                <h3>Who the client is expecting</h3>
+                                <p>
+                                    Site security checks ID numbers at the gate, so a technician
+                                    the client has not been told about is turned away.
+                                </p>
+                            </div>
+                            <div class="header-actions-row">
+                                <button class="btn btn-primary btn-sm" @click="showNoticeModal = true">
+                                    <i class="fas fa-envelope"></i> Send attendance notice
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="roster-scroll">
+                            <table class="roster-table">
+                                <thead>
+                                    <tr>
+                                        <th>Ref</th>
+                                        <th>Name</th>
+                                        <th>ID No.</th>
+                                        <th>Role on this job</th>
+                                        <th>Projected dates of attendance</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="member in attendanceRoster" :key="member.assignment_id">
+                                        <td>{{ member.ref }}.</td>
+                                        <td>
+                                            {{ member.name }}
+                                            <span v-if="member.is_lead" class="roster-lead">Lead</span>
+                                        </td>
+                                        <!-- Missing IDs are called out rather than left blank:
+                                             an empty cell on the notice is the one that gets
+                                             somebody stopped at the gate. -->
+                                        <td>
+                                            <span v-if="member.national_id">{{ member.national_id }}</span>
+                                            <span v-else class="roster-missing">Not on file</span>
+                                        </td>
+                                        <td>{{ member.role }}</td>
+                                        <td>{{ member.attendance }}</td>
+                                        <td class="roster-actions">
+                                            <button class="btn btn-sm btn-secondary" @click="openRosterEditor(member)">
+                                                <i class="fas fa-pen"></i>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <p v-if="rosterMissingIds.length" class="roster-warning">
+                            <i class="fas fa-triangle-exclamation"></i>
+                            No ID number on file for {{ rosterMissingIds.join(', ') }} — add it before sending the notice.
+                        </p>
+                    </article>
+
                     <article class="job-shell-card" v-if="job.has_sub_tasks || canAddSubTasks">
                         <div class="job-card-header">
                             <div>
@@ -1572,6 +1636,106 @@
         </div>
 
         <!-- Budget Modal -->
+        <!-- Editing one crew member's line on the notice. -->
+        <div v-if="rosterEditing" class="modal-overlay">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h3>{{ rosterEditing.name }}</h3>
+                    <button @click="rosterEditing = null" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>ID number</label>
+                        <input v-model="rosterForm.national_id" type="text" class="form-control" placeholder="e.g. 37853277">
+                        <small class="roster-help">Stored on the technician — it follows them to every job.</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Role on this job</label>
+                        <input v-model="rosterForm.role_on_job" type="text" class="form-control"
+                            placeholder="e.g. Roof Installation Gang Member">
+                        <small class="roster-help">What this person is here to do, in the client's words.</small>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>On site from</label>
+                            <input v-model="rosterForm.expected_start" type="date" class="form-control">
+                        </div>
+                        <div class="form-group">
+                            <label>Until</label>
+                            <input v-model="rosterForm.expected_end" type="date" class="form-control">
+                        </div>
+                    </div>
+
+                    <!-- For somebody who is not on site throughout: a specialist
+                         attending on the 4th and again on the 8th is not there
+                         for the days between, and a range would say they were. -->
+                    <div class="form-group">
+                        <label>Specific days only <span class="roster-optional">(optional)</span></label>
+                        <div v-for="(date, index) in rosterForm.attendance_dates" :key="index" class="roster-date-row">
+                            <input v-model="rosterForm.attendance_dates[index]" type="date" class="form-control">
+                            <button type="button" class="btn btn-sm btn-danger" @click="rosterForm.attendance_dates.splice(index, 1)">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-secondary" @click="rosterForm.attendance_dates.push('')">
+                            <i class="fas fa-plus"></i> Add a day
+                        </button>
+                        <small class="roster-help">
+                            Set these and they replace the range above on the client's notice.
+                        </small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button @click="rosterEditing = null" class="btn btn-secondary">Cancel</button>
+                    <button @click="saveRosterEntry" class="btn btn-primary" :disabled="savingRoster">
+                        {{ savingRoster ? 'Saving…' : 'Save' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sending the notice. Shows the crew one more time, because this is
+             the last point before it reaches the client. -->
+        <div v-if="showNoticeModal" class="modal-overlay">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h3>Send attendance notice</h3>
+                    <button @click="showNoticeModal = false" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="roster-help" style="margin-bottom:0.75rem;">
+                        {{ job.user?.name }} will be emailed the {{ attendanceRoster.length }}
+                        {{ attendanceRoster.length === 1 ? 'person' : 'people' }} below, with their ID numbers
+                        and the days to expect them.
+                    </p>
+
+                    <ul class="roster-preview">
+                        <li v-for="member in attendanceRoster" :key="member.assignment_id">
+                            <strong>{{ member.name }}</strong>
+                            <span v-if="!member.national_id" class="roster-missing"> — no ID on file</span>
+                            <span class="roster-preview-role">{{ member.role }}</span>
+                            <span class="roster-preview-dates">{{ member.attendance }}</span>
+                        </li>
+                    </ul>
+
+                    <div class="form-group">
+                        <label>Anything else to tell them <span class="roster-optional">(optional)</span></label>
+                        <textarea v-model="noticeNotes" rows="3" class="form-control"
+                            placeholder="e.g. Access is via the side gate on Ndege Road."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button @click="showNoticeModal = false" class="btn btn-secondary">Cancel</button>
+                    <button @click="sendAttendanceNotice" class="btn btn-primary" :disabled="sendingNotice">
+                        <i class="fas fa-paper-plane"></i>
+                        {{ sendingNotice ? 'Sending…' : 'Send to ' + (job.user?.email || 'client') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Advance authorisation. The reason is mandatory and the expiry is
              mandatory, because the failure mode here is not a bad decision but
              a decision nobody remembers making. -->
@@ -2195,6 +2359,14 @@ const props = defineProps({
         type: Array,
         default: () => []
     },
+    attendanceRoster: {
+        type: Array,
+        default: () => []
+    },
+    attendanceWindow: {
+        type: Object,
+        default: () => ({ start: null, end: null })
+    },
     gating: {
         type: Object,
         default: () => ({ assignment_blocker: null, commencement_blocker: null, live_authorisations: [] })
@@ -2583,6 +2755,98 @@ const canAddSubTasks = computed(() => {
 })
 
 const authorisationLabel = (type) => props.gating?.authorisation_types?.[type] || type
+
+// ---- Attendance roster ----
+
+const attendanceRoster = computed(() => props.attendanceRoster || [])
+
+// Surfaced before the notice goes rather than after: a blank ID column is the
+// one that gets somebody stopped at the client's gate.
+const rosterMissingIds = computed(() =>
+    attendanceRoster.value.filter(m => !m.national_id).map(m => m.name)
+)
+
+const rosterEditing = ref(null)
+const savingRoster = ref(false)
+const showNoticeModal = ref(false)
+const sendingNotice = ref(false)
+const noticeNotes = ref('')
+
+const rosterForm = reactive({
+    national_id: '',
+    role_on_job: '',
+    expected_start: '',
+    expected_end: '',
+    attendance_dates: [],
+})
+
+/** The assignment row behind a roster line, for the dates already set. */
+const assignmentFor = (assignmentId) =>
+    (props.job.job_assignments || []).find(a => a.id === assignmentId)
+
+const toDateInput = (value) => (value ? String(value).slice(0, 10) : '')
+
+const openRosterEditor = (member) => {
+    const assignment = assignmentFor(member.assignment_id)
+
+    rosterEditing.value = member
+    Object.assign(rosterForm, {
+        national_id: member.national_id || '',
+        role_on_job: assignment?.role_on_job || '',
+        expected_start: toDateInput(assignment?.expected_start),
+        expected_end: toDateInput(assignment?.expected_end),
+        attendance_dates: [...(assignment?.attendance_dates || [])],
+    })
+}
+
+const saveRosterEntry = () => {
+    if (!rosterEditing.value || savingRoster.value) return
+    savingRoster.value = true
+
+    const assignment = assignmentFor(rosterEditing.value.assignment_id)
+    const technicianId = assignment?.technician_id
+
+    // The ID lives on the technician and the rest on the assignment, so this
+    // is two writes. Chained rather than parallel: the second reload would
+    // otherwise land on props the first had already replaced.
+    const saveAssignment = () => router.post(
+        `/admin/job-assignments/${rosterEditing.value.assignment_id}/roster`,
+        {
+            role_on_job: rosterForm.role_on_job || null,
+            expected_start: rosterForm.expected_start || null,
+            expected_end: rosterForm.expected_end || null,
+            attendance_dates: rosterForm.attendance_dates.filter(Boolean),
+        },
+        {
+            preserveScroll: true,
+            onSuccess: () => { rosterEditing.value = null },
+            onFinish: () => { savingRoster.value = false },
+        }
+    )
+
+    const idChanged = (rosterForm.national_id || '') !== (rosterEditing.value.national_id || '')
+
+    if (idChanged && technicianId) {
+        router.post(
+            `/admin/technicians/${technicianId}/national-id`,
+            { national_id: rosterForm.national_id || null },
+            { preserveScroll: true, onSuccess: saveAssignment, onError: () => { savingRoster.value = false } }
+        )
+    } else {
+        saveAssignment()
+    }
+}
+
+const sendAttendanceNotice = () => {
+    if (sendingNotice.value) return
+    sendingNotice.value = true
+
+    router.post(`/admin/jobs/${props.job.id}/attendance-notice`, { notes: noticeNotes.value || null }, {
+        preserveScroll: true,
+        onSuccess: () => { showNoticeModal.value = false; noticeNotes.value = '' },
+        onFinish: () => { sendingNotice.value = false },
+    })
+}
 
 // ---- Advance authorisation ----
 
@@ -5766,4 +6030,71 @@ defineOptions({
     color: #64748B;
     line-height: 1.4;
 }
+
+/* ---- Attendance roster ---- */
+
+.roster-scroll { overflow-x: auto; }
+.roster-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+.roster-table th,
+.roster-table td {
+    border-bottom: 1px solid #E2E8F0;
+    padding: 0.6rem 0.7rem;
+    text-align: left;
+    vertical-align: top;
+}
+.roster-table th {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #64748B;
+    background: #F8FAFC;
+    white-space: nowrap;
+}
+.roster-table td:first-child { width: 40px; color: #94A3B8; }
+.roster-actions { width: 48px; text-align: right; }
+
+.roster-lead {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: #DBEAFE;
+    color: #1E40AF;
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+.roster-missing { color: #B45309; font-style: italic; }
+
+.roster-warning {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0.85rem 0 0;
+    padding: 0.7rem 0.85rem;
+    background: #FFFBEB;
+    border: 1px solid #FDE68A;
+    border-radius: 8px;
+    color: #92400E;
+    font-size: 0.84rem;
+}
+
+.roster-help { display: block; margin-top: 4px; font-size: 0.78rem; color: #64748B; line-height: 1.4; }
+.roster-optional { font-weight: 400; color: #94A3B8; }
+
+.roster-date-row { display: flex; gap: 0.5rem; margin-bottom: 0.45rem; }
+.roster-date-row .form-control { flex: 1; }
+
+.roster-preview { list-style: none; padding: 0; margin: 0 0 1rem; }
+.roster-preview li {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.6rem;
+    align-items: baseline;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #F1F5F9;
+    font-size: 0.85rem;
+}
+.roster-preview-role { color: #475569; }
+.roster-preview-dates { margin-left: auto; color: #64748B; white-space: nowrap; }
 </style>
