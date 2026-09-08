@@ -229,7 +229,9 @@ class TechnicianCommencementGateTest extends TestCase
 
         $this->start($techUser, $sr, 'completed');
 
-        $this->assertSame('completed', $sr->fresh()->status);
+        // Still never gated — it just lands on the office's desk rather than
+        // going straight to a terminal status.
+        $this->assertSame('completed_pending_confirmation', $sr->fresh()->status);
     }
 
     /**

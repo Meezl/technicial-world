@@ -190,10 +190,81 @@ class AttendanceRosterTest extends TestCase
         $tech = $this->makeTechnician('Julius Wangira');
 
         $this->actingAs($admin)
-            ->post(route('admin.technicians.national-id', $tech), ['national_id' => '34021796'])
+            ->post(route('admin.technicians.identity', $tech), ['national_id' => '34021796'])
             ->assertRedirect();
 
         $this->assertSame('34021796', $tech->fresh()->national_id);
+    }
+
+    /** A face to match the name on the gate, not only a number on a card. */
+    public function test_admin_uploads_a_passport_photo_and_it_reaches_the_roster(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('public');
+
+        [$sr, , $admin] = $this->makeJob();
+        $tech = $this->makeTechnician('Clinton Mogaka Nyabuto', '32455231');
+        $this->assign($sr, $tech, ['role_on_job' => 'Roof Installation Gang Member']);
+
+        $this->actingAs($admin)->post(route('admin.technicians.identity', $tech), [
+            'passport_photo' => \Illuminate\Http\UploadedFile::fake()->image('passport.jpg'),
+        ])->assertRedirect();
+
+        $tech->refresh();
+        $this->assertNotNull($tech->profile_photo_path);
+        \Illuminate\Support\Facades\Storage::disk('public')->assertExists($tech->profile_photo_path);
+
+        $this->assertSame(
+            '/storage/' . $tech->profile_photo_path,
+            $sr->fresh()->attendanceRoster()[0]['photo_url']
+        );
+    }
+
+    /** Replaced, not accumulated — the old photo is of no use to anybody. */
+    public function test_a_replacement_photo_removes_the_previous_one(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('public');
+
+        [$sr, , $admin] = $this->makeJob();
+        $tech = $this->makeTechnician('Gordon Ochieng Okello');
+
+        $this->actingAs($admin)->post(route('admin.technicians.identity', $tech), [
+            'passport_photo' => \Illuminate\Http\UploadedFile::fake()->image('first.jpg'),
+        ]);
+        $first = $tech->fresh()->profile_photo_path;
+
+        $this->actingAs($admin)->post(route('admin.technicians.identity', $tech), [
+            'passport_photo' => \Illuminate\Http\UploadedFile::fake()->image('second.jpg'),
+        ]);
+
+        \Illuminate\Support\Facades\Storage::disk('public')->assertMissing($first);
+        \Illuminate\Support\Facades\Storage::disk('public')->assertExists($tech->fresh()->profile_photo_path);
+    }
+
+    public function test_a_technician_with_no_photo_reads_as_null_rather_than_a_broken_link(): void
+    {
+        [$sr] = $this->makeJob();
+        $this->assign($sr, $this->makeTechnician('No Photo Yet'));
+
+        $this->assertNull($sr->fresh()->attendanceRoster()[0]['photo_url']);
+    }
+
+    public function test_the_client_sees_the_crew_photos_too(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('public');
+
+        [$sr, $client, $admin] = $this->makeJob();
+        $tech = $this->makeTechnician('Peter Mbaabu Kangichu', '214589110');
+        $this->assign($sr, $tech, ['role_on_job' => 'Lead Technician']);
+
+        $this->actingAs($admin)->post(route('admin.technicians.identity', $tech), [
+            'passport_photo' => \Illuminate\Http\UploadedFile::fake()->image('passport.jpg'),
+        ]);
+
+        $this->actingAs($client)
+            ->get(route('client.request-status', $sr))
+            ->assertInertia(fn ($page) => $page
+                ->where('attendanceRoster.0.name', 'Peter Mbaabu Kangichu')
+                ->where('attendanceRoster.0.photo_url', '/storage/' . $tech->fresh()->profile_photo_path));
     }
 
     public function test_the_notice_reaches_the_client_with_the_crew_on_it(): void

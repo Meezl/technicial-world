@@ -95,6 +95,9 @@ Route::middleware(['auth'])->group(function () {
     // Service request progress routes
     Route::post('/client/service-request/{serviceRequest}/confirm-arrival', [\App\Http\Controllers\ClientController::class, 'confirmArrival'])->name('client.confirm-arrival');
     Route::post('/client/service-request/{serviceRequest}/confirm-completion', [\App\Http\Controllers\ClientController::class, 'confirmCompletion'])->name('client.confirm-completion');
+    // The client's own sign-off, which is what actually closes a job.
+    Route::post('/client/service-request/{serviceRequest}/verify', [\App\Http\Controllers\ClientController::class, 'verifyCompletion'])->name('client.verify-completion');
+    Route::post('/client/service-request/{serviceRequest}/raise-concern', [\App\Http\Controllers\ClientController::class, 'raiseCompletionConcern'])->name('client.raise-concern');
     Route::post('/client/schedule-extensions/{scheduleExtension}/decide', [\App\Http\Controllers\ScheduleExtensionController::class, 'clientDecide'])->name('client.schedule-extensions.decide');
     Route::post('/client/service-request/{serviceRequest}/rate', [\App\Http\Controllers\ClientController::class, 'rateJob'])->name('client.rate-job');
 
@@ -220,9 +223,21 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
 
     // Advance authorisation — running a job ahead of the client's approval or
     // deposit, on a named admin's authority and with an expiry.
+    // The office's final word on a job the lead has signed off — the third
+    // and last stage of completion.
+    Route::post('/jobs/{serviceRequest}/approve-completion', [AdminDashboardController::class, 'approveJobCompletion'])->name('admin.jobs.approve-completion');
+    Route::post('/jobs/{serviceRequest}/return-for-rework', [AdminDashboardController::class, 'returnJobForRework'])->name('admin.jobs.return-for-rework');
+    // The client never came back, or came back unhappy.
+    Route::post('/jobs/{serviceRequest}/close-unverified', [AdminDashboardController::class, 'closeWithoutClientVerification'])->name('admin.jobs.close-unverified');
+    Route::post('/jobs/{serviceRequest}/resolve-concern', [AdminDashboardController::class, 'resolveClientConcern'])->name('admin.jobs.resolve-concern');
+
     // Who the client should expect on site, and telling them.
     Route::post('/job-assignments/{jobAssignment}/roster', [AdminDashboardController::class, 'updateRosterEntry'])->name('admin.jobs.roster.update');
-    Route::post('/technicians/{technician}/national-id', [AdminDashboardController::class, 'updateTechnicianNationalId'])->name('admin.technicians.national-id');
+    // A gang member or a lead's right-hand man — on the job, but carrying no
+    // sub-task of their own.
+    Route::post('/jobs/{serviceRequest}/crew', [AdminDashboardController::class, 'addCrewMember'])->name('admin.jobs.crew.add');
+    Route::post('/job-assignments/{jobAssignment}/remove-from-crew', [AdminDashboardController::class, 'removeCrewMember'])->name('admin.jobs.crew.remove');
+    Route::post('/technicians/{technician}/identity', [AdminDashboardController::class, 'updateTechnicianIdentity'])->name('admin.technicians.identity');
     Route::post('/jobs/{serviceRequest}/attendance-notice', [AdminDashboardController::class, 'sendAttendanceNotice'])->name('admin.jobs.attendance-notice');
 
     Route::post('/jobs/{serviceRequest}/authorisations', [AdminDashboardController::class, 'storeJobAuthorisation'])->name('admin.jobs.authorisations.store');

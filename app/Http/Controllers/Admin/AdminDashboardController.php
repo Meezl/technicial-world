@@ -3632,6 +3632,149 @@ class AdminDashboardController extends Controller
         ]);
     }
 
+    // ==================== COMPLETION SIGN-OFF ====================
+
+    /**
+     * The office's final word: this is where an RFQ is deemed complete.
+     *
+     * Third of three stages. The technician files their hundred per cent, the
+     * lead signs it off on site, and the job waits here until somebody in the
+     * office has looked at it. Only now does it become terminal, get its
+     * completion date, and count towards the crew's records.
+     */
+    public function approveJobCompletion(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'notes' => 'nullable|string|max:1000',
+        ]);
+
+        if ($serviceRequest->status !== ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION) {
+            return back()->with('error',
+                'Only a job the lead has signed off can be approved. This one is ' .
+                (ServiceRequest::allStatuses()[$serviceRequest->status] ?? $serviceRequest->status) . '.'
+            );
+        }
+
+        app(\App\Services\JobService::class)
+            ->approveCompletion($serviceRequest, auth()->user(), $request->input('notes'));
+
+        AuditLog::log(AuditLog::ACTION_APPROVAL, $serviceRequest, null, [
+            'completion_approved_by' => auth()->id(),
+            'notes' => $request->input('notes'),
+        ]);
+
+        // Tell the client. They can find it in their portal either way, but a
+        // client who does not log in would otherwise never know it was waiting
+        // on them — and the office would end up closing it themselves.
+        $serviceRequest->loadMissing('user');
+        $emailed = false;
+
+        try {
+            $serviceRequest->user?->notify(new \App\Notifications\JobReadyForVerification($serviceRequest));
+            $emailed = $serviceRequest->user !== null;
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Client verification notice failed', [
+                'service_request_id' => $serviceRequest->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return back()->with(
+            $emailed ? 'success' : 'warning',
+            $emailed
+                ? $serviceRequest->request_id . ' approved and sent to ' . $serviceRequest->user->email . ' to verify.'
+                : $serviceRequest->request_id . ' approved, but the client could not be emailed. It is waiting for them in their portal.'
+        );
+    }
+
+    /**
+     * Close a job the client never came back on.
+     *
+     * Available once the verification window has passed. Recorded as closed
+     * without them, because a job shut on a client's silence is not a job they
+     * verified and a report that counts the two together misdescribes the
+     * business to itself.
+     */
+    public function closeWithoutClientVerification(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'reason' => 'required|string|min:10|max:500',
+        ]);
+
+        if ($serviceRequest->status !== ServiceRequest::STATUS_AWAITING_CLIENT_VERIFICATION) {
+            return back()->with('error', 'Only a job awaiting client verification can be closed this way.');
+        }
+
+        if (!$serviceRequest->clientVerificationOverdue()) {
+            $due = $serviceRequest->client_verification_sent_at
+                ->addDays(ServiceRequest::CLIENT_VERIFICATION_DAYS);
+
+            return back()->with('error',
+                'The client still has until ' . $due->format('d M Y, H:i') . ' to verify this job.'
+            );
+        }
+
+        app(\App\Services\JobService::class)
+            ->closeWithoutClient($serviceRequest, auth()->user(), $request->input('reason'));
+
+        return back()->with('success',
+            $serviceRequest->request_id . ' closed without client verification, and recorded as such.'
+        );
+    }
+
+    /**
+     * Put right what the client raised, then hand it back to them.
+     *
+     * Two ways out of a concern: send the crew back, or answer it and return
+     * the job for verification. Both belong to the office, which is the point
+     * of routing concerns here rather than straight to site.
+     */
+    public function resolveClientConcern(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'action' => 'required|in:return_to_site,resend_to_client',
+            'note' => 'required|string|min:10|max:1000',
+        ]);
+
+        if ($serviceRequest->status !== ServiceRequest::STATUS_CLIENT_QUERY_RAISED) {
+            return back()->with('error', 'There is no open concern on this job.');
+        }
+
+        $jobs = app(\App\Services\JobService::class);
+
+        if ($request->input('action') === 'return_to_site') {
+            $jobs->returnForRework($serviceRequest, auth()->user(), $request->input('note'));
+
+            return back()->with('success', 'Sent back to site. The crew can see what the client raised.');
+        }
+
+        $jobs->sendForClientVerification($serviceRequest, auth()->user());
+
+        return back()->with('success', 'Answered and sent back to the client to verify.');
+    }
+
+    /**
+     * Send it back to site.
+     *
+     * The reason is mandatory: this reaches a technician who believed they had
+     * finished, and a bare refusal tells them nothing about what to return for.
+     */
+    public function returnJobForRework(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'reason' => 'required|string|min:10|max:1000',
+        ]);
+
+        if ($serviceRequest->status !== ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION) {
+            return back()->with('error', 'Only a job awaiting completion approval can be sent back.');
+        }
+
+        app(\App\Services\JobService::class)
+            ->returnForRework($serviceRequest, auth()->user(), $request->input('reason'));
+
+        return back()->with('success', 'Sent back to site. The crew can see why.');
+    }
+
     // ==================== ATTENDANCE ROSTER ====================
 
     /**
@@ -3671,16 +3814,170 @@ class AdminDashboardController extends Controller
         return back()->with('success', 'Attendance details updated.');
     }
 
-    /** The technician's national ID, which is what site security checks. */
-    public function updateTechnicianNationalId(Request $request, Technician $technician)
+    /**
+     * Put another person on the job without inventing work for them.
+     *
+     * A gang member or a lead's right-hand man is not a sub-task: they carry
+     * no separate scope, no progress of their own and often no separate fee.
+     * Until now the only ways onto a job were to become the primary
+     * technician — which displaces whoever held it — or to be given a
+     * sub-task, so a three-man roofing gang had to be modelled as three
+     * pieces of work that do not exist.
+     *
+     * This writes the assignment row directly, with service_sub_task_id left
+     * null, which is the shape the roster has always read.
+     */
+    public function addCrewMember(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'technician_id' => 'required|exists:technicians,id',
+            'role_on_job' => 'required|string|max:255',
+            // Optional on purpose: a right-hand man is frequently paid through
+            // the technician who brought them, and forcing a figure here would
+            // invent a separate payable that nobody owes.
+            'agreed_compensation' => 'nullable|numeric|min:0',
+            'expected_start' => 'nullable|date',
+            'expected_end' => 'nullable|date|after_or_equal:expected_start',
+            'attendance_dates' => 'nullable|array|max:60',
+            'attendance_dates.*' => 'required|date',
+        ]);
+
+        $alreadyOnJob = JobAssignment::where('service_request_id', $serviceRequest->id)
+            ->where('technician_id', $request->technician_id)
+            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
+            ->exists();
+
+        if ($alreadyOnJob) {
+            return back()->with('error', 'That technician is already on this job. Edit their row to change their role or dates.');
+        }
+
+        $compensation = (float) ($request->input('agreed_compensation') ?? 0);
+
+        // Only check the labour budget when there is a fee to check. A crew
+        // member on zero has nothing to allocate, and running the guard would
+        // refuse them on a job whose budget is merely unset.
+        if ($compensation > 0) {
+            $this->ensureLaborBudgetCapacity($serviceRequest, $compensation);
+        }
+
+        $dates = collect($request->input('attendance_dates', []))
+            ->filter()
+            ->map(fn ($date) => \Carbon\Carbon::parse($date)->toDateString())
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+
+        $technician = Technician::with('user')->findOrFail($request->technician_id);
+
+        JobAssignment::create([
+            'service_request_id' => $serviceRequest->id,
+            // Deliberately null: this person carries no separate scope.
+            'service_sub_task_id' => null,
+            'technician_id' => $technician->id,
+            'role_on_job' => $request->role_on_job,
+            'assigned_by' => auth()->id(),
+            'agreed_compensation' => $compensation,
+            // Marks the zero as deliberate. Without it the payment schedule
+            // reads "no fee recorded" and falls back to the job's whole
+            // labour payout — see resolveApprovedAmount.
+            'paid_through_lead' => $compensation <= 0,
+            'compensation_notes' => $compensation > 0
+                ? null
+                : 'Crew member — paid through the lead rather than separately.',
+            'status' => JobAssignment::STATUS_PENDING,
+            'expected_start' => $request->input('expected_start'),
+            'expected_end' => $request->input('expected_end'),
+            'attendance_dates' => $dates ?: null,
+        ]);
+
+        AuditLog::log(AuditLog::ACTION_ASSIGNMENT, $serviceRequest, null, [
+            'crew_member_added' => $technician->user?->name,
+            'technician_id' => $technician->id,
+            'role_on_job' => $request->role_on_job,
+            'agreed_compensation' => $compensation,
+            'added_by' => auth()->id(),
+        ]);
+
+        return back()->with('success', ($technician->user?->name ?? 'Technician') . ' added to the crew.');
+    }
+
+    /**
+     * Take somebody off the crew.
+     *
+     * The row is retired rather than deleted — who was on a job and when is
+     * the sort of thing that gets asked about months later, and a deleted row
+     * answers nothing.
+     *
+     * Refuses on the primary and the lead: removing them is a reassignment,
+     * which has its own flow, its own notification and its own reason.
+     */
+    public function removeCrewMember(Request $request, JobAssignment $jobAssignment)
+    {
+        $request->validate([
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        $serviceRequest = $jobAssignment->serviceRequest;
+
+        $isPrimary = (int) $serviceRequest->technician_id === (int) $jobAssignment->technician_id;
+        $isLead = (int) $serviceRequest->lead_technician_id === (int) $jobAssignment->technician_id;
+
+        if ($isPrimary || $isLead) {
+            return back()->with('error', 'Use Reassign Technician to change who is carrying this job.');
+        }
+
+        if ($jobAssignment->service_sub_task_id) {
+            return back()->with('error', 'This technician holds a sub-task. Change it from the sub-task instead.');
+        }
+
+        $jobAssignment->update([
+            'status' => JobAssignment::STATUS_REASSIGNED,
+            'reassignment_reason' => $request->input('reason') ?: 'Removed from the crew.',
+            'actual_end' => now(),
+        ]);
+
+        return back()->with('success', 'Removed from the crew. The client should be sent an updated attendance notice.');
+    }
+
+    /**
+     * The technician's national ID and passport photo — what the gate checks.
+     *
+     * Both live on the technician rather than the assignment: a person's face
+     * and ID number do not change per job, and re-uploading a photo for every
+     * job would guarantee that most rows have none.
+     */
+    public function updateTechnicianIdentity(Request $request, Technician $technician)
     {
         $request->validate([
             'national_id' => 'nullable|string|max:20',
+            // Passport photographs off a phone are routinely several MB, so
+            // the ceiling is generous; the mime list stays narrow.
+            'passport_photo' => 'nullable|image|mimes:jpg,jpeg,png,webp,heic,heif|max:8192',
         ]);
 
-        $technician->update(['national_id' => $request->input('national_id')]);
+        $updates = [];
 
-        return back()->with('success', 'ID number updated.');
+        if ($request->exists('national_id')) {
+            $updates['national_id'] = $request->input('national_id');
+        }
+
+        if ($request->hasFile('passport_photo')) {
+            // Replace rather than accumulate — the old photo is of no use to
+            // anybody once a new one is on file.
+            if ($technician->profile_photo_path) {
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($technician->profile_photo_path);
+            }
+
+            $updates['profile_photo_path'] = $request->file('passport_photo')
+                ->store('technician-photos/' . $technician->id, 'public');
+        }
+
+        if ($updates) {
+            $technician->update($updates);
+        }
+
+        return back()->with('success', 'Technician details updated.');
     }
 
     /**

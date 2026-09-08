@@ -509,47 +509,93 @@ class ClientController extends Controller
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
-        // Ensure the request is in progress
-        if ($serviceRequest->status !== 'in_progress') {
+        // A client may confirm from either side of the lead's sign-off: they
+        // often say so on the day, before the paperwork catches up.
+        if (!in_array($serviceRequest->status, [
+            ServiceRequest::STATUS_IN_PROGRESS,
+            ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION,
+        ], true)) {
             return response()->json(['error' => 'Cannot confirm completion in current status'], 400);
         }
 
-        $serviceRequest->update([
-            'status' => 'completed',
-            'progress_percentage' => 100,
-            'completed_date' => now()
+        // Recorded, not decisive. This used to set the job to completed and
+        // mark every sub-task done with it, so a client could close a job and
+        // everybody's work on it without the lead or the office seeing any of
+        // it. Their confirmation is evidence for the office's review, not a
+        // substitute for it.
+        app(\App\Services\JobService::class)->clientConfirmCompletion($serviceRequest);
+
+        // Deliberately nothing else. Completing every sub-task and crediting
+        // the crew is the office's act on final approval — see
+        // JobService::approveCompletion. A client confirming used to do both,
+        // which marked work complete that no lead had signed off and counted
+        // jobs that were never reviewed.
+        return response()->json([
+            'success' => true,
+            'message' => 'Thank you — your confirmation has been recorded and passed to our office.',
         ]);
+    }
 
-        if ($serviceRequest->has_sub_tasks) {
-            // Complete all sub-tasks
-            $serviceRequest->subTasks()->update([
-                'status' => 'completed',
-                'progress_percentage' => 100,
-                'completed_at' => now(),
-            ]);
-
-            // Update stats for all assigned technicians
-            $technicianIds = $serviceRequest->subTasks()->whereNotNull('technician_id')
-                ->distinct()
-                ->pluck('technician_id');
-
-            foreach ($technicianIds as $techId) {
-                $tech = \App\Models\Technician::find($techId);
-                if ($tech) {
-                    $tech->increment('total_jobs');
-                    $tech->update(['availability' => 'available']);
-                }
-            }
-        } else {
-            // Single-task: update the assigned technician
-            if ($serviceRequest->technician) {
-                $technician = $serviceRequest->technician;
-                $technician->increment('total_jobs');
-                $technician->update(['availability' => 'available']);
-            }
+    /**
+     * The client's verification — the last step, and the one that closes it.
+     *
+     * The rating is optional: a client who will not score the work should
+     * still be able to close it, or the job hangs on a courtesy.
+     */
+    public function verifyCompletion(Request $request, ServiceRequest $serviceRequest)
+    {
+        if ($serviceRequest->user_id !== Auth::id()) {
+            abort(403);
         }
 
-        return response()->json(['success' => true, 'message' => 'Work completion confirmed']);
+        if (!in_array($serviceRequest->status, [
+            ServiceRequest::STATUS_AWAITING_CLIENT_VERIFICATION,
+            ServiceRequest::STATUS_CLIENT_QUERY_RAISED,
+        ], true)) {
+            return back()->with('error', 'This job is not waiting on your verification.');
+        }
+
+        $data = $request->validate([
+            'rating' => 'nullable|integer|min:1|max:5',
+            'comment' => 'nullable|string|max:2000',
+        ]);
+
+        app(\App\Services\JobService::class)->clientVerifyAndClose(
+            $serviceRequest,
+            $data['rating'] ?? null,
+            $data['comment'] ?? null
+        );
+
+        return back()->with('success', 'Thank you — the job is now closed.');
+    }
+
+    /**
+     * The client is not satisfied.
+     *
+     * Goes back to the office rather than straight to site: a concern is as
+     * often something they can answer as it is rework, and sending a crew out
+     * on one sentence would spend a day establishing which.
+     */
+    public function raiseCompletionConcern(Request $request, ServiceRequest $serviceRequest)
+    {
+        if ($serviceRequest->user_id !== Auth::id()) {
+            abort(403);
+        }
+
+        if ($serviceRequest->status !== ServiceRequest::STATUS_AWAITING_CLIENT_VERIFICATION) {
+            return back()->with('error', 'This job is not waiting on your verification.');
+        }
+
+        $data = $request->validate([
+            'concern' => 'required|string|min:10|max:2000',
+        ], [
+            'concern.required' => 'Tell us what is not right so we can put it right.',
+            'concern.min' => 'A few more words would help us understand what to look at.',
+        ]);
+
+        app(\App\Services\JobService::class)->clientRaiseConcern($serviceRequest, $data['concern']);
+
+        return back()->with('success', 'Thank you — our office will come back to you on this.');
     }
 
     public function rateJob(Request $request, ServiceRequest $serviceRequest)

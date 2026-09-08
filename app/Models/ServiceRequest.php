@@ -64,8 +64,14 @@ class ServiceRequest extends Model
         'commencement_gated',
         'completed_date',
         'completion_notes',
+        'lead_completion_note',
         'client_confirmed_completion',
         'client_confirmation_date',
+        'client_verification_sent_at',
+        'client_concern',
+        'client_concern_raised_at',
+        'closed_by',
+        'closed_without_client',
         'suspension_reason',
         'suspended_at',
         'resumed_at',
@@ -105,6 +111,9 @@ class ServiceRequest extends Model
         'commencement_gated' => 'boolean',
         'completed_date' => 'datetime',
         'client_confirmation_date' => 'datetime',
+        'client_verification_sent_at' => 'datetime',
+        'client_concern_raised_at' => 'datetime',
+        'closed_without_client' => 'boolean',
         'proxy_quote_approved_at' => 'datetime',
         'client_quote_approved_at' => 'datetime',
         'approved_quote_revision' => 'integer',
@@ -140,6 +149,10 @@ class ServiceRequest extends Model
     const STATUS_SUSPENDED = 'suspended';
     const STATUS_REASSIGNED = 'reassigned';
     const STATUS_COMPLETED_PENDING_CONFIRMATION = 'completed_pending_confirmation';
+    /** Office approved; handed to the client to verify. */
+    const STATUS_AWAITING_CLIENT_VERIFICATION = 'awaiting_client_verification';
+    /** The client is not satisfied — back with the office to rectify. */
+    const STATUS_CLIENT_QUERY_RAISED = 'client_query_raised';
     const STATUS_CLOSED = 'closed';
     const STATUS_ARCHIVED = 'archived';
 
@@ -179,7 +192,9 @@ class ServiceRequest extends Model
             self::STATUS_DELAYED => 'Delayed',
             self::STATUS_SUSPENDED => 'Suspended',
             self::STATUS_REASSIGNED => 'Reassigned',
-            self::STATUS_COMPLETED_PENDING_CONFIRMATION => 'Completed - Pending Confirmation',
+            self::STATUS_COMPLETED_PENDING_CONFIRMATION => 'Completed - Pending Office Approval',
+            self::STATUS_AWAITING_CLIENT_VERIFICATION => 'Awaiting Client Verification',
+            self::STATUS_CLIENT_QUERY_RAISED => 'Client Raised a Concern',
             self::STATUS_CLOSED => 'Closed',
             self::STATUS_ARCHIVED => 'Archived',
         ];
@@ -569,7 +584,7 @@ class ServiceRequest extends Model
      * client's first question is who is answerable for the job, and on the
      * notice that is the top row.
      *
-     * @return array<int, array{ref: int, name: string, national_id: string|null, role: string, attendance: string, is_lead: bool}>
+     * @return array<int, array{ref: int, name: string, national_id: string|null, photo_url: string|null, role: string, attendance: string, is_lead: bool}>
      */
     public function attendanceRoster(): array
     {
@@ -589,6 +604,11 @@ class ServiceRequest extends Model
                     'assignment_id' => $assignment->id,
                     'name' => $assignment->technician->user->name,
                     'national_id' => $assignment->technician->national_id,
+                    // A passport photo, so whoever is on the gate can match a
+                    // face to the name rather than only a number on a card.
+                    'photo_url' => $assignment->technician->profile_photo_path
+                        ? '/storage/' . $assignment->technician->profile_photo_path
+                        : null,
                     // Falls back to a plain description rather than blank: a
                     // roster row with no role tells the client nothing about
                     // why that person is at their gate.
@@ -596,6 +616,9 @@ class ServiceRequest extends Model
                         ?: ($isLead ? 'Lead Technician — answerable for the whole assignment' : 'Technician'),
                     'attendance' => $assignment->attendanceLabel(),
                     'is_lead' => $isLead,
+                    // Whoever carries the job cannot be removed as a crew
+                    // member: taking them off is a reassignment.
+                    'is_primary' => (int) $this->technician_id === (int) $assignment->technician_id,
                 ];
             })
             ->all();
@@ -721,6 +744,24 @@ class ServiceRequest extends Model
         self::STATUS_ARCHIVED,
         self::STATUS_CANCELLED,
     ];
+
+    /**
+     * How long a client has to verify before the office may close it for them.
+     *
+     * Not an auto-close: a job shut without the client is recorded as exactly
+     * that, because a verification nobody gave is not a verification.
+     */
+    public const CLIENT_VERIFICATION_DAYS = 3;
+
+    /** Handed to the client and still waiting on them. */
+    public function clientVerificationOverdue(): bool
+    {
+        if ($this->status !== self::STATUS_AWAITING_CLIENT_VERIFICATION || !$this->client_verification_sent_at) {
+            return false;
+        }
+
+        return $this->client_verification_sent_at->addDays(self::CLIENT_VERIFICATION_DAYS)->isPast();
+    }
 
     /** Finished work — the archive. */
     public function scopeArchived($query)
@@ -1048,7 +1089,21 @@ class ServiceRequest extends Model
                 self::STATUS_REASSIGNED,
             ],
             self::STATUS_REASSIGNED => [self::STATUS_ASSIGNED],
-            self::STATUS_COMPLETED_PENDING_CONFIRMATION => [self::STATUS_CLOSED],
+            self::STATUS_COMPLETED_PENDING_CONFIRMATION => [
+                self::STATUS_AWAITING_CLIENT_VERIFICATION,
+                self::STATUS_IN_PROGRESS,
+            ],
+            self::STATUS_AWAITING_CLIENT_VERIFICATION => [
+                self::STATUS_CLOSED,
+                self::STATUS_CLIENT_QUERY_RAISED,
+            ],
+            // A concern goes back to the office, who decide whether it is
+            // rework or a misunderstanding they can answer.
+            self::STATUS_CLIENT_QUERY_RAISED => [
+                self::STATUS_IN_PROGRESS,
+                self::STATUS_AWAITING_CLIENT_VERIFICATION,
+                self::STATUS_CLOSED,
+            ],
             self::STATUS_CLOSED => [self::STATUS_ARCHIVED],
             // Legacy
             self::STATUS_PENDING => [self::STATUS_AWAITING_PM_ASSIGNMENT, self::STATUS_ASSIGNED],

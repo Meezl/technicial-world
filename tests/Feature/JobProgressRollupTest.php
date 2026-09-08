@@ -166,7 +166,11 @@ class JobProgressRollupTest extends TestCase
         // The lead's whole-job report is the sign-off.
         $this->validatedReport($job->fresh(), $lead, 100);
 
-        $this->assertSame(ServiceRequest::STATUS_COMPLETED, $job->fresh()->status);
+        // Lead sign-off ends the work on site; the office closes the job.
+        $this->assertSame(
+            ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION,
+            $job->fresh()->status
+        );
     }
 
     public function test_a_job_never_shows_completed_below_one_hundred_percent(): void
