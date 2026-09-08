@@ -375,6 +375,13 @@
                             </div>
                         </div>
 
+                        <!-- What the lead actually said when they called it
+                             finished. The person approving was not on site. -->
+                        <blockquote v-if="job.lead_completion_note" class="signoff-quote">
+                            <i class="fas fa-quote-left"></i>
+                            <span>{{ job.lead_completion_note }}</span>
+                        </blockquote>
+
                         <div class="signoff-facts">
                             <div class="signoff-fact">
                                 <span>Validated progress</span>
@@ -6524,4 +6531,19 @@ defineOptions({
 }
 .signoff-fact strong { font-size: 1.05rem; color: #0F172A; }
 .signoff-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+
+.signoff-quote {
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-start;
+    margin: 0 0 1rem;
+    padding: 0.75rem 0.9rem;
+    background: #F8FAFC;
+    border-left: 3px solid #CBD5E1;
+    border-radius: 0 8px 8px 0;
+    color: #334155;
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+.signoff-quote i { color: #94A3B8; margin-top: 3px; flex-shrink: 0; }
 </style>

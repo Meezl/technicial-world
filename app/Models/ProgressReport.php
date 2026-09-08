@@ -52,6 +52,7 @@ class ProgressReport extends Model
         'lead_overridden_by',
         'lead_override_reason',
         'lead_approved_percent',
+        'lead_approval_note',
     ];
 
     /**

@@ -990,6 +990,9 @@ class TechnicianController extends Controller
 
         $request->validate([
             'action' => 'required|in:en_route,on_site,completed',
+            // What the lead saw when they called it finished. Shown to
+            // whoever gives final approval, who was not on site.
+            'completion_note' => 'nullable|string|max:1000',
         ]);
 
         $action = $request->action;
@@ -1096,9 +1099,15 @@ class TechnicianController extends Controller
             // counts and the completion date move at that point, not here — a
             // job sent back for rework must not already be counted as
             // delivered.
+            $serviceRequest->update([
+                'lead_completion_note' => $request->input('completion_note'),
+            ]);
+
             app(\App\Services\JobService::class)->markCompleted(
                 $serviceRequest,
-                'Lead technician signed the work off on site.'
+                $request->filled('completion_note')
+                    ? 'Lead signed off: ' . $request->input('completion_note')
+                    : 'Lead technician signed the work off on site.'
             );
         }
 
@@ -1270,9 +1279,17 @@ class TechnicianController extends Controller
      * the person on site who can say whether it is true. Approving it moves
      * the sub-task and, through it, the job's overall figure.
      */
-    public function approveSubTaskReport(\App\Models\ProgressReport $progressReport)
+    public function approveSubTaskReport(Request $request, \App\Models\ProgressReport $progressReport)
     {
         $technician = $this->authorizeLeadSignOff($progressReport);
+
+        // Optional, unlike a rejection reason: approving needs no
+        // justification, but a lead who saw something worth saying should not
+        // have to find another channel to say it. The office reads this when
+        // the report reaches them.
+        $data = $request->validate([
+            'approval_note' => 'nullable|string|max:1000',
+        ]);
 
         if ($progressReport->is_validated) {
             return back()->with('error', 'That report has already been approved.');
@@ -1290,7 +1307,10 @@ class TechnicianController extends Controller
             validatedAs: \App\Models\ProgressReport::AS_LEAD
         );
 
-        $progressReport->forceFill(['approved_by_lead_at' => now()])->save();
+        $progressReport->forceFill([
+            'approved_by_lead_at' => now(),
+            'lead_approval_note' => $data['approval_note'] ?? null,
+        ])->save();
 
         return back()->with('success',
             'Sub-task progress approved. The office will confirm any payment that follows.');

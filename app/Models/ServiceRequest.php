@@ -64,6 +64,7 @@ class ServiceRequest extends Model
         'commencement_gated',
         'completed_date',
         'completion_notes',
+        'lead_completion_note',
         'client_confirmed_completion',
         'client_confirmation_date',
         'suspension_reason',

@@ -435,6 +435,32 @@
                             </button>
                         </div>
 
+                        <!-- Approving takes an optional note. A rejection has to
+                             say why; an approval does not, but a lead who saw
+                             something worth recording should not have to find
+                             another channel for it. The office reads this. -->
+                        <div v-if="approvingClaim && approvingClaim.id === pendingClaimFor(task)?.id" class="reject-box">
+                            <label class="form-field">
+                                <span>Anything to note? <em>(optional)</em></span>
+                                <textarea
+                                    v-model="approvalNote"
+                                    rows="2"
+                                    class="input textarea"
+                                    placeholder="e.g. Walked the roof with them; capping is sound."
+                                ></textarea>
+                            </label>
+                            <div class="signoff-actions">
+                                <button
+                                    class="btn btn-primary"
+                                    :disabled="busyReportId === approvingClaim.id"
+                                    @click="confirmApprove()"
+                                >
+                                    {{ busyReportId === approvingClaim.id ? 'Approving…' : 'Approve' }}
+                                </button>
+                                <button class="btn btn-outline" @click="cancelApprove()">Cancel</button>
+                            </div>
+                        </div>
+
                         <!-- Reason is required: sending work back without one
                              leaves the technician nothing to act on. -->
                         <div v-if="rejectingClaim && rejectingClaim.id === pendingClaimFor(task)?.id" class="reject-box">
@@ -952,11 +978,33 @@ const rejectingClaim = ref(null)
 const rejectReason = ref('')
 const rejectError = ref('')
 
+const approvingClaim = ref(null)
+const approvalNote = ref('')
+
+// Opens the note box rather than approving outright — one extra tap, in
+// exchange for the lead being able to say what they saw.
 function approveClaim(claim) {
     if (!claim) return
+    approvingClaim.value = claim
+    approvalNote.value = ''
+    rejectingClaim.value = null
+}
+
+function cancelApprove() {
+    approvingClaim.value = null
+    approvalNote.value = ''
+}
+
+function confirmApprove() {
+    const claim = approvingClaim.value
+    if (!claim) return
     busyReportId.value = claim.id
-    router.post(`/technician/progress-reports/${claim.id}/approve`, {}, {
+
+    router.post(`/technician/progress-reports/${claim.id}/approve`, {
+        approval_note: approvalNote.value || null,
+    }, {
         preserveScroll: true,
+        onSuccess: () => { approvingClaim.value = null; approvalNote.value = '' },
         onFinish: () => { busyReportId.value = null },
     })
 }
@@ -1050,6 +1098,23 @@ function updateTaskProgress(task, value) {
 }
 
 function updateStatus(action) {
+    // Completing is the lead's sign-off and goes to the office, so it asks
+    // for a note rather than a bare confirmation. The other transitions are
+    // simple facts about where somebody is.
+    if (action === 'completed') {
+        const note = window.prompt(
+            'Signing this job off as complete. Anything the office should know? (optional)',
+            ''
+        )
+        if (note === null) return
+
+        router.post(`/technician/jobs/${props.job.id}/status`, {
+            action,
+            completion_note: note || null,
+        }, { preserveScroll: true })
+        return
+    }
+
     if (!confirm(`Update job status to ${action.replace('_', ' ')}?`)) return
 
     router.post(`/technician/jobs/${props.job.id}/status`, { action }, {
