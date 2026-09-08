@@ -197,6 +197,9 @@ class TechnicianController extends Controller
             'user',
             'serviceCategory',
             'subTasks.technician.user',
+            // Read by jobScopeForTechnician to find this technician's role on
+            // the job, which is the only scope a crew member has.
+            'jobAssignments',
             'tools',
             'progressReports.technician.user',
             'progressReports.submitter',
@@ -227,7 +230,7 @@ class TechnicianController extends Controller
             // Job-wide actions (closing the job) belong to whoever carries
             // the job; a sub-task holder gets the sub-task controls instead.
             'isLeadTechnician' => $serviceRequest->isLeadTechnician($technician->id),
-            'scope' => $this->jobScopeForTechnician($serviceRequest),
+            'scope' => $this->jobScopeForTechnician($serviceRequest, $technician->id),
             'assignmentFiles' => $this->assignmentFilesFor($serviceRequest, $technician->id),
             // Why the start buttons are unavailable, if they are. Sent as the
             // reason rather than a boolean so the technician is told what is
@@ -262,47 +265,117 @@ class TechnicianController extends Controller
         'quote_materials_file_paths',
         'billing_milestones',
         'billingSchedule',
+        // The quotation's own notes. Written for the client and routinely
+        // carrying commercial terms — margin, discounts, payment conditions.
+        // It was reaching every technician's browser in full.
+        'quote_notes',
+        // The contract value the client agreed to, and the note an admin
+        // wrote when approving on their behalf.
+        'approved_quote_amount',
+        'proxy_quote_approval_note',
     ];
 
     private function technicianSafeJob(ServiceRequest $serviceRequest, int $technicianId): ServiceRequest
     {
         $serviceRequest->makeHidden(self::COMMERCIAL_FIELDS);
 
-        // A crew member's fee is between them and the office — hide the
-        // figure on sub-tasks that are not this technician's own.
+        // A crew member's fee is between them and the office. This holds for
+        // the lead too: running the assignment does not entitle you to what
+        // the office agreed to pay the person next to you.
         $serviceRequest->subTasks->each(function ($subTask) use ($technicianId) {
             if ((int) $subTask->technician_id !== $technicianId) {
                 $subTask->makeHidden(['agreed_compensation', 'compensation_notes']);
             }
         });
 
+        // The lead is answerable for the whole assignment: they approve the
+        // crew's reports, file on behalf of anyone who has not, and close the
+        // job. Withholding the other sub-tasks from them would break the very
+        // pipeline they run.
+        if ($serviceRequest->isLeadTechnician($technicianId)) {
+            return $serviceRequest;
+        }
+
+        // Everyone else sees their own work and no one else's. Another
+        // technician's scope is not theirs to read, and the titles alone
+        // describe work the office may be pricing separately.
+        $ownSubTasks = $serviceRequest->subTasks
+            ->filter(fn ($subTask) => (int) $subTask->technician_id === $technicianId)
+            ->values();
+
+        $serviceRequest->setRelation('subTasks', $ownSubTasks);
+
         return $serviceRequest;
     }
 
     /**
-     * What the technician needs to actually do the job: the scope as quoted,
-     * what to install, and the dates they are being held to. Materials carry
-     * name and quantity but never unit_price — that is the client's costing,
-     * not a packing list.
+     * What this particular technician needs to do their part, and no more.
+     *
+     * The whole job's quoted scope used to go to everybody on it, so a painter
+     * booked for two days could read the entire roofing specification, and a
+     * right-hand man with no task at all received the same. The quoted scope
+     * is the shape of the deal with the client; a technician is owed the work
+     * they were given.
+     *
+     * The lead is the exception, deliberately. They are answerable for the
+     * whole assignment — that is what their own roster line says — so they get
+     * the job-wide picture. Quantities without prices, still: the costing is
+     * the client's business either way.
      */
-    private function jobScopeForTechnician(ServiceRequest $serviceRequest): array
+    private function jobScopeForTechnician(ServiceRequest $serviceRequest, int $technicianId): array
     {
-        $materials = collect($serviceRequest->quote_materials ?? [])
-            ->map(fn ($material) => [
-                'name' => $material['name'] ?? 'Unnamed item',
-                'quantity' => $material['quantity'] ?? null,
-            ])
-            ->filter(fn ($material) => $material['name'] !== 'Unnamed item' || $material['quantity'])
-            ->values()
-            ->all();
-
-        return [
-            'notes' => $serviceRequest->quote_notes,
-            'materials' => $materials,
+        $common = [
             'expected_duration_days' => $serviceRequest->expected_duration_days,
             'commencement_at' => $serviceRequest->commencement_at,
             'target_completion_at' => $serviceRequest->target_completion_at,
             'contact_time_minutes' => $serviceRequest->contact_time_minutes,
+        ];
+
+        if ($serviceRequest->isLeadTechnician($technicianId)) {
+            $materials = collect($serviceRequest->quote_materials ?? [])
+                ->map(fn ($material) => [
+                    'name' => $material['name'] ?? 'Unnamed item',
+                    // Never unit_price — that is the client's costing, not a
+                    // packing list.
+                    'quantity' => $material['quantity'] ?? null,
+                ])
+                ->filter(fn ($material) => $material['name'] !== 'Unnamed item' || $material['quantity'])
+                ->values()
+                ->all();
+
+            return $common + [
+                'is_lead_view' => true,
+                'materials' => $materials,
+                // The tasks making up the job, which the lead signs off.
+                'sub_tasks' => $serviceRequest->subTasks
+                    ->map(fn ($subTask) => ['title' => $subTask->title, 'description' => $subTask->description])
+                    ->values()
+                    ->all(),
+            ];
+        }
+
+        // Their own sub-tasks, if they hold any. This is the "scope of task"
+        // a technician is entitled to.
+        $ownTasks = $serviceRequest->subTasks
+            ->filter(fn ($subTask) => (int) $subTask->technician_id === $technicianId)
+            ->map(fn ($subTask) => ['title' => $subTask->title, 'description' => $subTask->description])
+            ->values()
+            ->all();
+
+        // A crew member holds no task at all, so their role on the job is the
+        // only description of what they are there to do.
+        $roleOnJob = $serviceRequest->jobAssignments
+            ->first(fn ($assignment) => (int) $assignment->technician_id === $technicianId
+                && in_array($assignment->status, ServiceRequest::LIVE_ASSIGNMENT_STATUSES, true))
+            ?->role_on_job;
+
+        return $common + [
+            'is_lead_view' => false,
+            // Deliberately absent for non-leads: the job-wide material list is
+            // the quotation's, not this technician's brief.
+            'materials' => [],
+            'sub_tasks' => $ownTasks,
+            'role_on_job' => $roleOnJob,
         ];
     }
 

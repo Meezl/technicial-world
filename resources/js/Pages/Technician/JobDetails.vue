@@ -135,12 +135,26 @@
             <section class="panel-card" v-if="hasScopeDetail">
                 <div class="section-heading">
                     <div>
-                        <span class="section-kicker">RFQ</span>
-                        <h3>Scope &amp; programme</h3>
+                        <!-- Not "RFQ" any more: what a technician gets is their
+                             own brief, not the quotation the client was sent. -->
+                        <span class="section-kicker">Your work</span>
+                        <h3>{{ scope.is_lead_view ? 'Scope &amp; programme' : 'Your task &amp; programme' }}</h3>
                     </div>
                 </div>
 
-                <p v-if="scope.notes" class="scope-notes">{{ scope.notes }}</p>
+                <!-- What this person is on the job to do. For a crew member
+                     with no task of their own, this is the whole of it. -->
+                <p v-if="scope.role_on_job" class="scope-role">
+                    <i class="fas fa-user-hard-hat"></i> {{ scope.role_on_job }}
+                </p>
+
+                <div v-if="scopeTasks.length" class="scope-tasks">
+                    <h4>{{ scope.is_lead_view ? 'Tasks on this job' : 'Your task' }}</h4>
+                    <div v-for="(task, index) in scopeTasks" :key="`${task.title}-${index}`" class="scope-task">
+                        <strong>{{ task.title }}</strong>
+                        <p v-if="task.description">{{ task.description }}</p>
+                    </div>
+                </div>
 
                 <div
                     v-if="scope.commencement_at || scope.target_completion_at || scope.expected_duration_days"
@@ -691,13 +705,16 @@ const props = defineProps({
     commencementBlocker: { type: String, default: null },
 })
 
-// What was quoted, what to install, and the dates being held to. Deliberately
-// carries no client pricing — see TechnicianController::jobScopeForTechnician.
+// What this technician is owed: their own task, or — for the lead, who signs
+// off the whole assignment — the job-wide list. Never the quotation's notes or
+// any pricing. See TechnicianController::jobScopeForTechnician.
 const scopeMaterials = computed(() => props.scope?.materials || [])
+const scopeTasks = computed(() => props.scope?.sub_tasks || [])
 const sharedDocuments = computed(() => props.job.documents || [])
 const hasScopeDetail = computed(() =>
     Boolean(
-        props.scope?.notes ||
+        props.scope?.role_on_job ||
+        scopeTasks.value.length ||
         scopeMaterials.value.length ||
         props.scope?.expected_duration_days ||
         props.scope?.commencement_at ||
@@ -1490,12 +1507,6 @@ defineOptions({ layout: null })
     font-weight: 600;
 }
 
-.scope-notes {
-    white-space: pre-wrap;
-    line-height: 1.55;
-    color: var(--text-muted, #475569);
-    margin: 0;
-}
 
 .subtask-fee {
     display: flex;
@@ -1585,4 +1596,35 @@ defineOptions({ layout: null })
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+.scope-role {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 0.85rem;
+    padding: 0.6rem 0.8rem;
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 10px;
+    color: #1E40AF;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+.scope-tasks { margin-bottom: 0.5rem; }
+.scope-tasks h4 {
+    margin: 0 0 0.5rem;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #64748B;
+}
+.scope-task {
+    padding: 0.6rem 0.75rem;
+    border: 1px solid #E2E8F0;
+    border-radius: 10px;
+    background: #fff;
+}
+.scope-task + .scope-task { margin-top: 0.5rem; }
+.scope-task strong { display: block; color: #0F172A; font-size: 0.9rem; }
+.scope-task p { margin: 0.25rem 0 0; color: #475569; font-size: 0.85rem; line-height: 1.45; }
 </style>

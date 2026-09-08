@@ -857,24 +857,38 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             'status' => ServiceSubTask::STATUS_ASSIGNED,
         ]);
 
+        // Their own item, and only their own: another technician's task
+        // describes work the office may be pricing separately, and a crew
+        // member is owed the job they were given rather than the whole book.
         $this->actingAs($crew->user)
             ->get(route('technician.jobs'))
             ->assertOk()
             ->assertInertia(function ($page) use ($crew) {
-                $page->has('jobs.0.sub_tasks', 2);
+                $page->has('jobs.0.sub_tasks', 1);
 
-                $mine = collect($page->toArray()['props']['jobs'][0]['sub_tasks'])
-                    ->firstWhere('technician_id', $crew->id);
+                $subTasks = collect($page->toArray()['props']['jobs'][0]['sub_tasks']);
+                $mine = $subTasks->firstWhere('technician_id', $crew->id);
 
                 $this->assertNotNull($mine, 'the technician cannot see which item is theirs');
                 $this->assertSame('Solar Installation Works', $mine['title']);
                 $this->assertSame(40, $mine['progress_percentage']);
+                $this->assertNull(
+                    $subTasks->firstWhere('title', 'Roof strengthening'),
+                    "a crew technician can read another technician's task"
+                );
             });
 
         $this->actingAs($crew->user)
             ->get(route('technician.dashboard'))
             ->assertOk()
-            ->assertInertia(fn ($page) => $page->has('activeJobs.0.sub_tasks', 2));
+            ->assertInertia(fn ($page) => $page->has('activeJobs.0.sub_tasks', 1));
+
+        // The lead runs the assignment and signs off the crew's work, so they
+        // still see all of it.
+        $this->actingAs($lead->user)
+            ->get(route('technician.jobs'))
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page->has('jobs.0.sub_tasks', 2));
     }
 
     /**
@@ -1363,32 +1377,55 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             'agreed_compensation' => 45000,
         ]);
 
+        // A crew technician gets their own task and the dates, and none of
+        // the quoted scope: that is the shape of the deal with the client.
         $this->actingAs($crew->user)
             ->get(route('technician.jobs.show', $job))
             ->assertOk()
             ->assertInertia(function ($page) {
-                $page->where('scope.notes', 'Supply and install a 5kW rooftop solar array.')
-                    ->where('scope.expected_duration_days', 7)
-                    ->has('scope.materials', 2)
-                    ->where('scope.materials.0.name', '550W panel')
-                    ->where('scope.materials.0.quantity', 6);
+                $page->where('scope.expected_duration_days', 7)
+                    ->where('scope.is_lead_view', false)
+                    ->has('scope.materials', 0)
+                    ->has('scope.sub_tasks', 1)
+                    ->where('scope.sub_tasks.0.title', 'Solar Installation Works');
 
-                // The packing list must not become a price list.
-                $materials = $page->toArray()['props']['scope']['materials'];
-                foreach ($materials as $material) {
-                    $this->assertArrayNotHasKey('unit_price', $material);
-                }
+                $scope = $page->toArray()['props']['scope'];
+                $this->assertArrayNotHasKey('notes', $scope, 'the quotation notes reached a technician');
 
                 $job = $page->toArray()['props']['job'];
-                foreach (['quote_amount', 'quote_labor_cost', 'final_amount',
-                          'revenue_generated', 'quote_materials', 'billing_milestones'] as $field) {
+                foreach (['quote_amount', 'quote_labor_cost', 'final_amount', 'revenue_generated',
+                          'quote_materials', 'quote_notes', 'billing_milestones'] as $field) {
                     $this->assertArrayNotHasKey($field, $job, "$field leaked to the technician");
                 }
 
-                // Their own fee is theirs to see; the other crew member's is not.
+                // Their own fee is theirs to see. The other technician's task
+                // is not on the page at all now, which is stronger than
+                // hiding the figure on it.
                 $subTasks = collect($job['sub_tasks'])->keyBy('title');
                 $this->assertSame('10000.00', $subTasks['Solar Installation Works']['agreed_compensation']);
-                $this->assertArrayNotHasKey('agreed_compensation', $subTasks['Roof strengthening']);
+                $this->assertNull($subTasks->get('Roof strengthening'));
+            });
+
+        // The lead sees the whole assignment because they sign it off — but a
+        // crew member's fee is still between that member and the office.
+        $this->actingAs($lead->user)
+            ->get(route('technician.jobs.show', $job))
+            ->assertOk()
+            ->assertInertia(function ($page) {
+                $page->where('scope.is_lead_view', true)
+                    ->has('scope.materials', 2)
+                    ->has('scope.sub_tasks', 2);
+
+                $subTasks = collect($page->toArray()['props']['job']['sub_tasks'])->keyBy('title');
+                $this->assertSame('45000.00', $subTasks['Roof strengthening']['agreed_compensation']);
+                $this->assertArrayNotHasKey(
+                    'agreed_compensation',
+                    $subTasks['Solar Installation Works'],
+                    "the lead can read a crew member's agreed fee"
+                );
+
+                $scope = $page->toArray()['props']['scope'];
+                $this->assertArrayNotHasKey('notes', $scope, 'the quotation notes reached the lead');
             });
     }
 
