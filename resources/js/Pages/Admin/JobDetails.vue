@@ -1857,22 +1857,105 @@
                 <div class="modal-body">
                     <div class="form-group">
                         <label>Technician *</label>
+                        <input
+                            v-if="availableForCrew.length > 8"
+                            v-model="crewSearch"
+                            type="search"
+                            class="form-control"
+                            placeholder="Search by name, trade or technician number…"
+                            style="margin-bottom:0.5rem;"
+                        >
                         <select v-model="crewForm.technician_id" class="form-control">
                             <option value="">Select a technician…</option>
-                            <option v-for="tech in availableForCrew" :key="tech.id" :value="tech.id">
+                            <option v-for="tech in matchingForCrew" :key="tech.id" :value="tech.id">
                                 {{ tech.user?.name }}<template v-if="tech.specialization"> — {{ tech.specialization }}</template>
                             </option>
                         </select>
                         <small class="roster-help" v-if="!availableForCrew.length">
                             Everyone on the books is already on this job.
                         </small>
+                        <small class="roster-help" v-else-if="crewSearch && !matchingForCrew.length">
+                            Nobody matches “{{ crewSearch }}”.
+                        </small>
+                    </div>
+
+                    <!-- Their record, as the system already holds it. Nothing
+                         here is re-typed: it is the same profile the roster,
+                         the client's page and the attendance notice read. -->
+                    <div v-if="selectedCrewTechnician" class="crew-record">
+                        <img
+                            v-if="selectedCrewTechnician.profile_photo_path"
+                            :src="`/storage/${selectedCrewTechnician.profile_photo_path}`"
+                            class="crew-record-photo"
+                            alt=""
+                        >
+                        <span v-else class="crew-record-photo crew-record-photo-empty">
+                            <i class="fas fa-user"></i>
+                        </span>
+
+                        <div class="crew-record-body">
+                            <strong>{{ selectedCrewTechnician.user?.name }}</strong>
+                            <dl class="crew-record-facts">
+                                <div>
+                                    <dt>Technician no.</dt>
+                                    <dd>{{ selectedCrewTechnician.technician_id || '—' }}</dd>
+                                </div>
+                                <div>
+                                    <dt>ID number</dt>
+                                    <dd>
+                                        <span v-if="selectedCrewTechnician.national_id">
+                                            {{ selectedCrewTechnician.national_id }}
+                                        </span>
+                                        <span v-else class="roster-missing">Not on file</span>
+                                    </dd>
+                                </div>
+                                <div>
+                                    <dt>Trade</dt>
+                                    <dd>{{ selectedCrewTechnician.specialization || selectedCrewTechnician.trade || '—' }}</dd>
+                                </div>
+                                <div>
+                                    <dt>Rating</dt>
+                                    <dd>
+                                        <template v-if="Number(selectedCrewTechnician.rating) > 0">
+                                            {{ Number(selectedCrewTechnician.rating).toFixed(1) }} / 5
+                                            <span class="crew-record-muted">({{ selectedCrewTechnician.total_jobs || 0 }} jobs)</span>
+                                        </template>
+                                        <span v-else class="crew-record-muted">Not rated yet</span>
+                                    </dd>
+                                </div>
+                            </dl>
+
+                            <!-- Said here rather than discovered at the gate. -->
+                            <p v-if="!selectedCrewTechnician.national_id" class="crew-record-flag">
+                                <i class="fas fa-triangle-exclamation"></i>
+                                No ID number on file — add it below, or the client's notice will
+                                go out with a blank against their name.
+                            </p>
+                            <p v-if="selectedCrewTechnician.availability === 'on_leave'" class="crew-record-flag">
+                                <i class="fas fa-plane"></i> Marked as on leave.
+                            </p>
+                            <p v-if="selectedCrewTechnician.is_active === false" class="crew-record-flag">
+                                <i class="fas fa-user-slash"></i> This technician is not active.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Only asked for when it is missing. Saved to their
+                         profile, so it follows them to the next job. -->
+                    <div v-if="selectedCrewTechnician && !selectedCrewTechnician.national_id" class="form-group">
+                        <label>ID number <span class="roster-optional">(saved to their profile)</span></label>
+                        <input v-model="crewForm.national_id" type="text" class="form-control" placeholder="e.g. 37853277">
                     </div>
 
                     <div class="form-group">
                         <label>Role on this job *</label>
                         <input v-model="crewForm.role_on_job" type="text" class="form-control"
-                            placeholder="e.g. Roof Installation Gang Member">
-                        <small class="roster-help">What this person is here to do, in the client's words.</small>
+                            placeholder="e.g. Roof Installation Gang Member"
+                            @input="roleTouched = true">
+                        <small class="roster-help">
+                            What this person is here to do, in the client's words. Prefilled from
+                            their trade — change it if this job is different.
+                        </small>
                     </div>
 
                     <div class="form-group">
@@ -2629,7 +2712,7 @@ import ProgressReportActions from '../../Components/ProgressReportActions.vue'
 import RemovedReportsPanel from '../../Components/RemovedReportsPanel.vue'
 import PhotoUploader from '../../Components/PhotoUploader.vue'
 import { Link, usePage } from '@inertiajs/vue3'
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, reactive, watch } from 'vue'
 import { router } from '@inertiajs/vue3'
 
 const props = defineProps({
@@ -3148,13 +3231,45 @@ const returnForRework = () => {
 const showCrewModal = ref(false)
 const savingCrew = ref(false)
 
+const crewSearch = ref('')
+
 const crewForm = reactive({
     technician_id: '',
     role_on_job: '',
+    national_id: '',
     agreed_compensation: null,
     expected_start: '',
     expected_end: '',
     attendance_dates: [],
+})
+
+/** The record the system already holds on whoever is selected. */
+const selectedCrewTechnician = computed(
+    () => (props.technicians || []).find(t => String(t.id) === String(crewForm.technician_id)) || null
+)
+
+// Production carries far more technicians than a dropdown reads well, so the
+// list narrows once it is long enough to be a nuisance.
+const matchingForCrew = computed(() => {
+    const term = crewSearch.value.trim().toLowerCase()
+    if (!term) return availableForCrew.value
+
+    return availableForCrew.value.filter(t =>
+        [t.user?.name, t.specialization, t.trade, t.technician_id, t.location]
+            .filter(Boolean)
+            .some(field => String(field).toLowerCase().includes(term))
+    )
+})
+
+// Their trade is the obvious first guess at what they are here to do, and it
+// is the field the client reads. Only ever a default — the moment it is
+// edited, or another technician picked, it stops being overwritten.
+const roleTouched = ref(false)
+
+watch(() => crewForm.technician_id, () => {
+    if (roleTouched.value) return
+    const tech = selectedCrewTechnician.value
+    crewForm.role_on_job = tech?.specialization || tech?.trade || ''
 })
 
 // Anybody not already on the job. Offering somebody who is already on it
@@ -3173,9 +3288,12 @@ const crewFormReady = computed(() =>
 )
 
 const openCrewModal = () => {
+    crewSearch.value = ''
+    roleTouched.value = false
     Object.assign(crewForm, {
         technician_id: '',
         role_on_job: '',
+        national_id: '',
         agreed_compensation: null,
         // Default to the job's own window so the common case needs no typing.
         expected_start: toDateInput(props.job.commencement_at),
@@ -3189,6 +3307,25 @@ const submitCrewMember = () => {
     if (!crewFormReady.value || savingCrew.value) return
     savingCrew.value = true
 
+    // An ID typed here belongs to the technician, not to this job, so it is
+    // written to their profile first and follows them to the next one.
+    const needsId = crewForm.national_id
+        && selectedCrewTechnician.value
+        && !selectedCrewTechnician.value.national_id
+
+    if (needsId) {
+        router.post(
+            `/admin/technicians/${crewForm.technician_id}/identity`,
+            { national_id: crewForm.national_id },
+            { preserveScroll: true, onSuccess: addToCrew, onError: () => { savingCrew.value = false } }
+        )
+        return
+    }
+
+    addToCrew()
+}
+
+const addToCrew = () => {
     router.post(`/admin/jobs/${props.job.id}/crew`, {
         technician_id: crewForm.technician_id,
         role_on_job: crewForm.role_on_job,
@@ -6667,4 +6804,56 @@ defineOptions({
     line-height: 1.5;
 }
 .signoff-quote i { color: #94A3B8; margin-top: 3px; flex-shrink: 0; }
+
+.crew-record {
+    display: flex;
+    gap: 0.9rem;
+    align-items: flex-start;
+    padding: 0.9rem;
+    margin-bottom: 1rem;
+    background: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 10px;
+}
+.crew-record-photo {
+    width: 56px;
+    height: 56px;
+    border-radius: 8px;
+    object-fit: cover;
+    flex-shrink: 0;
+    border: 1px solid #E2E8F0;
+    background: #F1F5F9;
+}
+.crew-record-photo-empty {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #94A3B8;
+}
+.crew-record-body { flex: 1; min-width: 0; }
+.crew-record-body > strong { display: block; margin-bottom: 0.4rem; color: #0F172A; }
+.crew-record-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 0.4rem 0.9rem;
+    margin: 0;
+}
+.crew-record-facts dt {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #94A3B8;
+}
+.crew-record-facts dd { margin: 0; font-size: 0.85rem; color: #334155; }
+.crew-record-muted { color: #94A3B8; }
+.crew-record-flag {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+    margin: 0.6rem 0 0;
+    font-size: 0.8rem;
+    color: #92400E;
+    line-height: 1.45;
+}
+.crew-record-flag i { margin-top: 2px; }
 </style>
