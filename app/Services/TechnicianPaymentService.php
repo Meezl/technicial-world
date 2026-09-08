@@ -105,16 +105,23 @@ class TechnicianPaymentService
 
                 if (!$serviceRequest || !$technician) continue;
 
-                // Agreed compensation comes from the active JobAssignment
-                // for this pair — same source the pre-rewrite code used.
-                $assignment = JobAssignment::where('service_request_id', $serviceRequest->id)
-                    ->where('technician_id', $technician->id)
-                    ->whereIn('status', ['accepted', 'completed'])
-                    ->orderByDesc('id')
-                    ->first();
+                // The same resolver the Pay Technicians screen uses, so one
+                // number holds across every surface — which is what the
+                // comment below already asks for and this method quietly
+                // broke.
+                //
+                // It used to look up the assignment itself, filtered to
+                // 'accepted' or 'completed'. Nothing in the application ever
+                // writes 'accepted': every assignment is created pending and
+                // stays there, so the lookup found nothing and `continue`
+                // dropped the technician from the sheet. That silently
+                // excluded anyone staffed through the crew and sub-task
+                // routes, whose fee lives on the sub-task rather than the
+                // assignment at all.
+                $agreedCompensation = $this->resolveApprovedAmount($serviceRequest, $technician->id);
 
-                if (!$assignment) continue;
-                $agreedCompensation = (float) ($assignment->agreed_compensation ?? 0);
+                // Zero is a real answer here: a crew member paid through the
+                // lead is owed nothing by us, and belongs on no sheet.
                 if ($agreedCompensation <= 0) continue;
 
                 // Progress AT period end — the amount the tech is entitled
@@ -317,6 +324,13 @@ class TechnicianPaymentService
             ->whereNotIn('status', [JobAssignment::STATUS_DECLINED])
             ->orderByDesc('id')
             ->first();
+
+        // A crew member the office is not paying directly resolves to nothing
+        // and stops there. Falling through would hand a right-hand man the
+        // job's entire labour payout.
+        if ($assignment && $assignment->paid_through_lead) {
+            return 0.0;
+        }
 
         $approvedAmount = $assignment ? (float) ($assignment->agreed_compensation ?? 0) : 0.0;
 

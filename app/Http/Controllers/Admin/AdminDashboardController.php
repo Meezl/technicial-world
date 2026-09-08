@@ -3878,6 +3878,10 @@ class AdminDashboardController extends Controller
             'role_on_job' => $request->role_on_job,
             'assigned_by' => auth()->id(),
             'agreed_compensation' => $compensation,
+            // Marks the zero as deliberate. Without it the payment schedule
+            // reads "no fee recorded" and falls back to the job's whole
+            // labour payout — see resolveApprovedAmount.
+            'paid_through_lead' => $compensation <= 0,
             'compensation_notes' => $compensation > 0
                 ? null
                 : 'Crew member — paid through the lead rather than separately.',

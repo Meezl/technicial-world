@@ -14,6 +14,7 @@ class JobAssignment extends Model
         'role_on_job',
         'assigned_by',
         'agreed_compensation',
+        'paid_through_lead',
         'compensation_notes',
         'attachments',
         'status',
@@ -28,6 +29,7 @@ class JobAssignment extends Model
 
     protected $casts = [
         'agreed_compensation' => 'decimal:2',
+        'paid_through_lead' => 'boolean',
         'attachments' => 'array',
         'attendance_dates' => 'array',
         'expected_start' => 'datetime',
