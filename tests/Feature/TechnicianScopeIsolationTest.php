@@ -171,8 +171,6 @@ class TechnicianScopeIsolationTest extends TestCase
         $titles = array_column($page['job']['sub_tasks'], 'title');
         $this->assertSame(['Roof sheeting'], $titles);
 
-        // The job-wide material list is the quotation's, not their brief.
-        $this->assertSame([], $page['scope']['materials']);
     }
 
     /**
@@ -186,7 +184,6 @@ class TechnicianScopeIsolationTest extends TestCase
 
         $this->assertSame('Paint Works', $page['scope']['role_on_job']);
         $this->assertSame([], $page['scope']['sub_tasks']);
-        $this->assertSame([], $page['scope']['materials']);
         $this->assertSame([], $page['job']['sub_tasks']);
 
         // The dates still reach them — they have to turn up.
@@ -205,19 +202,67 @@ class TechnicianScopeIsolationTest extends TestCase
 
         $this->assertTrue($page['scope']['is_lead_view']);
         $this->assertCount(2, $page['scope']['sub_tasks']);
-        $this->assertCount(2, $page['scope']['materials']);
         $this->assertCount(2, $page['job']['sub_tasks']);
     }
 
-    /** Quantities, never prices — the costing is the client's business. */
-    public function test_the_leads_material_list_is_not_a_price_list(): void
+    /**
+     * Running the assignment is not pricing it.
+     *
+     * The quoted material list is what was promised to the client and in what
+     * quantity — the quotation, in other words. What to install reaches a
+     * technician through their own task and the drawings on their assignment.
+     */
+    public function test_the_lead_does_not_receive_the_quoted_materials(): void
     {
         $s = $this->scenario();
-        $materials = $this->pageFor($s['lead'], $s['sr'])['scope']['materials'];
+        $page = $this->pageFor($s['lead'], $s['sr']);
 
-        foreach ($materials as $material) {
-            $this->assertArrayHasKey('quantity', $material);
-            $this->assertArrayNotHasKey('unit_price', $material);
+        $this->assertArrayNotHasKey('materials', $page['scope']);
+        $this->assertStringNotContainsString('Solar brackets', json_encode($page));
+        $this->assertStringNotContainsString('unit_price', json_encode($page));
+    }
+
+    /**
+     * Every RFQ-money and quotation column on service_requests, checked by
+     * name against the whole serialised payload.
+     *
+     * Listing the fields a page must not carry goes stale the moment a column
+     * is added — which is exactly how approved_quote_amount came to be shipped
+     * after it was introduced. Reading the columns and asserting none of them
+     * appear anywhere is the check that keeps working.
+     */
+    public function test_no_rfq_money_or_quotation_field_reaches_any_technician(): void
+    {
+        $s = $this->scenario();
+
+        $forbidden = collect(\Illuminate\Support\Facades\Schema::getColumnListing('service_requests'))
+            ->filter(fn ($column) => preg_match(
+                '/amount|cost|price|payout|revenue|quote|billing|deposit|budget/i',
+                $column
+            ))
+            // The technician's own figures travel separately and legitimately.
+            ->reject(fn ($column) => in_array($column, ['technician_payout'], true))
+            ->values();
+
+        $this->assertGreaterThan(10, $forbidden->count(), 'the column sweep found suspiciously little');
+
+        foreach (['lead', 'sub', 'crew'] as $role) {
+            $payload = $this->pageFor($s[$role], $s['sr']);
+            $job = $payload['job'];
+
+            foreach ($forbidden as $column) {
+                $this->assertArrayNotHasKey($column, $job, "{$column} reached the {$role}");
+            }
+
+            // And the values themselves, wherever they might have travelled.
+            $encoded = json_encode($payload);
+            foreach (['486500', '120000', 'margin agreed at 22', 'discount conceded'] as $needle) {
+                $this->assertStringNotContainsStringIgnoringCase(
+                    $needle,
+                    $encoded,
+                    "a quotation figure or term reached the {$role}"
+                );
+            }
         }
     }
 

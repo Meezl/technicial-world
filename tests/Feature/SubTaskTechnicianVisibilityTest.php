@@ -1385,12 +1385,14 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             ->assertInertia(function ($page) {
                 $page->where('scope.expected_duration_days', 7)
                     ->where('scope.is_lead_view', false)
-                    ->has('scope.materials', 0)
                     ->has('scope.sub_tasks', 1)
                     ->where('scope.sub_tasks.0.title', 'Solar Installation Works');
 
                 $scope = $page->toArray()['props']['scope'];
                 $this->assertArrayNotHasKey('notes', $scope, 'the quotation notes reached a technician');
+                // The quoted material list is the quotation's, and reaches
+                // nobody on the crew — the lead included.
+                $this->assertArrayNotHasKey('materials', $scope);
 
                 $job = $page->toArray()['props']['job'];
                 foreach (['quote_amount', 'quote_labor_cost', 'final_amount', 'revenue_generated',
@@ -1413,8 +1415,9 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             ->assertOk()
             ->assertInertia(function ($page) {
                 $page->where('scope.is_lead_view', true)
-                    ->has('scope.materials', 2)
                     ->has('scope.sub_tasks', 2);
+
+                $this->assertArrayNotHasKey('materials', $page->toArray()['props']['scope']);
 
                 $subTasks = collect($page->toArray()['props']['job']['sub_tasks'])->keyBy('title');
                 $this->assertSame('45000.00', $subTasks['Roof strengthening']['agreed_compensation']);

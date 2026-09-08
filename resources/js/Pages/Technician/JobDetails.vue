@@ -175,15 +175,6 @@
                     </div>
                 </div>
 
-                <div v-if="scopeMaterials.length" style="margin-top: 1rem;">
-                    <span class="section-kicker">Materials on this job</span>
-                    <div class="info-list" style="margin-top: 0.5rem;">
-                        <div v-for="(material, index) in scopeMaterials" :key="`${material.name}-${index}`" class="info-row">
-                            <span>{{ material.name }}</span>
-                            <strong v-if="material.quantity">Qty {{ material.quantity }}</strong>
-                        </div>
-                    </div>
-                </div>
             </section>
 
             <!-- Drawings and briefs: the files attached to this technician's
@@ -708,14 +699,12 @@ const props = defineProps({
 // What this technician is owed: their own task, or — for the lead, who signs
 // off the whole assignment — the job-wide list. Never the quotation's notes or
 // any pricing. See TechnicianController::jobScopeForTechnician.
-const scopeMaterials = computed(() => props.scope?.materials || [])
 const scopeTasks = computed(() => props.scope?.sub_tasks || [])
 const sharedDocuments = computed(() => props.job.documents || [])
 const hasScopeDetail = computed(() =>
     Boolean(
         props.scope?.role_on_job ||
         scopeTasks.value.length ||
-        scopeMaterials.value.length ||
         props.scope?.expected_duration_days ||
         props.scope?.commencement_at ||
         props.scope?.target_completion_at,

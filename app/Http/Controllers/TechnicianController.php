@@ -273,6 +273,21 @@ class TechnicianController extends Controller
         // wrote when approving on their behalf.
         'approved_quote_amount',
         'proxy_quote_approval_note',
+        // The superseded JSON schedule. Nothing reads it any more, but it
+        // still holds amounts on older rows.
+        'billing_milestones_legacy',
+        // Whether a deposit has been asked for is the state of the client's
+        // account, not a fact about the work.
+        'down_payment_requested',
+        // Quotation paperwork: which revision, approved by whom, when. A
+        // technician has no use for any of it, and it is the quotation.
+        'quote_revision_count',
+        'quote_last_revised_at',
+        'approved_quote_revision',
+        'client_quote_approved_by',
+        'client_quote_approved_at',
+        'proxy_quote_approved_by',
+        'proxy_quote_approved_at',
     ];
 
     private function technicianSafeJob(ServiceRequest $serviceRequest, int $technicianId): ServiceRequest
@@ -317,10 +332,12 @@ class TechnicianController extends Controller
      * is the shape of the deal with the client; a technician is owed the work
      * they were given.
      *
-     * The lead is the exception, deliberately. They are answerable for the
-     * whole assignment — that is what their own roster line says — so they get
-     * the job-wide picture. Quantities without prices, still: the costing is
-     * the client's business either way.
+     * The lead is answerable for the whole assignment, so they see the tasks
+     * that make it up and who holds them. They still do not see the quotation:
+     * running the work does not mean pricing it, and the quoted material list
+     * is what was promised to the client rather than a brief for the crew.
+     * What to install reaches a technician through their own task and the
+     * drawings attached to their assignment.
      */
     private function jobScopeForTechnician(ServiceRequest $serviceRequest, int $technicianId): array
     {
@@ -332,21 +349,10 @@ class TechnicianController extends Controller
         ];
 
         if ($serviceRequest->isLeadTechnician($technicianId)) {
-            $materials = collect($serviceRequest->quote_materials ?? [])
-                ->map(fn ($material) => [
-                    'name' => $material['name'] ?? 'Unnamed item',
-                    // Never unit_price — that is the client's costing, not a
-                    // packing list.
-                    'quantity' => $material['quantity'] ?? null,
-                ])
-                ->filter(fn ($material) => $material['name'] !== 'Unnamed item' || $material['quantity'])
-                ->values()
-                ->all();
-
             return $common + [
                 'is_lead_view' => true,
-                'materials' => $materials,
-                // The tasks making up the job, which the lead signs off.
+                // The tasks making up the job, which the lead signs off. Names
+                // and scope only; every fee is hidden by technicianSafeJob.
                 'sub_tasks' => $serviceRequest->subTasks
                     ->map(fn ($subTask) => ['title' => $subTask->title, 'description' => $subTask->description])
                     ->values()
@@ -371,9 +377,6 @@ class TechnicianController extends Controller
 
         return $common + [
             'is_lead_view' => false,
-            // Deliberately absent for non-leads: the job-wide material list is
-            // the quotation's, not this technician's brief.
-            'materials' => [],
             'sub_tasks' => $ownTasks,
             'role_on_job' => $roleOnJob,
         ];
