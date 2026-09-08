@@ -220,6 +220,11 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
 
     // Advance authorisation — running a job ahead of the client's approval or
     // deposit, on a named admin's authority and with an expiry.
+    // The office's final word on a job the lead has signed off — the third
+    // and last stage of completion.
+    Route::post('/jobs/{serviceRequest}/approve-completion', [AdminDashboardController::class, 'approveJobCompletion'])->name('admin.jobs.approve-completion');
+    Route::post('/jobs/{serviceRequest}/return-for-rework', [AdminDashboardController::class, 'returnJobForRework'])->name('admin.jobs.return-for-rework');
+
     // Who the client should expect on site, and telling them.
     Route::post('/job-assignments/{jobAssignment}/roster', [AdminDashboardController::class, 'updateRosterEntry'])->name('admin.jobs.roster.update');
     // A gang member or a lead's right-hand man — on the job, but carrying no

@@ -501,10 +501,21 @@ class ProgressService
         // one person's work ended everybody's. The job closes only once a
         // validated whole-job report says it is done.
         if ($this->hasLeadSignOff($serviceRequest)) {
-            if ($serviceRequest->status !== ServiceRequest::STATUS_COMPLETED) {
-                $updateData['status'] = ServiceRequest::STATUS_COMPLETED;
+            // Lead sign-off ends the work on site; it does not close the job.
+            // The office gives final approval — see JobService for the three
+            // stages — so this lands on pending confirmation rather than
+            // reaching a terminal status on its own.
+            if (!in_array($serviceRequest->status, [
+                ServiceRequest::STATUS_COMPLETED,
+                ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION,
+                ServiceRequest::STATUS_CLOSED,
+            ], true)) {
+                $updateData['status'] = ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION;
             }
-        } elseif ($serviceRequest->status === ServiceRequest::STATUS_COMPLETED) {
+        } elseif (in_array($serviceRequest->status, [
+            ServiceRequest::STATUS_COMPLETED,
+            ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION,
+        ], true)) {
             // Previously closed on the old arithmetic, but nothing signs off
             // for it now — a job showing "Completed" at 20% is worse than one
             // showing the truth.

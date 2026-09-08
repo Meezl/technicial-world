@@ -3632,6 +3632,64 @@ class AdminDashboardController extends Controller
         ]);
     }
 
+    // ==================== COMPLETION SIGN-OFF ====================
+
+    /**
+     * The office's final word: this is where an RFQ is deemed complete.
+     *
+     * Third of three stages. The technician files their hundred per cent, the
+     * lead signs it off on site, and the job waits here until somebody in the
+     * office has looked at it. Only now does it become terminal, get its
+     * completion date, and count towards the crew's records.
+     */
+    public function approveJobCompletion(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'notes' => 'nullable|string|max:1000',
+        ]);
+
+        if ($serviceRequest->status !== ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION) {
+            return back()->with('error',
+                'Only a job the lead has signed off can be approved. This one is ' .
+                (ServiceRequest::allStatuses()[$serviceRequest->status] ?? $serviceRequest->status) . '.'
+            );
+        }
+
+        app(\App\Services\JobService::class)
+            ->approveCompletion($serviceRequest, auth()->user(), $request->input('notes'));
+
+        AuditLog::log(AuditLog::ACTION_APPROVAL, $serviceRequest, null, [
+            'completion_approved_by' => auth()->id(),
+            'notes' => $request->input('notes'),
+        ]);
+
+        return back()->with('success',
+            $serviceRequest->request_id . ' approved and closed. It now sits in the Archive.'
+        );
+    }
+
+    /**
+     * Send it back to site.
+     *
+     * The reason is mandatory: this reaches a technician who believed they had
+     * finished, and a bare refusal tells them nothing about what to return for.
+     */
+    public function returnJobForRework(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'reason' => 'required|string|min:10|max:1000',
+        ]);
+
+        if ($serviceRequest->status !== ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION) {
+            return back()->with('error', 'Only a job awaiting completion approval can be sent back.');
+        }
+
+        app(\App\Services\JobService::class)
+            ->returnForRework($serviceRequest, auth()->user(), $request->input('reason'));
+
+        return back()->with('success', 'Sent back to site. The crew can see why.');
+    }
+
     // ==================== ATTENDANCE ROSTER ====================
 
     /**

@@ -360,6 +360,46 @@
                         </div>
                     </article>
 
+                    <!-- Third and last stage of completion. The technician
+                         filed their hundred per cent, the lead signed it off
+                         on site, and it waits here until the office looks. -->
+                    <article class="job-shell-card signoff-card" v-if="awaitingCompletionSignOff">
+                        <div class="job-card-header">
+                            <div>
+                                <span class="section-kicker">Sign-off</span>
+                                <h3>The lead says this job is finished</h3>
+                                <p>
+                                    Approving closes it, stamps the completion date and counts the work
+                                    towards the crew's records. Nothing has been counted yet.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="signoff-facts">
+                            <div class="signoff-fact">
+                                <span>Validated progress</span>
+                                <strong>{{ job.progress_percentage ?? 0 }}%</strong>
+                            </div>
+                            <div class="signoff-fact">
+                                <span>Client confirmed</span>
+                                <strong>{{ job.client_confirmed_completion ? 'Yes' : 'Not yet' }}</strong>
+                            </div>
+                            <div class="signoff-fact">
+                                <span>Crew on the job</span>
+                                <strong>{{ attendanceRoster.length }}</strong>
+                            </div>
+                        </div>
+
+                        <div class="signoff-actions">
+                            <button class="btn btn-primary" @click="showApproveCompletion = true">
+                                <i class="fas fa-circle-check"></i> Approve and close
+                            </button>
+                            <button class="btn btn-secondary" @click="showReturnRework = true">
+                                <i class="fas fa-rotate-left"></i> Send back to site
+                            </button>
+                        </div>
+                    </article>
+
                     <!-- What the office currently types by hand into an email
                          before every visit. Held here so the client's page, the
                          notice and this table cannot disagree. -->
@@ -1667,6 +1707,59 @@
         </div>
 
         <!-- Budget Modal -->
+        <div v-if="showApproveCompletion" class="modal-overlay">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h3>Approve completion</h3>
+                    <button @click="showApproveCompletion = false" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="roster-help" style="margin-bottom:0.85rem;">
+                        {{ job.request_id }} will be closed and moved to the Archive. The completion
+                        date is stamped now, and the job counts towards every technician on it.
+                    </p>
+                    <div class="form-group">
+                        <label>Completion notes <span class="roster-optional">(optional)</span></label>
+                        <textarea v-model="completionNotes" rows="3" class="form-control"
+                            placeholder="e.g. Snag list cleared on site; client walked the roof with the lead."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button @click="showApproveCompletion = false" class="btn btn-secondary">Cancel</button>
+                    <button @click="approveCompletion" class="btn btn-primary" :disabled="savingSignOff">
+                        {{ savingSignOff ? 'Closing…' : 'Approve and close' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div v-if="showReturnRework" class="modal-overlay">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h3>Send back to site</h3>
+                    <button @click="showReturnRework = false" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="roster-help" style="margin-bottom:0.85rem;">
+                        The job returns to in progress. Your reason reaches the crew, who believe
+                        they have finished — so say what they are going back for.
+                    </p>
+                    <div class="form-group">
+                        <label>What still needs doing? *</label>
+                        <textarea v-model="reworkReason" rows="3" class="form-control"
+                            placeholder="e.g. Ridge capping is not sealed on the north elevation."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button @click="showReturnRework = false" class="btn btn-secondary">Cancel</button>
+                    <button @click="returnForRework" class="btn btn-danger"
+                        :disabled="reworkReason.trim().length < 10 || savingSignOff">
+                        {{ savingSignOff ? 'Sending…' : 'Send back' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- Adding somebody to the crew. Not a sub-task: a gang member or a
              lead's right-hand man carries no separate scope, no progress of
              their own, and often no separate fee. -->
@@ -2889,6 +2982,40 @@ const attendanceRoster = computed(() => props.attendanceRoster || [])
 const rosterMissingIds = computed(() =>
     attendanceRoster.value.filter(m => !m.national_id).map(m => m.name)
 )
+
+// ---- Completion sign-off ----
+
+const awaitingCompletionSignOff = computed(
+    () => props.job.status === 'completed_pending_confirmation'
+)
+
+const showApproveCompletion = ref(false)
+const showReturnRework = ref(false)
+const savingSignOff = ref(false)
+const completionNotes = ref('')
+const reworkReason = ref('')
+
+const approveCompletion = () => {
+    if (savingSignOff.value) return
+    savingSignOff.value = true
+
+    router.post(`/admin/jobs/${props.job.id}/approve-completion`, { notes: completionNotes.value || null }, {
+        preserveScroll: true,
+        onSuccess: () => { showApproveCompletion.value = false },
+        onFinish: () => { savingSignOff.value = false },
+    })
+}
+
+const returnForRework = () => {
+    if (reworkReason.value.trim().length < 10 || savingSignOff.value) return
+    savingSignOff.value = true
+
+    router.post(`/admin/jobs/${props.job.id}/return-for-rework`, { reason: reworkReason.value }, {
+        preserveScroll: true,
+        onSuccess: () => { showReturnRework.value = false; reworkReason.value = '' },
+        onFinish: () => { savingSignOff.value = false },
+    })
+}
 
 const showCrewModal = ref(false)
 const savingCrew = ref(false)
@@ -6372,4 +6499,29 @@ defineOptions({
     justify-content: center;
     color: #94A3B8;
 }
+
+.signoff-card { border-left: 4px solid #F59E0B; }
+.signoff-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+.signoff-fact {
+    flex: 1;
+    min-width: 130px;
+    padding: 0.7rem 0.85rem;
+    background: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 10px;
+}
+.signoff-fact span {
+    display: block;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #64748B;
+}
+.signoff-fact strong { font-size: 1.05rem; color: #0F172A; }
+.signoff-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
 </style>

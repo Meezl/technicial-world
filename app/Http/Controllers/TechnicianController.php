@@ -1091,19 +1091,25 @@ class TechnicianController extends Controller
                 );
             }
 
-            $serviceRequest->update([
-                'progress_percentage' => 100,
-                'status' => 'completed',
-                'completed_date' => now(),
-            ]);
-
-            // Update technician stats
-            $technician->increment('total_jobs');
-            $technician->update(['availability' => 'available']);
+            // The lead's sign-off is the middle of three stages, not the end:
+            // the office reviews it before the job is deemed complete. Job
+            // counts and the completion date move at that point, not here — a
+            // job sent back for rework must not already be counted as
+            // delivered.
+            app(\App\Services\JobService::class)->markCompleted(
+                $serviceRequest,
+                'Lead technician signed the work off on site.'
+            );
         }
 
         // Check for milestones
         $this->checkMilestones($serviceRequest);
+
+        if ($action === 'completed') {
+            return back()->with('success',
+                'Signed off as complete. It now goes to the office for final approval before the job is closed.'
+            );
+        }
 
         return back()->with('success', 'Job status updated');
     }
@@ -1221,8 +1227,12 @@ class TechnicianController extends Controller
             abort(403, 'Unauthorized');
         }
 
-        if ($serviceRequest->status === ServiceRequest::STATUS_COMPLETED) {
-            return back()->with('error', 'This job is already completed.');
+        // Checked against every finished status, not just the legacy one. A
+        // job now passes through completed_pending_confirmation on its way to
+        // closed, and progress filed after the office has signed off would
+        // reopen an arithmetic nobody is going to look at again.
+        if (in_array($serviceRequest->status, ServiceRequest::TERMINAL_STATUSES, true)) {
+            return back()->with('error', 'This job is closed.');
         }
 
         // The slider used to write straight to the sub-task, which meant a

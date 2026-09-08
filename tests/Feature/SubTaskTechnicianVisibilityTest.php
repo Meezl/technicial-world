@@ -282,7 +282,8 @@ class SubTaskTechnicianVisibilityTest extends TestCase
         $this->actingAs($lead->user)
             ->post(route('technician.jobs.status', $job), ['action' => 'completed'])
             ->assertRedirect();
-        $this->assertSame('completed', $job->fresh()->status);
+        // The lead can close their part of it; the office deems it complete.
+        $this->assertSame('completed_pending_confirmation', $job->fresh()->status);
     }
 
     public function test_client_sees_the_sub_task_breakdown_and_validated_daily_reports(): void
