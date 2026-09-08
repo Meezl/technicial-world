@@ -536,6 +536,68 @@ class ClientController extends Controller
         ]);
     }
 
+    /**
+     * The client's verification — the last step, and the one that closes it.
+     *
+     * The rating is optional: a client who will not score the work should
+     * still be able to close it, or the job hangs on a courtesy.
+     */
+    public function verifyCompletion(Request $request, ServiceRequest $serviceRequest)
+    {
+        if ($serviceRequest->user_id !== Auth::id()) {
+            abort(403);
+        }
+
+        if (!in_array($serviceRequest->status, [
+            ServiceRequest::STATUS_AWAITING_CLIENT_VERIFICATION,
+            ServiceRequest::STATUS_CLIENT_QUERY_RAISED,
+        ], true)) {
+            return back()->with('error', 'This job is not waiting on your verification.');
+        }
+
+        $data = $request->validate([
+            'rating' => 'nullable|integer|min:1|max:5',
+            'comment' => 'nullable|string|max:2000',
+        ]);
+
+        app(\App\Services\JobService::class)->clientVerifyAndClose(
+            $serviceRequest,
+            $data['rating'] ?? null,
+            $data['comment'] ?? null
+        );
+
+        return back()->with('success', 'Thank you — the job is now closed.');
+    }
+
+    /**
+     * The client is not satisfied.
+     *
+     * Goes back to the office rather than straight to site: a concern is as
+     * often something they can answer as it is rework, and sending a crew out
+     * on one sentence would spend a day establishing which.
+     */
+    public function raiseCompletionConcern(Request $request, ServiceRequest $serviceRequest)
+    {
+        if ($serviceRequest->user_id !== Auth::id()) {
+            abort(403);
+        }
+
+        if ($serviceRequest->status !== ServiceRequest::STATUS_AWAITING_CLIENT_VERIFICATION) {
+            return back()->with('error', 'This job is not waiting on your verification.');
+        }
+
+        $data = $request->validate([
+            'concern' => 'required|string|min:10|max:2000',
+        ], [
+            'concern.required' => 'Tell us what is not right so we can put it right.',
+            'concern.min' => 'A few more words would help us understand what to look at.',
+        ]);
+
+        app(\App\Services\JobService::class)->clientRaiseConcern($serviceRequest, $data['concern']);
+
+        return back()->with('success', 'Thank you — our office will come back to you on this.');
+    }
+
     public function rateJob(Request $request, ServiceRequest $serviceRequest)
     {
         if ($serviceRequest->user_id !== Auth::id()) {

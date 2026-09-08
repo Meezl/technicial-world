@@ -120,7 +120,12 @@ class CompletionSignOffTest extends TestCase
 
     // ---------- stage three ----------
 
-    public function test_the_office_approval_is_what_closes_the_job(): void
+    /**
+     * The office accepts the work and hands it to the client. It is deemed
+     * delivered here — the date is stamped and the crew credited — but the
+     * client has the last word before it reaches a terminal status.
+     */
+    public function test_the_office_approval_hands_the_job_to_the_client(): void
     {
         $s = $this->jobReadyToClose();
         $this->leadSignsOff($s);
@@ -130,7 +135,8 @@ class CompletionSignOffTest extends TestCase
             ->assertRedirect();
 
         $sr = $s['sr']->fresh();
-        $this->assertSame(ServiceRequest::STATUS_CLOSED, $sr->status);
+        $this->assertSame(ServiceRequest::STATUS_AWAITING_CLIENT_VERIFICATION, $sr->status);
+        $this->assertNotNull($sr->client_verification_sent_at);
         $this->assertNotNull($sr->completed_date);
         $this->assertSame('Snag list cleared on site.', $sr->completion_notes);
 

@@ -624,6 +624,82 @@
                         </div>
                     </div>
 
+                    <!-- The last word is the client's. Nothing is filed away
+                         until they have had it. -->
+                    <div v-if="awaitingVerification" class="verify-panel">
+                        <h4><i class="fas fa-clipboard-check"></i> Please confirm this work</h4>
+                        <p class="verify-intro">
+                            Our office has checked the work and it is finished as far as we can tell.
+                            Have a look, and let us know either way.
+                        </p>
+
+                        <p v-if="serviceRequest.completion_notes" class="verify-notes">
+                            <strong>Our notes:</strong> {{ serviceRequest.completion_notes }}
+                        </p>
+
+                        <div class="verify-block">
+                            <label class="verify-label">
+                                How would you rate the work? <em>(optional)</em>
+                            </label>
+                            <div class="verify-stars">
+                                <button
+                                    v-for="n in 5"
+                                    :key="n"
+                                    type="button"
+                                    :class="['verify-star', { on: verifyForm.rating >= n }]"
+                                    :aria-label="`${n} out of 5`"
+                                    @click="verifyForm.rating = verifyForm.rating === n ? null : n"
+                                >
+                                    <i class="fas fa-star"></i>
+                                </button>
+                                <span v-if="verifyForm.rating" class="verify-star-label">
+                                    {{ verifyForm.rating }} / 5
+                                </span>
+                            </div>
+
+                            <textarea
+                                v-model="verifyForm.comment"
+                                rows="3"
+                                class="verify-input"
+                                placeholder="Anything you would like to add? (optional)"
+                            ></textarea>
+
+                            <button class="btn btn-primary" :disabled="verifyBusy" @click="submitVerification">
+                                <i class="fas fa-check"></i>
+                                {{ verifyBusy ? 'Sending…' : 'Confirm and close this job' }}
+                            </button>
+                        </div>
+
+                        <div class="verify-divider"><span>or</span></div>
+
+                        <div class="verify-block">
+                            <label class="verify-label">Something is not right</label>
+                            <textarea
+                                v-model="concern"
+                                rows="3"
+                                class="verify-input"
+                                placeholder="Tell us what needs looking at and our office will come back to you."
+                            ></textarea>
+                            <button
+                                class="btn btn-outline"
+                                :disabled="concern.trim().length < 10 || verifyBusy"
+                                @click="submitConcern"
+                            >
+                                <i class="fas fa-triangle-exclamation"></i> Raise this with the office
+                            </button>
+                        </div>
+                    </div>
+
+                    <div v-else-if="serviceRequest.status === 'client_query_raised'" class="verify-panel verify-panel-raised">
+                        <h4><i class="fas fa-comments"></i> We are looking into this</h4>
+                        <p class="verify-intro">
+                            Thank you — our office has your message and will come back to you.
+                        </p>
+                        <p v-if="serviceRequest.client_concern" class="verify-notes">
+                            <strong>You told us:</strong> {{ serviceRequest.client_concern }}
+                        </p>
+                    </div>
+
                     <!-- Who to expect at the gate. The client had to ask the
                          office by email for this; now it is on their own page,
                          built from the same record as the notice they are sent. -->
@@ -1775,6 +1851,41 @@ const formatDate = (date) => {
 
 // Turns a raw minute count into a human phrase the client can plan around.
 // 45 → "45 minutes"; 90 → "1 hour 30 minutes"; 120 → "2 hours".
+// The job is with the client, waiting on them to confirm it.
+const awaitingVerification = computed(
+    () => props.serviceRequest.status === 'awaiting_client_verification'
+)
+
+const verifyForm = reactive({ rating: null, comment: '' })
+const concern = ref('')
+const verifyBusy = ref(false)
+
+const submitVerification = () => {
+    if (verifyBusy.value) return
+    verifyBusy.value = true
+
+    router.post(`/client/service-request/${props.serviceRequest.id}/verify`, {
+        rating: verifyForm.rating,
+        comment: verifyForm.comment || null,
+    }, {
+        preserveScroll: true,
+        onFinish: () => { verifyBusy.value = false },
+    })
+}
+
+const submitConcern = () => {
+    if (concern.value.trim().length < 10 || verifyBusy.value) return
+    verifyBusy.value = true
+
+    router.post(`/client/service-request/${props.serviceRequest.id}/raise-concern`, {
+        concern: concern.value,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => { concern.value = '' },
+        onFinish: () => { verifyBusy.value = false },
+    })
+}
+
 const formatContactTime = (mins) => {
     const n = Number(mins) || 0
     if (n <= 0) return ''
@@ -3128,5 +3239,72 @@ defineOptions({
     justify-content: center;
     color: #94A3B8;
     font-size: 0.9rem;
+}
+
+/* ---- Client verification ---- */
+.verify-panel {
+    margin-top: 1.25rem;
+    padding: 1.15rem 1.25rem;
+    background: #F0FDF4;
+    border: 1px solid #BBF7D0;
+    border-radius: 12px;
+}
+.verify-panel-raised { background: #FFFBEB; border-color: #FDE68A; }
+.verify-panel h4 {
+    margin: 0 0 0.35rem;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #0F172A;
+}
+.verify-intro { margin: 0 0 0.85rem; font-size: 0.88rem; color: #475569; line-height: 1.55; }
+.verify-notes {
+    margin: 0 0 0.9rem;
+    padding: 0.6rem 0.75rem;
+    background: #fff;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    color: #334155;
+}
+.verify-block { display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start; }
+.verify-label { font-size: 0.85rem; font-weight: 600; color: #334155; }
+.verify-label em { font-weight: 400; color: #94A3B8; font-style: normal; }
+.verify-stars { display: flex; align-items: center; gap: 0.2rem; }
+.verify-star {
+    background: none;
+    border: none;
+    padding: 0.15rem;
+    font-size: 1.35rem;
+    color: #CBD5E1;
+    cursor: pointer;
+    line-height: 1;
+}
+.verify-star.on { color: #F59E0B; }
+.verify-star-label { margin-left: 0.5rem; font-size: 0.85rem; color: #64748B; }
+.verify-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid #CBD5E1;
+    border-radius: 10px;
+    font: inherit;
+    font-size: 0.88rem;
+    resize: vertical;
+}
+.verify-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 1.1rem 0;
+    color: #94A3B8;
+    font-size: 0.8rem;
+}
+.verify-divider::before,
+.verify-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #D1FAE5;
 }
 </style>

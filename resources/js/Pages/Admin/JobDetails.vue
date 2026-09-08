@@ -360,6 +360,56 @@
                         </div>
                     </article>
 
+                    <!-- The client is holding it, or has come back unhappy. -->
+                    <article class="job-shell-card signoff-card" v-if="awaitingClientVerification || clientRaisedConcern">
+                        <div class="job-card-header">
+                            <div>
+                                <span class="section-kicker">Client</span>
+                                <h3>{{ clientRaisedConcern ? 'The client has raised a concern' : 'With the client to verify' }}</h3>
+                                <p v-if="clientRaisedConcern">
+                                    Decide whether this is rework or something you can answer. Either way
+                                    the job stays open until the client is satisfied.
+                                </p>
+                                <p v-else>
+                                    Sent {{ formatDateTime(job.client_verification_sent_at) }}.
+                                    Nothing is filed away until they confirm.
+                                </p>
+                            </div>
+                        </div>
+
+                        <blockquote v-if="job.client_concern" class="signoff-quote">
+                            <i class="fas fa-quote-left"></i>
+                            <span>{{ job.client_concern }}</span>
+                        </blockquote>
+
+                        <div v-if="clientRaisedConcern" class="form-group">
+                            <label>What are you doing about it? *</label>
+                            <textarea v-model="concernNote" rows="3" class="form-control"
+                                placeholder="e.g. Crew to re-seal the north ridge on Thursday."></textarea>
+                        </div>
+
+                        <div class="signoff-actions" v-if="clientRaisedConcern">
+                            <button class="btn btn-primary" :disabled="concernNote.trim().length < 10 || savingSignOff"
+                                @click="resolveConcern('return_to_site')">
+                                <i class="fas fa-hard-hat"></i> Send the crew back
+                            </button>
+                            <button class="btn btn-secondary" :disabled="concernNote.trim().length < 10 || savingSignOff"
+                                @click="resolveConcern('resend_to_client')">
+                                <i class="fas fa-reply"></i> Answered — back to the client
+                            </button>
+                        </div>
+
+                        <div class="signoff-actions" v-else>
+                            <p v-if="!clientVerificationOverdue" class="roster-help" style="margin:0;">
+                                The client has until {{ formatDateTime(clientVerificationDueAt) }} to respond.
+                                After that you can close it on their behalf.
+                            </p>
+                            <button v-else class="btn btn-secondary" @click="showCloseUnverified = true">
+                                <i class="fas fa-hourglass-end"></i> Close without their verification
+                            </button>
+                        </div>
+                    </article>
+
                     <!-- Third and last stage of completion. The technician
                          filed their hundred per cent, the lead signed it off
                          on site, and it waits here until the office looks. -->
@@ -399,7 +449,7 @@
 
                         <div class="signoff-actions">
                             <button class="btn btn-primary" @click="showApproveCompletion = true">
-                                <i class="fas fa-circle-check"></i> Approve and close
+                                <i class="fas fa-circle-check"></i> Approve and send to client
                             </button>
                             <button class="btn btn-secondary" @click="showReturnRework = true">
                                 <i class="fas fa-rotate-left"></i> Send back to site
@@ -1714,6 +1764,33 @@
         </div>
 
         <!-- Budget Modal -->
+        <div v-if="showCloseUnverified" class="modal-overlay">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h3>Close without client verification</h3>
+                    <button @click="showCloseUnverified = false" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="roster-help" style="margin-bottom:0.85rem;">
+                        The job will be recorded as closed <strong>without</strong> the client's
+                        verification — it will not be counted as one they signed off.
+                    </p>
+                    <div class="form-group">
+                        <label>Why are you closing it? *</label>
+                        <textarea v-model="closeUnverifiedReason" rows="3" class="form-control"
+                            placeholder="e.g. Client did not respond to two follow-ups."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button @click="showCloseUnverified = false" class="btn btn-secondary">Cancel</button>
+                    <button @click="closeUnverified" class="btn btn-primary"
+                        :disabled="closeUnverifiedReason.trim().length < 10 || savingSignOff">
+                        {{ savingSignOff ? 'Closing…' : 'Close the job' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div v-if="showApproveCompletion" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
@@ -1722,8 +1799,9 @@
                 </div>
                 <div class="modal-body">
                     <p class="roster-help" style="margin-bottom:0.85rem;">
-                        {{ job.request_id }} will be closed and moved to the Archive. The completion
-                        date is stamped now, and the job counts towards every technician on it.
+                        {{ job.request_id }} will be sent to {{ job.user?.name }} to verify, and they
+                        will be emailed a link. The completion date is stamped now and the job counts
+                        towards every technician on it — but it is not filed away until the client confirms.
                     </p>
                     <div class="form-group">
                         <label>Completion notes <span class="roster-optional">(optional)</span></label>
@@ -1734,7 +1812,7 @@
                 <div class="modal-footer">
                     <button @click="showApproveCompletion = false" class="btn btn-secondary">Cancel</button>
                     <button @click="approveCompletion" class="btn btn-primary" :disabled="savingSignOff">
-                        {{ savingSignOff ? 'Closing…' : 'Approve and close' }}
+                        {{ savingSignOff ? 'Sending…' : 'Approve and send to client' }}
                     </button>
                 </div>
             </div>
@@ -2995,6 +3073,49 @@ const rosterMissingIds = computed(() =>
 const awaitingCompletionSignOff = computed(
     () => props.job.status === 'completed_pending_confirmation'
 )
+
+const awaitingClientVerification = computed(
+    () => props.job.status === 'awaiting_client_verification'
+)
+const clientRaisedConcern = computed(() => props.job.status === 'client_query_raised')
+
+// Three days from handover, after which the office may close it for a client
+// who never answered.
+const clientVerificationDueAt = computed(() => {
+    if (!props.job.client_verification_sent_at) return null
+    const d = new Date(props.job.client_verification_sent_at)
+    d.setDate(d.getDate() + 3)
+    return d.toISOString()
+})
+const clientVerificationOverdue = computed(
+    () => clientVerificationDueAt.value !== null && new Date(clientVerificationDueAt.value) < new Date()
+)
+
+const concernNote = ref('')
+const showCloseUnverified = ref(false)
+const closeUnverifiedReason = ref('')
+
+const resolveConcern = (action) => {
+    if (concernNote.value.trim().length < 10 || savingSignOff.value) return
+    savingSignOff.value = true
+
+    router.post(`/admin/jobs/${props.job.id}/resolve-concern`, { action, note: concernNote.value }, {
+        preserveScroll: true,
+        onSuccess: () => { concernNote.value = '' },
+        onFinish: () => { savingSignOff.value = false },
+    })
+}
+
+const closeUnverified = () => {
+    if (closeUnverifiedReason.value.trim().length < 10 || savingSignOff.value) return
+    savingSignOff.value = true
+
+    router.post(`/admin/jobs/${props.job.id}/close-unverified`, { reason: closeUnverifiedReason.value }, {
+        preserveScroll: true,
+        onSuccess: () => { showCloseUnverified.value = false; closeUnverifiedReason.value = '' },
+        onFinish: () => { savingSignOff.value = false },
+    })
+}
 
 const showApproveCompletion = ref(false)
 const showReturnRework = ref(false)

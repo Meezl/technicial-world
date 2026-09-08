@@ -3663,9 +3663,94 @@ class AdminDashboardController extends Controller
             'notes' => $request->input('notes'),
         ]);
 
-        return back()->with('success',
-            $serviceRequest->request_id . ' approved and closed. It now sits in the Archive.'
+        // Tell the client. They can find it in their portal either way, but a
+        // client who does not log in would otherwise never know it was waiting
+        // on them — and the office would end up closing it themselves.
+        $serviceRequest->loadMissing('user');
+        $emailed = false;
+
+        try {
+            $serviceRequest->user?->notify(new \App\Notifications\JobReadyForVerification($serviceRequest));
+            $emailed = $serviceRequest->user !== null;
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Client verification notice failed', [
+                'service_request_id' => $serviceRequest->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return back()->with(
+            $emailed ? 'success' : 'warning',
+            $emailed
+                ? $serviceRequest->request_id . ' approved and sent to ' . $serviceRequest->user->email . ' to verify.'
+                : $serviceRequest->request_id . ' approved, but the client could not be emailed. It is waiting for them in their portal.'
         );
+    }
+
+    /**
+     * Close a job the client never came back on.
+     *
+     * Available once the verification window has passed. Recorded as closed
+     * without them, because a job shut on a client's silence is not a job they
+     * verified and a report that counts the two together misdescribes the
+     * business to itself.
+     */
+    public function closeWithoutClientVerification(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'reason' => 'required|string|min:10|max:500',
+        ]);
+
+        if ($serviceRequest->status !== ServiceRequest::STATUS_AWAITING_CLIENT_VERIFICATION) {
+            return back()->with('error', 'Only a job awaiting client verification can be closed this way.');
+        }
+
+        if (!$serviceRequest->clientVerificationOverdue()) {
+            $due = $serviceRequest->client_verification_sent_at
+                ->addDays(ServiceRequest::CLIENT_VERIFICATION_DAYS);
+
+            return back()->with('error',
+                'The client still has until ' . $due->format('d M Y, H:i') . ' to verify this job.'
+            );
+        }
+
+        app(\App\Services\JobService::class)
+            ->closeWithoutClient($serviceRequest, auth()->user(), $request->input('reason'));
+
+        return back()->with('success',
+            $serviceRequest->request_id . ' closed without client verification, and recorded as such.'
+        );
+    }
+
+    /**
+     * Put right what the client raised, then hand it back to them.
+     *
+     * Two ways out of a concern: send the crew back, or answer it and return
+     * the job for verification. Both belong to the office, which is the point
+     * of routing concerns here rather than straight to site.
+     */
+    public function resolveClientConcern(Request $request, ServiceRequest $serviceRequest)
+    {
+        $request->validate([
+            'action' => 'required|in:return_to_site,resend_to_client',
+            'note' => 'required|string|min:10|max:1000',
+        ]);
+
+        if ($serviceRequest->status !== ServiceRequest::STATUS_CLIENT_QUERY_RAISED) {
+            return back()->with('error', 'There is no open concern on this job.');
+        }
+
+        $jobs = app(\App\Services\JobService::class);
+
+        if ($request->input('action') === 'return_to_site') {
+            $jobs->returnForRework($serviceRequest, auth()->user(), $request->input('note'));
+
+            return back()->with('success', 'Sent back to site. The crew can see what the client raised.');
+        }
+
+        $jobs->sendForClientVerification($serviceRequest, auth()->user());
+
+        return back()->with('success', 'Answered and sent back to the client to verify.');
     }
 
     /**
