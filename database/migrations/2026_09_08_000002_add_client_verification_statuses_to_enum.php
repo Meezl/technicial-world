@@ -2,34 +2,35 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * Teach the status column the two new stages.
  *
  * `service_requests.status` is a MySQL enum, so a status the application knows
- * about but the column does not is rejected at write time with "Data truncated
- * for column 'status'". The test suite runs on sqlite, which stores an enum as
- * plain text and accepts anything — so this is invisible until the code meets
- * the real database.
+ * about and the column does not is rejected on write with "Data truncated for
+ * column 'status'". The suite runs on sqlite, which stores an enum as plain
+ * text and accepts anything, so this is invisible until the code meets a real
+ * database.
  *
- * Listed in full rather than appended: MySQL has no "add a value" for enums,
- * and the existing set has to be repeated exactly or the column silently loses
- * the ones left out.
+ * Two things this deliberately does not do.
+ *
+ * It does not hardcode the full list. Writing the enum out by hand means any
+ * value that exists in production but not in the list is silently dropped from
+ * the column — and every row holding it is truncated. Reading the current
+ * definition and adding to it cannot lose a value nobody remembered.
+ *
+ * And it appends rather than inserting in order. Enum values are stored by
+ * ordinal, so adding to the end is an instant metadata change, while slotting
+ * them in the middle shifts every later ordinal and rewrites the whole table
+ * under a lock. Nothing in the application reads meaning into enum order — it
+ * compares strings — so the tidier ordering is not worth a table rebuild on a
+ * live system.
  */
 return new class extends Migration
 {
-    private const STATUSES = [
-        'draft_rfq', 'awaiting_pm_assignment', 'awaiting_tech_availability',
-        'awaiting_client_date_response', 'awaiting_quote_generation', 'awaiting_quote_approval',
-        'awaiting_payment', 'payment_pending_approval', 'ready_for_assignment', 'assigned',
-        'queued', 'in_progress', 'delayed', 'suspended', 'reassigned',
-        'completed_pending_confirmation',
-        // The two new ones: the client's turn, and their concern.
-        'awaiting_client_verification', 'client_query_raised',
-        'closed', 'archived',
-        // Legacy values still present on older rows.
-        'pending', 'quoted', 'approved', 'completed', 'cancelled',
+    private const NEW_STATUSES = [
+        'awaiting_client_verification',
+        'client_query_raised',
     ];
 
     public function up(): void
@@ -38,9 +39,22 @@ return new class extends Migration
             return;
         }
 
-        $values = collect(self::STATUSES)->map(fn ($s) => "'" . $s . "'")->implode(',');
+        $current = $this->currentValues();
 
-        DB::statement("ALTER TABLE service_requests MODIFY COLUMN status ENUM({$values}) NOT NULL DEFAULT 'pending'");
+        if (empty($current)) {
+            throw new \RuntimeException(
+                'Could not read the existing status enum; refusing to rewrite the column blind.'
+            );
+        }
+
+        $missing = array_values(array_diff(self::NEW_STATUSES, $current));
+
+        // Idempotent: re-running after a partial deploy is a no-op.
+        if (empty($missing)) {
+            return;
+        }
+
+        $this->applyEnum(array_merge($current, $missing));
     }
 
     public function down(): void
@@ -49,17 +63,43 @@ return new class extends Migration
             return;
         }
 
-        // Anything sitting on a removed value would be truncated, so park it
+        // Any row still holding a removed value would be truncated, so park it
         // somewhere true before narrowing the column.
         DB::table('service_requests')
-            ->whereIn('status', ['awaiting_client_verification', 'client_query_raised'])
+            ->whereIn('status', self::NEW_STATUSES)
             ->update(['status' => 'completed_pending_confirmation']);
 
-        $values = collect(self::STATUSES)
-            ->reject(fn ($s) => in_array($s, ['awaiting_client_verification', 'client_query_raised'], true))
-            ->map(fn ($s) => "'" . $s . "'")
+        $remaining = array_values(array_diff($this->currentValues(), self::NEW_STATUSES));
+
+        if ($remaining) {
+            $this->applyEnum($remaining);
+        }
+    }
+
+    /** The values the column accepts right now, in their existing order. */
+    private function currentValues(): array
+    {
+        $column = DB::selectOne('SHOW COLUMNS FROM service_requests WHERE Field = ?', ['status']);
+
+        if (!$column || !preg_match("/^enum\((.*)\)$/i", $column->Type, $matches)) {
+            return [];
+        }
+
+        // Values come back single-quoted and comma-separated, with any literal
+        // quote doubled.
+        preg_match_all("/'((?:[^']|'')*)'/", $matches[1], $values);
+
+        return array_map(fn ($v) => str_replace("''", "'", $v), $values[1]);
+    }
+
+    private function applyEnum(array $values): void
+    {
+        $quoted = collect($values)
+            ->map(fn ($v) => "'" . str_replace("'", "''", $v) . "'")
             ->implode(',');
 
-        DB::statement("ALTER TABLE service_requests MODIFY COLUMN status ENUM({$values}) NOT NULL DEFAULT 'pending'");
+        DB::statement(
+            "ALTER TABLE service_requests MODIFY COLUMN status ENUM({$quoted}) NOT NULL DEFAULT 'pending'"
+        );
     }
 };
