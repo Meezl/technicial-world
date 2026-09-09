@@ -267,6 +267,19 @@ class ClientController extends Controller
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
+        // A management company approves through its own chain — one stage or
+        // two, depending on the account. This endpoint records a single
+        // decision by whoever the request is filed under, which for a
+        // corporate job is the caretaker who raised it: reaching it would let
+        // a junior approve their own request and skip the senior manager
+        // entirely. The chain is the only way in.
+        if ($serviceRequest->isCorporate()) {
+            return response()->json([
+                'error' => 'This request is approved through your organisation\'s approval chain.',
+                'redirect' => route('corporate.approvals.show', $serviceRequest),
+            ], 409);
+        }
+
         // Ensure the RFQ is in quoted status
         if ($serviceRequest->rfq_status !== ServiceRequest::RFQ_STATUS_QUOTED) {
             return response()->json([
@@ -367,6 +380,16 @@ class ClientController extends Controller
         // Ensure the service request belongs to the authenticated user
         if ($serviceRequest->user_id !== Auth::id()) {
             return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        // Same reasoning as approveRFQ: a corporate decline carries comments
+        // the office has to act on and closes a chain, neither of which this
+        // endpoint does.
+        if ($serviceRequest->isCorporate()) {
+            return response()->json([
+                'error' => 'This request is declined through your organisation\'s approval chain.',
+                'redirect' => route('corporate.approvals.show', $serviceRequest),
+            ], 409);
         }
 
         // Ensure the RFQ is in quoted status

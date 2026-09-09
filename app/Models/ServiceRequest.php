@@ -297,14 +297,24 @@ class ServiceRequest extends Model
                 }
             }
 
-            if ($request->isDirty('raised_by_member_id') && $request->raised_by_member_id) {
-                $belongs = OrganisationMember::where('id', $request->raised_by_member_id)
-                    ->where('client_organisation_id', $request->client_organisation_id)
-                    ->exists();
+            if (($request->isDirty('raised_by_member_id') || $request->isDirty('user_id')) && $request->raised_by_member_id) {
+                $member = OrganisationMember::find($request->raised_by_member_id);
 
-                if (!$belongs) {
+                if (!$member || $member->client_organisation_id !== $request->client_organisation_id) {
                     throw new \LogicException(
                         'The requester is not a member of this request\'s client organisation.'
+                    );
+                }
+
+                // The membership and the account must name the same person.
+                // They drift when a request is reassigned to another caretaker
+                // and only one of the two is moved — after which the request
+                // sits on one person's dashboard while the paperwork credits
+                // another. Reassignment moves both; this is what makes sure of
+                // it.
+                if ((int) $member->user_id !== (int) $request->user_id) {
+                    throw new \LogicException(
+                        'The requester membership does not belong to the account this request is filed under.'
                     );
                 }
             }
@@ -339,6 +349,12 @@ class ServiceRequest extends Model
     public function raisedByMember()
     {
         return $this->belongsTo(OrganisationMember::class, 'raised_by_member_id');
+    }
+
+    /** The client's own sign-off chain. Empty for retail. */
+    public function corporateApprovals()
+    {
+        return $this->hasMany(CorporateApproval::class)->orderBy('sequence');
     }
 
     public function assignedPm()
@@ -832,6 +848,32 @@ class ServiceRequest extends Model
         return $query->where('segment', $segment);
     }
 
+    /**
+     * Everything one client-side person may see.
+     *
+     * The query-shaped twin of isVisibleToClient(). Both exist because a list
+     * and a single-record check that disagree is how somebody ends up with a
+     * row on their dashboard they get a 403 on when they click it.
+     */
+    public function scopeVisibleToClient($query, User $user)
+    {
+        $member = $user->organisationMembership()->where('is_active', true)->first();
+
+        $wideView = $member && in_array($member->position, self::ORGANISATION_WIDE_POSITIONS, true);
+
+        if (!$wideView) {
+            return $query->where('user_id', $user->id);
+        }
+
+        return $query->where(function ($q) use ($user, $member) {
+            $q->where('user_id', $user->id)
+                ->orWhere(function ($q) use ($member) {
+                    $q->where('segment', self::SEGMENT_CORPORATE)
+                        ->where('client_organisation_id', $member->client_organisation_id);
+                });
+        });
+    }
+
     /** Requests for one management company. */
     public function scopeForOrganisation($query, int $organisationId)
     {
@@ -1165,6 +1207,71 @@ class ServiceRequest extends Model
     }
 
     // ==================== HELPERS ====================
+
+    /**
+     * How this request is referenced on paper.
+     *
+     * A revision keeps the request's own number and gains an R suffix, so
+     * REQ-ABC123 and REQ-ABC123/R2 are visibly the same job at two prices.
+     * Derived rather than stored: the revision counter is already the single
+     * source of truth, and a second copy of it would eventually disagree.
+     */
+    public function getQuoteReferenceAttribute(): string
+    {
+        $revision = (int) ($this->quote_revision_count ?? 0);
+
+        return $revision > 0
+            ? sprintf('%s/R%d', $this->request_id, $revision)
+            : (string) $this->request_id;
+    }
+
+    /**
+     * May this client-side person see this request at all?
+     *
+     * Retail is unchanged: your own requests and nothing else. Corporate adds
+     * one rule — the people who sign work off, and the people who pay for it,
+     * see everything in their own company. A caretaker still sees only what
+     * they raised, which is what the brief asks for: the other juniors do not
+     * need to see it unless the senior manager hands it to them.
+     *
+     * Deliberately not a Gate: it is called from list queries as well as from
+     * single-record checks, and the two have to agree.
+     */
+    public function isVisibleToClient(?User $user): bool
+    {
+        if (!$user) {
+            return false;
+        }
+
+        if ((int) $this->user_id === (int) $user->id) {
+            return true;
+        }
+
+        if (!$this->isCorporate() || !$this->client_organisation_id) {
+            return false;
+        }
+
+        $member = $user->relationLoaded('organisationMembership')
+            ? $user->organisationMembership
+            : $user->organisationMembership()->first();
+
+        return $member
+            && $member->is_active
+            && (int) $member->client_organisation_id === (int) $this->client_organisation_id
+            && in_array($member->position, self::ORGANISATION_WIDE_POSITIONS, true);
+    }
+
+    /**
+     * Positions that see the whole company's work rather than only their own.
+     *
+     * Accounts is here because settling an invoice means seeing the jobs it
+     * covers; a requester is not, because that is the whole point of the rule.
+     */
+    const ORGANISATION_WIDE_POSITIONS = [
+        OrganisationMember::POSITION_VERIFIER,
+        OrganisationMember::POSITION_APPROVER,
+        OrganisationMember::POSITION_ACCOUNTS,
+    ];
 
     public function isCorporate(): bool
     {

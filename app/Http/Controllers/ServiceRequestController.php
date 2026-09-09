@@ -130,8 +130,13 @@ class ServiceRequestController extends Controller
      */
     public function show(ServiceRequest $serviceRequest)
     {
-        // Ensure user can only view their own requests
-        if ($serviceRequest->user_id !== auth()->id()) {
+        // Your own requests, and — for a management company — the work your
+        // position lets you see across the account. Unchanged for retail,
+        // where isVisibleToClient is exactly the ownership test it replaces.
+        //
+        // Viewing only. Acting on a corporate request still goes through the
+        // approval chain; see ClientController::approveRFQ.
+        if (!$serviceRequest->isVisibleToClient(auth()->user())) {
             abort(403);
         }
 

@@ -1,7 +1,7 @@
 # Property Management & Corporate Module — Analysis & Implementation Plan
 
 > Source brief: *"Technician World Property Management & Corporate Level Module — Brief"*, LNI → WEBPIN, dated 28.08.2026 (8 pages).
-> Plan drafted: 2026-09-09. Status: **Phases 0–1 delivered** on `feat/corporate-segment-foundations`; Phases 2–7 not started.
+> Plan drafted: 2026-09-09. Status: **Phases 0–2 delivered** on `feat/corporate-segment-foundations`; Phases 3–7 not started.
 > Companion docs: `FEATURE_TRACKER.md`, `REQUISITION_MODULE_DOCUMENTATION.md`, `ADMIN_ASSISTED_RFQ_PLAN.md`.
 
 ---
@@ -319,15 +319,21 @@ Each phase is independently shippable and leaves the retail module untouched.
 
 **Found and fixed in passing:** the auto-generated name for one composite index came to 68 characters, over MySQL's 64-character limit. The `CREATE` failed, and because table creations are guarded with `hasTable` for retry-safety, the retry then skipped the table and **reported success with the index missing**. `MigrationSafetyTest` now measures every index name the migrations build and fails over 64 — the check is verified to catch the original bug.
 
-### Phase 2 — Corporate REQ lifecycle & approvals *(≈3 weeks)* — CA-6…CA-8, CA-10, RQ-1…RQ-5, RQ-8, RQ-9
-- Corporate queue separated from retail on the admin RFQ screen.
-- Visibility scoping: requester sees own REQs; verifier/approver see all in the organisation; reassign action for the senior manager.
-- Configurable 1-stage / 2-stage approval routing (`corporate_approvals`).
-- Decline-with-comments returning to **both** admin and PM, with an admin→PM comment channel.
-- **Approval transition page**: LPO number + upload, payer KRA PIN (defaulted from the property's owner PIN), signatory selection and signature capture.
-- Reference numbering service: `REQ-XXXX`, `REQ-XXXX/R1`, `REQ-XXXX/VO-01/R02`; status colour coding in the UI.
+### Phase 2 — Corporate REQ lifecycle & approvals *(≈3 weeks)* — ✅ **delivered**
+- ✅ Corporate queue separated from retail (landed early, in Phase 0).
+- ✅ Visibility scoping through one rule expressed twice — `isVisibleToClient()` for a record and `scopeVisibleToClient()` for a list — so a row on a dashboard can never 403 when clicked. Reassignment moves the membership and the account together; the model refuses them out of step.
+- ✅ `corporate_approvals` + `CorporateApprovalService` as its single writer. The chain is materialised pending when a quotation is sent, so "whose turn is it" is a row rather than an inference.
+- ✅ **A revision supersedes the open chain rather than inheriting it.** Signing off on KES 120,000 is not signing off on KES 180,000; decisions already made keep their own status, so the trail reads "they approved, then it changed".
+- ✅ Decline with comments closes the chain and reaches **both** the office and the assigned PM.
+- ✅ Approval transition page: LPO number + copy, payer KRA PIN defaulted from the property's owner PIN, signatory from the pre-set list. Captured on the final approve row — it is the act of approving that produces it.
+- ✅ Approved corporate work goes to `ready_for_assignment` with **no deposit step** (DP-6).
+- ✅ `quote_reference` derives `/R1`, `/R2` from the revision counter. VO revision suffixes land with the variation-card flow in Phase 5.
 
-**Exit:** a junior can raise a REQ, TW can quote it, and a two-stage client approval completes with a signed LPO on file.
+**Exit:** ✅ a caretaker raises a job against a building, TW quotes it, the verifier signs off, and the approver completes it with a signed LPO on file. 519 tests green; verified end to end in the browser.
+
+**Closed in passing:** a corporate requester is the account their own request is filed under, so the retail approve endpoint's ownership check would have passed — letting a junior approve their own job and skip the senior manager entirely. `approveRFQ` and `declineRFQ` now refuse corporate requests outright.
+
+**Seam left for Phase 3:** `CorporateApprovalController::settleApprovedRequest` is where the float gate belongs. Reaching `ready_for_assignment` is not the same as being allowed to staff the job.
 
 ### Phase 3 — Float ledger & work gating *(≈2.5 weeks)* — DP-1…DP-6, DP-9, AD-3, AD-4
 - `deposit_accounts` + `deposit_ledger_entries`; `DepositService` as the only writer.

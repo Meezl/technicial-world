@@ -309,11 +309,29 @@
 | MySQL identifier-length guard | ✅ | `MigrationSafetyTest::test_no_index_name_exceeds_the_mysql_identifier_limit` |
 | Regression cover | ✅ | `tests/Feature/CorporateAccountsTest.php` (27 tests) |
 
-### Phases 2–7 — not started
+### Phase 2 — Corporate REQ lifecycle & approvals
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| Requester raises work against a building (RQ-1) | ✅ | `Corporate\CorporateRequestController::store`, property scoped to their own portfolio |
+| Configurable 1- or 2-stage approval routing (CA-7, RQ-2) | ✅ | `corporate_approvals` + `CorporateApprovalService`; chain materialised on quote send |
+| Decline with comments back to admin **and** PM (RQ-3) | ✅ | `CorporateApprovalDecision` mailable to both; `rfq_status` → rejected with the reason |
+| Approval transition page: LPO no. + copy, landlord PIN, signatory (RQ-5) | ✅ | Captured on the final approve row; PIN defaults from the property, signatory from the pre-set list |
+| Approved job runs the existing pipeline (RQ-4) | ✅ | → `ready_for_assignment`; **no deposit step** (DP-6) |
+| Visibility scoping: requester sees own, seniors see all (CA-8) | ✅ | `isVisibleToClient()` + `scopeVisibleToClient()` — one rule, list and record |
+| Senior manager reassigns a request (CA-8) | ✅ | `reassign`; membership and account move together, enforced by the model |
+| Quote revision references `/R1`, `/R2` (RQ-8) | ✅ | `ServiceRequest::quote_reference`, derived from the revision counter |
+| Approved / declined / superseded colour coding (RQ-9) | ✅ | Approval trail on the review screen; declined and superseded steps stay visible |
+| Retail approval path cannot bypass the chain | ✅ | `ClientController::approveRFQ`/`declineRFQ` return 409 for corporate |
+| Regression cover | ✅ | `tests/Feature/CorporateApprovalChainTest.php` (29 tests) |
+
+> VO revision suffixes (`/VO-01/R01`, the second half of RQ-8) land with the variation-card
+> flow in Phase 5, where that journey lives. `/VO-01` → `/VO-02` already works.
+
+### Phases 3–7 — not started
 
 | Phase | Scope | Requirement IDs | Status |
 |-------|-------|-----------------|--------|
-| 2 | Corporate REQ lifecycle, 1/2-stage approvals, LPO + landlord PIN + signature, reference numbering | CA-6…CA-8, RQ-1…RQ-5, RQ-8, RQ-9 | ⬜ |
 | 3 | Deposit float ledger, work gating, admin override | DP-1…DP-6, DP-9 | ⬜ |
 | 4 | In-tray, proforma & tax invoicing, eTIMS, WHT/WHVAT, settlement, 360° view | DP-7, DP-8, IN-1…IN-13 | ⬜ |
 | 5 | Client-raised variation cards | VC-1…VC-5 | ⬜ |

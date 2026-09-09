@@ -2856,6 +2856,18 @@ class AdminDashboardController extends Controller
         app(\App\Services\BillingService::class)
             ->replaceUnbilledMilestones($serviceRequest->fresh(), $billingMilestones);
 
+        // A management company signs off through its own chain — one stage or
+        // two, depending on how that account is configured. Opening it here,
+        // against the revision just written, is what ties an approval to the
+        // figures the approver actually saw: a revision supersedes the open
+        // chain rather than inheriting its decisions.
+        //
+        // No-op for retail, which records its single approval on the request
+        // itself as it always has.
+        if ($serviceRequest->fresh()->isCorporate()) {
+            app(\App\Services\CorporateApprovalService::class)->openChainFor($serviceRequest->fresh());
+        }
+
         // Send the appropriate email
         try {
             if ($isRevision) {

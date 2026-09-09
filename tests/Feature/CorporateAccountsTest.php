@@ -273,7 +273,13 @@ class CorporateAccountsTest extends TestCase
             'user_id' => $this->clientUser()->id,
             'position' => OrganisationMember::POSITION_REQUESTER,
         ]);
-        $this->corporateRequest($org, ['raised_by_member_id' => $member->id]);
+        // Filed under the same account that raised it — the model refuses the
+        // two out of step, since a request credited to one person and sitting
+        // on another's dashboard is worse than either.
+        $this->corporateRequest($org, [
+            'user_id' => $member->user_id,
+            'raised_by_member_id' => $member->id,
+        ]);
 
         $this->actingAs($this->admin)
             ->delete(route('admin.organisations.members.destroy', [$org, $member]))
@@ -390,6 +396,25 @@ class CorporateAccountsTest extends TestCase
         $this->corporateRequest($one, ['property_id' => $theirs->id]);
     }
 
+    public function test_the_requester_membership_must_match_the_account_it_is_filed_under(): void
+    {
+        $org = $this->organisation();
+        $member = $org->members()->create([
+            'user_id' => $this->clientUser('caretaker@acme.co.ke')->id,
+            'position' => OrganisationMember::POSITION_REQUESTER,
+        ]);
+        $somebodyElse = $this->clientUser('someone-else@acme.co.ke');
+
+        $this->expectException(\LogicException::class);
+
+        // Same company, but the membership names one person and the account
+        // names another. Reassignment moves both; this is what enforces it.
+        $this->corporateRequest($org, [
+            'user_id' => $somebodyElse->id,
+            'raised_by_member_id' => $member->id,
+        ]);
+    }
+
     public function test_a_request_cannot_be_raised_by_another_companys_staff(): void
     {
         $one = $this->organisation();
@@ -415,6 +440,7 @@ class CorporateAccountsTest extends TestCase
         ]);
 
         $sr = $this->corporateRequest($org, [
+            'user_id' => $member->user_id,
             'property_id' => $property->id,
             'raised_by_member_id' => $member->id,
         ])->fresh();

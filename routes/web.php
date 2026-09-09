@@ -136,6 +136,24 @@ Route::middleware(['auth'])->group(function () {
 
 // ==================== PM ROUTES ====================
 
+// ==================== PROPERTY MANAGEMENT & CORPORATE (CLIENT SIDE) ====================
+//
+// The caretaker who raises work and the manager who signs it off. Behind the
+// module flag like the admin screens: these routes 404 until the module is on.
+//
+// See PROPERTY_MANAGEMENT_MODULE_PLAN.md.
+Route::middleware(['auth', 'corporate'])->prefix('corporate')->group(function () {
+    Route::get('/requests', [\App\Http\Controllers\Corporate\CorporateRequestController::class, 'index'])->name('corporate.requests.index');
+    Route::get('/requests/new', [\App\Http\Controllers\Corporate\CorporateRequestController::class, 'create'])->name('corporate.requests.create');
+    Route::post('/requests', [\App\Http\Controllers\Corporate\CorporateRequestController::class, 'store'])->name('corporate.requests.store');
+    Route::post('/requests/{serviceRequest}/reassign', [\App\Http\Controllers\Corporate\CorporateRequestController::class, 'reassign'])->name('corporate.requests.reassign');
+
+    Route::get('/approvals', [\App\Http\Controllers\Corporate\CorporateApprovalController::class, 'index'])->name('corporate.approvals.index');
+    Route::get('/requests/{serviceRequest}/approval', [\App\Http\Controllers\Corporate\CorporateApprovalController::class, 'show'])->name('corporate.approvals.show');
+    Route::post('/requests/{serviceRequest}/approve', [\App\Http\Controllers\Corporate\CorporateApprovalController::class, 'approve'])->name('corporate.approvals.approve');
+    Route::post('/requests/{serviceRequest}/decline', [\App\Http\Controllers\Corporate\CorporateApprovalController::class, 'decline'])->name('corporate.approvals.decline');
+});
+
 Route::middleware(['auth', 'role:project_manager'])->prefix('pm')->group(function () {
     Route::get('/dashboard', [PMDashboardController::class, 'index'])->name('pm.dashboard');
 
