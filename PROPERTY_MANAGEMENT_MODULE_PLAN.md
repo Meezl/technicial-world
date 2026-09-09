@@ -1,7 +1,7 @@
 # Property Management & Corporate Module — Analysis & Implementation Plan
 
 > Source brief: *"Technician World Property Management & Corporate Level Module — Brief"*, LNI → WEBPIN, dated 28.08.2026 (8 pages).
-> Plan drafted: 2026-09-09. Status: **Phases 0–4 delivered** on `feat/corporate-segment-foundations`; Phases 5–7 not started.
+> Plan drafted: 2026-09-09. Status: **Phases 0–5 delivered** on `feat/corporate-segment-foundations`; Phases 6–7 not started.
 > Companion docs: `FEATURE_TRACKER.md`, `REQUISITION_MODULE_DOCUMENTATION.md`, `ADMIN_ASSISTED_RFQ_PLAN.md`.
 
 ---
@@ -370,13 +370,16 @@ Each phase is independently shippable and leaves the retail module untouched.
 
 **Still manual:** eTIMS receipts are uploaded, not fetched from KRA (OQ-6). `config/corporate.php` needs the issuer PIN and bank details set before invoices go out — they print blank otherwise.
 
-### Phase 5 — Variation cards *(≈1.5 weeks)* — VC-1…VC-5
-- `variation_cards`: client-raised scope request with justification.
-- Senior manager approve/decline with comments; declined cards remain visible.
-- Approved card surfaces to TW and seeds a `VariationOrder` (reusing the existing service), inheriting the card's reference.
-- Revision suffixes on VOs (RQ-8); declined revisions retained and rendered in red.
+### Phase 5 — Variation cards *(≈1.5 weeks)* — ✅ **delivered**
+- ✅ `variation_cards` kept deliberately apart from the variation order. Merging them would mean either a priced document with no prices in it, or quoting for scope the client's own management has not sanctioned. The brief describes two decisions by two different people.
+- ✅ Only the **approver** decides a card. A verifier signs off on what we have priced; a card is the company deciding to spend more of its own float. A decline must carry comments — the brief's own example is a sentence telling the requester to raise a separate REQ.
+- ✅ Approved cards surface to the office, and pricing one binds it to the variation order. One card, one variation: a second bite would put the same agreed scope on the contract twice.
+- ✅ Extra scope on a **closed** job is refused as a new request, which is what the senior manager is made to say when the ask is too big.
+- ✅ **RQ-8 completed.** `/VO-01` → `/VO-01/R01` → `/R02`; a revision is a new row, earlier attempts are kept and marked superseded, and revisions never consume the next `/VO-nn` — only a genuinely new variation moves to `/VO-02`.
 
-**Exit:** a client can request extra scope, have it approved internally, and receive a TW quote for it against the same REQ.
+**Exit:** ✅ a caretaker raises a card, their manager approves it with comments, the office prices it into a variation, the client sends it back, and the re-price lands as `/R01` with the original intact. 613 tests green; verified end to end in the browser.
+
+**Closed in passing:** `VariationOrderService::clientApprove()` tested ownership by `user_id` — which on a corporate job is the caretaker who raised it. A junior could have approved extra spending against their employer's float, the same gap the quotation path had before the approval chain. Corporate variations now require the approver; retail is untouched.
 
 ### Phase 6 — Consolidated reporting & site access *(≈1.5 weeks)* — RP-1, RP-2
 - Extend the existing batch release into a **scheduled daily consolidated report** per organisation, segmented by job, replacing per-job client notifications for corporate clients.

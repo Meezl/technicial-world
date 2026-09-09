@@ -159,6 +159,11 @@ Route::middleware(['auth', 'corporate'])->prefix('corporate')->group(function ()
     Route::post('/billing/settlements', [\App\Http\Controllers\Corporate\CorporateBillingController::class, 'storeSettlement'])->name('corporate.billing.settlements.store');
     Route::post('/billing/certificates', [\App\Http\Controllers\Corporate\CorporateBillingController::class, 'storeCertificate'])->name('corporate.billing.certificates.store');
     Route::get('/requests/{serviceRequest}/overview', [\App\Http\Controllers\Corporate\CorporateBillingController::class, 'job'])->name('corporate.requests.overview');
+
+    // Variation cards: the client asking for more work, before it is priced.
+    Route::get('/variation-cards', [\App\Http\Controllers\Corporate\VariationCardController::class, 'index'])->name('corporate.variation-cards.index');
+    Route::post('/variation-cards', [\App\Http\Controllers\Corporate\VariationCardController::class, 'store'])->name('corporate.variation-cards.store');
+    Route::post('/variation-cards/{card}/decide', [\App\Http\Controllers\Corporate\VariationCardController::class, 'decide'])->name('corporate.variation-cards.decide');
 });
 
 Route::middleware(['auth', 'role:project_manager'])->prefix('pm')->group(function () {

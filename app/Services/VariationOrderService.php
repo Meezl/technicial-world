@@ -42,8 +42,28 @@ class VariationOrderService
             // Lock the parent so the number sequence cannot race.
             ServiceRequest::whereKey($sr->id)->lockForUpdate()->first();
 
+            // A revision keeps the variation's own number and gains an R
+            // suffix; only a genuinely new variation takes the next /VO-nn.
+            $supersedes = isset($data['supersedes_id'])
+                ? VariationOrder::find($data['supersedes_id'])
+                : null;
+
+            if ($supersedes) {
+                $base = $supersedes->base_number ?: $supersedes->vo_number;
+                $revision = (int) $supersedes->revision + 1;
+                $number = VariationOrder::revisionNumberFor($base, $revision);
+            } else {
+                $base = VariationOrder::nextBaseNumberFor($sr);
+                $revision = 0;
+                $number = $base;
+            }
+
             $vo = VariationOrder::create([
-                'vo_number'          => VariationOrder::nextNumberFor($sr),
+                'vo_number'          => $number,
+                'base_number'        => $base,
+                'revision'           => $revision,
+                'supersedes_id'      => $supersedes?->id,
+                'variation_card_id'  => $data['variation_card_id'] ?? $supersedes?->variation_card_id,
                 'service_request_id' => $sr->id,
                 'origin'             => $origin,
                 'status'             => VariationOrder::STATUS_DRAFT,
@@ -219,9 +239,7 @@ class VariationOrderService
      */
     public function clientApprove(VariationOrder $vo, User $client, BillingService $billing): VariationOrder
     {
-        if ($vo->serviceRequest?->user_id !== $client->id) {
-            throw new RuntimeException('This variation belongs to another client.');
-        }
+        $this->assertClientMayDecide($vo, $client);
 
         if (!$vo->is_client_visible) {
             throw new RuntimeException('This variation is not visible to the client.');
@@ -236,15 +254,56 @@ class VariationOrderService
 
     public function clientDecline(VariationOrder $vo, User $client, ?string $reason = null): VariationOrder
     {
-        if ($vo->serviceRequest?->user_id !== $client->id) {
-            throw new RuntimeException('This variation belongs to another client.');
-        }
+        $this->assertClientMayDecide($vo, $client);
 
         if ($vo->status !== VariationOrder::STATUS_PENDING_CLIENT) {
             throw new RuntimeException('This variation is not awaiting your approval.');
         }
 
         return $this->decline($vo, $client, $reason);
+    }
+
+    /**
+     * Is this person entitled to decide this variation on the client's behalf?
+     *
+     * Retail is ownership, as it always was. Corporate is not: on a management
+     * company's job the account the request is filed under is the caretaker who
+     * raised it, so an ownership test alone would let a junior approve extra
+     * spending against their employer's float — the same gap the quotation
+     * path had before the approval chain closed it.
+     *
+     * A variation commits money, so it takes the approver. The verifier stage
+     * does not apply: the brief has the senior manager deciding variations
+     * directly, and it is their own float being spent.
+     */
+    private function assertClientMayDecide(VariationOrder $vo, User $client): void
+    {
+        $sr = $vo->serviceRequest;
+
+        if (!$sr) {
+            throw new RuntimeException('This variation is not attached to a job.');
+        }
+
+        if (!$sr->isCorporate()) {
+            if ($sr->user_id !== $client->id) {
+                throw new RuntimeException('This variation belongs to another client.');
+            }
+
+            return;
+        }
+
+        $member = $client->organisationMembership;
+
+        if (!$member || !$member->is_active
+            || $member->client_organisation_id !== $sr->client_organisation_id) {
+            throw new RuntimeException('This variation belongs to another organisation.');
+        }
+
+        if (!$member->isApprover()) {
+            throw new RuntimeException(
+                'Only the senior manager can approve a variation — it commits further spending against your deposit.'
+            );
+        }
     }
 
     /**

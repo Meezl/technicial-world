@@ -365,11 +365,23 @@
 | 360° job view (IN-13) | ✅ | `Client/Corporate/Job360.vue` — approvals, variations, reports, invoice, payments, certificates |
 | Regression cover | ✅ | `tests/Feature/CorporateInvoicingTest.php` (32 tests) |
 
-### Phases 5–7 — not started
+### Phase 5 — Variation cards
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| Junior raises a card with justification (VC-1) | ✅ | `variation_cards` + `VariationCardService::raise()`; numbered `REQ-XXX/VC-01` |
+| Senior manager approves or declines with comments (VC-2) | ✅ | Approver only — a verifier signs off on prices, not on spending decisions. A decline must say what to do instead |
+| Approved card surfaces to TW, who quote it (VC-3) | ✅ | `readyToQuote()`; `variations.store` accepts `variation_card_id` and binds the two |
+| Original quote stands; variations stack (VC-4) | ✅ | Unchanged — the variation ledger already worked this way |
+| All variations retained; only approved ones count (VC-5) | ✅ | Unchanged, and now covered for revisions too |
+| VO revision numbering `/VO-01/R01` (RQ-8, second half) | ✅ | `revision`, `base_number`, `supersedes_id`; revisions never consume the next `/VO-nn` |
+| Corporate variations approved by the senior manager | ✅ | `assertClientMayDecide()` — closes the same hole the quotation path had |
+| Regression cover | ✅ | `tests/Feature/VariationCardTest.php` (27 tests) |
+
+### Phases 6–7 — not started
 
 | Phase | Scope | Requirement IDs | Status |
 |-------|-------|-----------------|--------|
-| 5 | Client-raised variation cards | VC-1…VC-5 | ⬜ |
 | 6 | Consolidated daily client report, printable security roster | RP-1, RP-2 | ⬜ |
 | 7 | SLA rate schedule, auto-quoting, visibility projections, digital signature | SL-1…SL-16 | ⬜ |
 | — | Client-side security portal | RP-3 | 🔲 Deferred |
