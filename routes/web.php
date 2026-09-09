@@ -410,6 +410,16 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
         Route::put('/organisations/{organisation}/properties/{property}', [\App\Http\Controllers\Admin\PropertyController::class, 'update'])->name('admin.organisations.properties.update');
         Route::delete('/organisations/{organisation}/properties/{property}', [\App\Http\Controllers\Admin\PropertyController::class, 'destroy'])->name('admin.organisations.properties.destroy');
 
+        // The standing float. Read the statement, book money, set the terms,
+        // and lift the gate when something genuinely cannot wait.
+        Route::get('/organisations/{organisation}/deposit', [\App\Http\Controllers\Admin\DepositAccountController::class, 'show'])->name('admin.organisations.deposit.show');
+        Route::post('/organisations/{organisation}/deposit', [\App\Http\Controllers\Admin\DepositAccountController::class, 'store'])->name('admin.organisations.deposit.store');
+        Route::post('/organisations/{organisation}/deposit/top-up', [\App\Http\Controllers\Admin\DepositAccountController::class, 'topUp'])->name('admin.organisations.deposit.top-up');
+        Route::put('/organisations/{organisation}/deposit', [\App\Http\Controllers\Admin\DepositAccountController::class, 'update'])->name('admin.organisations.deposit.update');
+        Route::post('/organisations/{organisation}/deposit/override', [\App\Http\Controllers\Admin\DepositAccountController::class, 'override'])->name('admin.organisations.deposit.override');
+        Route::delete('/organisations/{organisation}/deposit/override', [\App\Http\Controllers\Admin\DepositAccountController::class, 'clearOverride'])->name('admin.organisations.deposit.override.clear');
+        Route::post('/organisations/{organisation}/deposit/adjust', [\App\Http\Controllers\Admin\DepositAccountController::class, 'adjust'])->name('admin.organisations.deposit.adjust');
+
         Route::post('/organisations/{organisation}/members', [\App\Http\Controllers\Admin\OrganisationMemberController::class, 'store'])->name('admin.organisations.members.store');
         Route::put('/organisations/{organisation}/members/{member}', [\App\Http\Controllers\Admin\OrganisationMemberController::class, 'update'])->name('admin.organisations.members.update');
         Route::delete('/organisations/{organisation}/members/{member}', [\App\Http\Controllers\Admin\OrganisationMemberController::class, 'destroy'])->name('admin.organisations.members.destroy');

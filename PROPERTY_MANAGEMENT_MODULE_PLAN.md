@@ -1,7 +1,7 @@
 # Property Management & Corporate Module — Analysis & Implementation Plan
 
 > Source brief: *"Technician World Property Management & Corporate Level Module — Brief"*, LNI → WEBPIN, dated 28.08.2026 (8 pages).
-> Plan drafted: 2026-09-09. Status: **Phases 0–2 delivered** on `feat/corporate-segment-foundations`; Phases 3–7 not started.
+> Plan drafted: 2026-09-09. Status: **Phases 0–3 delivered** on `feat/corporate-segment-foundations`; Phases 4–7 not started.
 > Companion docs: `FEATURE_TRACKER.md`, `REQUISITION_MODULE_DOCUMENTATION.md`, `ADMIN_ASSISTED_RFQ_PLAN.md`.
 
 ---
@@ -335,15 +335,18 @@ Each phase is independently shippable and leaves the retail module untouched.
 
 **Seam left for Phase 3:** `CorporateApprovalController::settleApprovedRequest` is where the float gate belongs. Reaching `ready_for_assignment` is not the same as being allowed to staff the job.
 
-### Phase 3 — Float ledger & work gating *(≈2.5 weeks)* — DP-1…DP-6, DP-9, AD-3, AD-4
-- `deposit_accounts` + `deposit_ledger_entries`; `DepositService` as the only writer.
-- Admin screens: book a deposit, set the ceiling and threshold, view the ledger and running balance.
-- Assignment gate on available float, wired into the same seam `JobAuthorisation` uses today.
-- Admin override switch (temporary threshold reduction) with reason, expiry and audit trail — copy the `JobAuthorisation` shape.
-- Suppress down-payment requests entirely for corporate REQs (DP-6).
-- Client-facing float widget: balance, threshold, headroom.
+### Phase 3 — Float ledger & work gating *(≈2.5 weeks)* — ✅ **delivered**
+- ✅ `deposit_accounts` + `deposit_ledger_entries`, with `DepositService` the only writer. The balance is always the sum of the rows; a correction is an offsetting entry with a reason, never an edit.
+- ✅ **Commitment tracked apart from consumption** (AD-4). Approval encumbers the float, closure spends it, and `available = balance − committed` is what gates new work. Taken literally the brief only reduces the float at closure, which would let ten 100k jobs stack against a 500k float — this reading is safe under either answer to OQ-1.
+- ✅ Admin screens: book the float, set ceiling and threshold, read the statement, override, adjust.
+- ✅ Gate wired into `JobAuthorisationService::assignmentBlocker()` — the one seam the admin, PM and sub-task paths already share, so they cannot drift.
+- ✅ Override held separately from the agreed threshold, with a reason and an expiry evaluated on read rather than swept by a job. Editing the real threshold would make an exception permanent by accident and lose the figure the client is being asked to top up to.
+- ✅ Down-payment requests refused for corporate REQs (DP-6).
+- ✅ Both threshold forms supported — the brief gives it as "50%" in one place and "Kshs. 300,000" in another.
 
-**Exit:** a 500k float blocks assignment at the threshold, an override unblocks it, and every movement is reconstructible from the ledger.
+**Exit:** ✅ the §8 worked example runs end to end against MySQL, the float returns to exactly 500,000, and every line of the statement follows from the one before it. 554 tests green.
+
+**Not yet called by the product:** `consume()` and the tax-certificate top-up are built and tested; Phase 4 wires them to job closure and certificate validation.
 
 ### Phase 4 — In-tray, invoicing, tax & settlement *(≈4 weeks)* — DP-7, DP-8, IN-1…IN-13
 - In-tray: closed jobs generate a **held** invoice; float consumption posted on closure (DP-7).
@@ -394,8 +397,8 @@ These change the build. OQ-1 through OQ-5 gate Phases 3–4.
 
 | ID | Question | Our recommendation |
 |---|---|---|
-| **OQ-1** | Does the float reduce when a quote is **approved** (commitment) or when the job **closes** (p5 §8)? As written, ten 100k jobs could be approved against a 500k float. | Track both: reduce *available* on approval, reduce *balance* on closure. Gate assignment on available. |
-| **OQ-2** | The illustration says the in-tray total of 320,000 is "below the 300,000 invoice trigger threshold" — 320,000 is not below 300,000. We read the trigger as firing on **remaining float** (500,000 − 320,000 = 180,000, which *is* below 300,000). Confirm. | Trigger on remaining float. |
+| **OQ-1** | ⚙️ *Built both ways in Phase 3* — approval encumbers, closure spends, and assignment is gated on `balance − committed`. This is correct under either answer, so it is no longer blocking; confirm it matches how they think about it. | Done — confirm only. |
+| **OQ-2** | ⚙️ *Assumed in Phase 3* — the threshold is measured against remaining float, which is the only reading under which the illustration's arithmetic closes. Still worth confirming before Phase 4 builds the invoice trigger on it. | Assumed; confirm before Phase 4. |
 | **OQ-3** | Are float amounts **VAT-inclusive**? The example reduces the float by 120,000 and then invoices 320,000 as a VAT-inclusive figure, so we assume yes. | Float is VAT-inclusive throughout. |
 | **OQ-4** | The brief cites an RTGS of "314,482.76 … in the amount of 306,206.90". Only 306,206.90 reconciles (320,000 − 2% WHVAT 5,517.24 − 3% WHT 8,275.86, both on the ex-VAT value of 275,862.07). Confirm 314,482.76 is a typo. | Implement 306,206.90; make both rates configurable per organisation. |
 | **OQ-5** | One active float per organisation, or can a client run several (e.g. per portfolio)? | One active float per organisation; model allows more later. |

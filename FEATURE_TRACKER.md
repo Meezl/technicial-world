@@ -328,11 +328,28 @@
 > VO revision suffixes (`/VO-01/R01`, the second half of RQ-8) land with the variation-card
 > flow in Phase 5, where that journey lives. `/VO-01` → `/VO-02` already works.
 
-### Phases 3–7 — not started
+### Phase 3 — Deposit float ledger & work gating
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| Book a deposit with amount and date (DP-1) | ✅ | `deposit_accounts` + an opening `booking` entry — never an opening column |
+| Absolute **or** percentage top-up threshold (DP-2) | ✅ | `threshold_type` / `threshold_value`; the brief gives it both ways |
+| Assignment gated on remaining float, not per-job payment (DP-3) | ✅ | `DepositService::staffingBlocker()`, called from `JobAuthorisationService::assignmentBlocker()` — the one seam admin, PM and sub-task paths share |
+| Below threshold, requests still accepted but not workable (DP-4) | ✅ | The gate is at assignment; raising and quoting are untouched |
+| Admin-only override switch (DP-5) | ✅ | Separate `override_threshold_value` with a reason and an expiry, checked on read |
+| No down-payment on corporate work (DP-6) | ✅ | `requestPayment` refuses corporate with an explanation |
+| Top-up capped at the agreed float (DP-9) | ✅ | `DepositService::topUp()` applies only the headroom |
+| Commitment tracked apart from consumption | ✅ | approval encumbers, closure spends; `available = balance − committed` (answers OQ-1 safely either way) |
+| Append-only ledger | ✅ | Corrections are offsetting `adjustment` entries with a reason; nothing is ever edited |
+| Regression cover | ✅ | `tests/Feature/DepositFloatTest.php` (25 tests), incl. the plan's §8 worked example |
+
+> `consume()` and the tax-certificate top-up are built and tested but not yet called by the
+> product: Phase 4 wires them to job closure and certificate validation.
+
+### Phases 4–7 — not started
 
 | Phase | Scope | Requirement IDs | Status |
 |-------|-------|-----------------|--------|
-| 3 | Deposit float ledger, work gating, admin override | DP-1…DP-6, DP-9 | ⬜ |
 | 4 | In-tray, proforma & tax invoicing, eTIMS, WHT/WHVAT, settlement, 360° view | DP-7, DP-8, IN-1…IN-13 | ⬜ |
 | 5 | Client-raised variation cards | VC-1…VC-5 | ⬜ |
 | 6 | Consolidated daily client report, printable security roster | RP-1, RP-2 | ⬜ |

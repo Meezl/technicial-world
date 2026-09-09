@@ -34,6 +34,22 @@
                 </div>
             </section>
 
+            <!-- Standing float: the money that unlocks their work -->
+            <section class="main-panel">
+                <div class="panel-card full-width">
+                    <div class="panel-head">
+                        <h3>Standing Float</h3>
+                        <Link :href="`/admin/organisations/${organisation.id}/deposit`" class="btn btn-primary btn-sm">
+                            <i class="fas fa-wallet"></i> Manage Float
+                        </Link>
+                    </div>
+                    <p class="panel-note">
+                        Corporate work is unlocked by how much of their deposit is left, not by whether an
+                        individual job has been paid for. Book their float and set the top-up threshold here.
+                    </p>
+                </div>
+            </section>
+
             <!-- Properties -->
             <section class="main-panel">
                 <div class="panel-card table-card full-width">

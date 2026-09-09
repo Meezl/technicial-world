@@ -205,10 +205,16 @@ class CorporateApprovalController extends Controller
      * Corporate work is never asked for a deposit — the standing float is the
      * money, so there is no payment step between approval and assignment.
      *
-     * NOTE FOR PHASE 3: this is where the float gate belongs. Reaching
-     * ready_for_assignment is not the same as being allowed to staff the job;
-     * when the deposit ledger lands, assignment is what it must check, in the
-     * same seam JobAuthorisation already uses for commencement.
+     * Approval encumbers the float rather than spending it. The money is not
+     * gone until the job closes, but it is spoken for from here, and what
+     * gates the next job is what is left after everything already promised.
+     * Without that, ten approved jobs of 100,000 could be stacked against a
+     * 500,000 float and the shortfall would only surface as an invoice nobody
+     * had set money aside for.
+     *
+     * Reaching ready_for_assignment is still not permission to staff the job:
+     * that is checked at assignment, in the shared blocker
+     * JobAuthorisationService already owns.
      */
     private function settleApprovedRequest(ServiceRequest $serviceRequest, User $user, CorporateApproval $approval): void
     {
@@ -220,6 +226,8 @@ class CorporateApprovalController extends Controller
             'approved_quote_revision' => (int) ($serviceRequest->quote_revision_count ?? 0),
             'approved_quote_amount' => $serviceRequest->quote_amount,
         ]);
+
+        app(\App\Services\DepositService::class)->commit($serviceRequest->fresh(), $user);
 
         AuditLog::log(AuditLog::ACTION_APPROVAL, $serviceRequest, null, [
             'segment' => ServiceRequest::SEGMENT_CORPORATE,

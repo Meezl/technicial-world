@@ -62,6 +62,15 @@ class ClientOrganisation extends Model
         return $this->hasMany(ServiceRequest::class);
     }
 
+    /**
+     * Their standing float. One per company — see the deposit_accounts
+     * migration for why two would leave "how much is left" unanswerable.
+     */
+    public function depositAccount(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(DepositAccount::class);
+    }
+
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');

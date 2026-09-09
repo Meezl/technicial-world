@@ -3424,6 +3424,19 @@ class AdminDashboardController extends Controller
             ], 422);
         }
 
+        // A management company is never billed per job. Their float is money
+        // we already hold — that is the whole point of it — and the invoice
+        // goes out in a batch when the float drops through its threshold, not
+        // job by job. Billing one here would ask them to pay twice for the
+        // same work.
+        if ($serviceRequest->isCorporate()) {
+            return response()->json([
+                'error' => 'Corporate jobs are not billed individually. '
+                    . 'This account runs against its standing float, and invoices are raised in a batch '
+                    . 'when the float reaches its threshold.',
+            ], 422);
+        }
+
         $billing = app(\App\Services\BillingService::class);
 
         // The contract is the quote plus every approved variation — that, not
