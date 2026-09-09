@@ -17,7 +17,7 @@ class ClientOrganisation extends Model
     protected $fillable = [
         'name', 'kra_pin', 'billing_email', 'phone', 'address', 'logo_path',
         'approval_workflow', 'vat_rate', 'whvat_rate', 'wht_rate',
-        'is_active', 'created_by',
+        'daily_report_hour', 'is_active', 'created_by',
     ];
 
     protected $casts = [
@@ -93,6 +93,25 @@ class ClientOrganisation extends Model
     public function taxCertificates(): HasMany
     {
         return $this->hasMany(TaxCertificate::class);
+    }
+
+    public function reportDigests(): HasMany
+    {
+        return $this->hasMany(CorporateReportDigest::class);
+    }
+
+    /**
+     * The hour their daily report goes out, in the app's timezone.
+     *
+     * Their own setting where they have one, the house default otherwise —
+     * read rather than copied, so changing the default moves everybody who
+     * has not asked for something different.
+     */
+    public function dailyReportHour(): int
+    {
+        return $this->daily_report_hour !== null
+            ? (int) $this->daily_report_hour
+            : (int) config('corporate.daily_report_hour', 17);
     }
 
     public function creator(): BelongsTo

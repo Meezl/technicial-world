@@ -378,11 +378,22 @@
 | Corporate variations approved by the senior manager | ✅ | `assertClientMayDecide()` — closes the same hole the quotation path had |
 | Regression cover | ✅ | `tests/Feature/VariationCardTest.php` (27 tests) |
 
-### Phases 6–7 — not started
+### Phase 6 — Consolidated daily reporting & site access
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| One report per client per day, segmented by job (RP-1) | ✅ | `CorporateDigestService` + `corporate:daily-reports`, scheduled hourly so each account picks its own hour |
+| Per-job release emails suppressed for corporate | ✅ | `ProgressService::releaseToClient` returns before mailing for corporate; retail unchanged |
+| Send is idempotent | ✅ | `progress_reports.corporate_digest_id` — the same work can never be reported twice |
+| Configurable send time per client (OQ-11) | ✅ | `client_organisations.daily_report_hour`, defaulting to `config('corporate.daily_report_hour')` |
+| Printable security roster (RP-2) | ✅ | `pdf.attendance-roster` — name, ID number, passport photo, role on site, attendance dates, with signature blocks |
+| Security portal (RP-3) | 🔲 Deferred | The roster is already returned as data by `ServiceRequest::attendanceRoster()`, so a portal consumes the same source |
+| Regression cover | ✅ | `tests/Feature/CorporateDailyReportTest.php` (20 tests) |
+
+### Phase 7 — not started
 
 | Phase | Scope | Requirement IDs | Status |
 |-------|-------|-----------------|--------|
-| 6 | Consolidated daily client report, printable security roster | RP-1, RP-2 | ⬜ |
 | 7 | SLA rate schedule, auto-quoting, visibility projections, digital signature | SL-1…SL-16 | ⬜ |
 | — | Client-side security portal | RP-3 | 🔲 Deferred |
 

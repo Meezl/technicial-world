@@ -269,6 +269,8 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::post('/job-assignments/{jobAssignment}/remove-from-crew', [AdminDashboardController::class, 'removeCrewMember'])->name('admin.jobs.crew.remove');
     Route::post('/technicians/{technician}/identity', [AdminDashboardController::class, 'updateTechnicianIdentity'])->name('admin.technicians.identity');
     Route::post('/jobs/{serviceRequest}/attendance-notice', [AdminDashboardController::class, 'sendAttendanceNotice'])->name('admin.jobs.attendance-notice');
+    // The printable version of the same roster, for the gate.
+    Route::get('/jobs/{serviceRequest}/site-access-list', [AdminDashboardController::class, 'attendanceRosterPdf'])->name('admin.jobs.site-access-list');
 
     Route::post('/jobs/{serviceRequest}/authorisations', [AdminDashboardController::class, 'storeJobAuthorisation'])->name('admin.jobs.authorisations.store');
     Route::post('/job-authorisations/{jobAuthorisation}/revoke', [AdminDashboardController::class, 'revokeJobAuthorisation'])->name('admin.jobs.authorisations.revoke');

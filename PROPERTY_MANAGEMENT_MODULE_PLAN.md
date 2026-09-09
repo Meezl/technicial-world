@@ -1,7 +1,7 @@
 # Property Management & Corporate Module — Analysis & Implementation Plan
 
 > Source brief: *"Technician World Property Management & Corporate Level Module — Brief"*, LNI → WEBPIN, dated 28.08.2026 (8 pages).
-> Plan drafted: 2026-09-09. Status: **Phases 0–5 delivered** on `feat/corporate-segment-foundations`; Phases 6–7 not started.
+> Plan drafted: 2026-09-09. Status: **Phases 0–6 delivered** on `feat/corporate-segment-foundations`; Phase 7 not started.
 > Companion docs: `FEATURE_TRACKER.md`, `REQUISITION_MODULE_DOCUMENTATION.md`, `ADMIN_ASSISTED_RFQ_PLAN.md`.
 
 ---
@@ -381,12 +381,19 @@ Each phase is independently shippable and leaves the retail module untouched.
 
 **Closed in passing:** `VariationOrderService::clientApprove()` tested ownership by `user_id` — which on a corporate job is the caretaker who raised it. A junior could have approved extra spending against their employer's float, the same gap the quotation path had before the approval chain. Corporate variations now require the approver; retail is untouched.
 
-### Phase 6 — Consolidated reporting & site access *(≈1.5 weeks)* — RP-1, RP-2
-- Extend the existing batch release into a **scheduled daily consolidated report** per organisation, segmented by job, replacing per-job client notifications for corporate clients.
-- Printable technician roster (name, ID number, passport photo, role on job, attendance dates) as a PDF issuable to security — mostly wiring existing data into a template.
-- RP-3 (security portal) explicitly **deferred**; design the roster as data, not a rendered email, so a portal can consume it later.
+### Phase 6 — Consolidated reporting & site access *(≈1.5 weeks)* — ✅ **delivered**
+- ✅ One report a day per management company, with a segment per job. Each job is still validated on its own — it is the *telling* that is combined, which is exactly what the brief asks for.
+- ✅ Per-job release emails suppressed for corporate clients. Releasing still does the same thing; the client just hears about it once. Retail is untouched.
+- ✅ The send is idempotent through `progress_reports.corporate_digest_id`. Reports are claimed **before** the mail goes out, so a failure leaves one unsent digest to investigate rather than a week of work reported twice.
+- ✅ Scheduled hourly, with each account choosing the hour its own day ends (**answers OQ-11**). An account already reported today is skipped, and one with nothing to say is not sent an empty email.
+- ✅ Recipients are the people who sign work off, plus the billing address — deliberately not the requesters, who already see their own jobs and would otherwise get the whole portfolio every evening.
+- ✅ Printable site access list: name, ID number, passport photo, role on site, attendance dates, and signature blocks for issue and receipt.
 
-**Exit:** a corporate client receives exactly one report email per day, and a security-ready roster PDF on assignment.
+**Exit:** ✅ one email a day covering every job, and a security-ready roster PDF. 632 tests green.
+
+**Found while looking at the rendered output:** a job reported twice in one day headed its segment with the *earlier* percentage. `report_date` is a date, not a time, so same-day reports tie and the tie was broken by whatever the database returned first — which reads as the crew going backwards, the one thing a progress report is read for. Now ordered by date then id, and pinned by a test.
+
+**RP-3 (security portal) remains deferred** — but `ServiceRequest::attendanceRoster()` returns the roster as data, so a portal would consume the same source rather than scraping the PDF.
 
 ### Phase 7 — SLA rate schedule & auto-quoting *(≈5 weeks, parallelisable from Phase 3)* — SL-1…SL-16
 - `rate_schedules` / `rate_items` / `rate_item_revisions` with component decomposition and derived composite rate (SL-2, SL-3).
@@ -418,7 +425,7 @@ These change the build. OQ-1 through OQ-5 gate Phases 3–4.
 | **OQ-8** | Who supplies the ~4,000 catalogue items, in what format, and when? This is the long pole on Phase 7. | Need a CSV/XLSX sample of ~50 rows before Phase 7 starts. |
 | **OQ-9** | ✅ *Settled in Phase 1.* The landlord PIN is stored on `properties` and will default onto the LPO page, overridable at approval. Confirm this matches how they actually work. | Done — confirm only. |
 | **OQ-10** | Should any existing retail clients be migrated to corporate accounts, or is this new-clients-only? | New accounts only; no migration in scope. |
-| **OQ-11** | Is the daily consolidated report a fixed send time, or configurable per client? | Configurable per organisation, default 17:00 EAT. |
+| **OQ-11** | ✅ *Settled in Phase 6.* Configurable per organisation (`daily_report_hour`), defaulting to 17:00. Confirm the default suits them. | Done — confirm only. |
 | **OQ-12** | When an approver declines a **variation card**, does the REQ pause, or continue on the original scope? | Continue on original scope; the card is a separate object. |
 
 ---

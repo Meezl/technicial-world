@@ -36,6 +36,15 @@ return [
     ],
 
     /*
+     * When the daily consolidated report goes out, in the app's timezone.
+     *
+     * One email a day per management company covering every job, rather than
+     * one per job — see the corporate_report_digests migration. Overridable
+     * per client, because their days end at different times.
+     */
+    'daily_report_hour' => (int) env('CORPORATE_DAILY_REPORT_HOUR', 17),
+
+    /*
      * What goes on every invoice. The brief lists these explicitly: our PIN,
      * our bank details and our logo have to appear on the paperwork the client
      * files against their own accounts.

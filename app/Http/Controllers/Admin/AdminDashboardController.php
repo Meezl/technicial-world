@@ -4094,6 +4094,34 @@ class AdminDashboardController extends Controller
         return back()->with('success', 'Attendance notice sent to ' . $serviceRequest->user->email . '.');
     }
 
+    /**
+     * The site access list, as a printable sheet.
+     *
+     * The attendance notice tells the client by email; this is the thing they
+     * hand the person on the gate. Same roster data either way — see
+     * ServiceRequest::attendanceRoster() — so the two cannot disagree about
+     * who is expected.
+     */
+    public function attendanceRosterPdf(ServiceRequest $serviceRequest)
+    {
+        $roster = $serviceRequest->attendanceRoster();
+
+        if (empty($roster)) {
+            return back()->with('error', 'Assign at least one technician before printing a site access list.');
+        }
+
+        $serviceRequest->loadMissing(['property', 'organisation']);
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.attendance-roster', [
+            'serviceRequest' => $serviceRequest,
+            'roster' => $roster,
+            'window' => $serviceRequest->attendanceWindow(),
+            'issuer' => config('corporate.issuer'),
+        ])->setPaper('a4');
+
+        return $pdf->download("site-access-{$serviceRequest->request_id}.pdf");
+    }
+
     // ==================== QUOTATION DRAFTS ====================
 
     /**

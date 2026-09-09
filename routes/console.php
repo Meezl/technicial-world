@@ -23,3 +23,13 @@ Schedule::command('authorisations:sweep')
     ->hourly()
     ->withoutOverlapping()
     ->runInBackground();
+
+// One consolidated progress report per management company per day.
+//
+// Hourly rather than daily because each account chooses the hour its own day
+// ends at — the command sends only to the ones whose hour has come, and skips
+// any that already had today's. See CorporateDigestService::dueNow().
+Schedule::command('corporate:daily-reports')
+    ->hourly()
+    ->withoutOverlapping()
+    ->runInBackground();
