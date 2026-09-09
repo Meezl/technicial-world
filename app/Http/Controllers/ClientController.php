@@ -5,8 +5,10 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\Payment;
 use App\Models\PaymentRequest as PaymentRequestModel;
+use App\Models\Quotation;
 use App\Models\ServiceRequest;
 use App\Models\VariationOrder;
+use App\Services\QuotationService;
 use App\Services\ReportingService;
 use App\Services\VariationOrderService;
 use Illuminate\Support\Facades\Auth;
@@ -403,6 +405,119 @@ class ClientController extends Controller
         ]);
 
         return response()->json(['success' => true, 'message' => 'Quotation declined']);
+    }
+
+    /**
+     * Approve an itemised quotation.
+     *
+     * The sibling of approveRFQ, for the other half of the quoting system.
+     * A project manager builds a `Quotation` with line items and versions;
+     * the office builds the flat quote_* fields on the request itself. Both
+     * end at the same place — an approved RFQ awaiting its deposit — but only
+     * the flat one had a client-facing way to say yes, so a PM-built
+     * quotation could be sent and never acted on. These two routes have been
+     * registered and pointing at nothing.
+     *
+     * Kept deliberately parallel to approveRFQ: same JSON shape, same
+     * ownership rule, same corporate refusal, same protection against acting
+     * on figures that have been replaced. Two client approval paths that
+     * behave differently would be worse than one that is missing.
+     */
+    public function approveQuotation(Request $request, Quotation $quotation, QuotationService $quotations)
+    {
+        $serviceRequest = $quotation->serviceRequest;
+
+        if (!$serviceRequest || $serviceRequest->user_id !== Auth::id()) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        // A management company approves through its own chain. See
+        // approveRFQ for why reaching this from a corporate request would let
+        // a caretaker approve their own job.
+        if ($serviceRequest->isCorporate()) {
+            return response()->json([
+                'error' => 'This request is approved through your organisation\'s approval chain.',
+                'redirect' => route('corporate.approvals.show', $serviceRequest),
+            ], 409);
+        }
+
+        if ($quotation->status !== Quotation::STATUS_SENT) {
+            return response()->json([
+                'error' => "This quotation cannot be approved (current status: {$quotation->status}).",
+            ], 400);
+        }
+
+        // The version-numbered equivalent of the seen_revision guard on
+        // approveRFQ. A revision supersedes its predecessor rather than
+        // editing it, so an older version left open in another tab is exactly
+        // the stale-figures case that guard exists for.
+        $latestVersion = (int) $serviceRequest->quotations()->max('version');
+        if ($quotation->version < $latestVersion) {
+            return response()->json([
+                'error' => 'A revised quotation has been issued since you opened this page. Please refresh to review the latest figures before approving.',
+                'current_version' => $latestVersion,
+                'seen_version' => $quotation->version,
+            ], 409);
+        }
+
+        $quotations->approve($quotation, $request->user());
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Quotation approved',
+            'quotation' => $quotation->fresh(),
+        ]);
+    }
+
+    /**
+     * Decline an itemised quotation, with an optional reason.
+     *
+     * The reason is optional here because it is optional on declineRFQ, and a
+     * client meeting one rule on one screen and a different rule on another
+     * is its own kind of bug. The corporate path is the one that insists on a
+     * reason, because there the comment is what the office acts on.
+     */
+    public function declineQuotation(Request $request, Quotation $quotation, QuotationService $quotations)
+    {
+        $validated = $request->validate([
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        $serviceRequest = $quotation->serviceRequest;
+
+        if (!$serviceRequest || $serviceRequest->user_id !== Auth::id()) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        if ($serviceRequest->isCorporate()) {
+            return response()->json([
+                'error' => 'This request is declined through your organisation\'s approval chain.',
+                'redirect' => route('corporate.approvals.show', $serviceRequest),
+            ], 409);
+        }
+
+        if ($quotation->status !== Quotation::STATUS_SENT) {
+            return response()->json([
+                'error' => "This quotation cannot be declined (current status: {$quotation->status}).",
+            ], 400);
+        }
+
+        $reason = $validated['reason'] ?? null;
+
+        $quotations->decline($quotation, $reason ?: 'Client declined the quotation');
+
+        // The request has to move too. Declining the quotation while leaving
+        // the RFQ showing as quoted is what put REQ rows in the office queue
+        // with no indication anybody had said no.
+        $serviceRequest->update([
+            'rfq_status' => ServiceRequest::RFQ_STATUS_REJECTED,
+            'rejection_reason' => $reason ? 'Client declined: ' . $reason : 'Client declined the quotation',
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Quotation declined',
+        ]);
     }
 
     /**

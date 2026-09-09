@@ -87,22 +87,40 @@ class QuotationService
 
     /**
      * Client approves quotation.
+     *
+     * The approver is recorded on the request as well as on the quotation.
+     * The flat quote path already does this (see ClientController::approveRFQ)
+     * and everything downstream — the payments screen, the audit trail, a
+     * dispute about who agreed to what — reads those columns rather than
+     * reaching into the quotation. A job approved through this path with them
+     * left null looks unapproved to all of it.
      */
-    public function approve(Quotation $quotation): Quotation
+    public function approve(Quotation $quotation, ?\App\Models\User $approver = null): Quotation
     {
-        return DB::transaction(function () use ($quotation) {
+        return DB::transaction(function () use ($quotation, $approver) {
             $quotation->update([
                 'status' => Quotation::STATUS_APPROVED,
                 'approved_at' => now(),
             ]);
 
-            $quotation->serviceRequest->update([
+            $quotation->serviceRequest->update(array_filter([
                 'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
                 'quote_amount' => $quotation->grand_total,
                 'status' => ServiceRequest::STATUS_AWAITING_PAYMENT,
-            ]);
+                'client_quote_approved_by' => $approver?->id,
+                'client_quote_approved_at' => $approver ? now() : null,
+                'approved_quote_amount' => $quotation->grand_total,
+                // The version stands in for the revision counter the flat
+                // quote path uses: it is the record of which figures were on
+                // screen when they said yes.
+                'approved_quote_revision' => $quotation->version,
+            ], fn($value) => $value !== null));
 
-            AuditLog::log(AuditLog::ACTION_APPROVAL, $quotation);
+            AuditLog::log(AuditLog::ACTION_APPROVAL, $quotation, null, [
+                'version' => $quotation->version,
+                'grand_total' => $quotation->grand_total,
+                'approved_by' => $approver?->email,
+            ]);
 
             return $quotation;
         });
