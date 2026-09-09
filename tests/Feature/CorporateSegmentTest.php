@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\ClientOrganisation;
 use App\Models\ServiceCategory;
 use App\Models\ServiceRequest;
 use App\Models\User;
@@ -34,9 +35,25 @@ class CorporateSegmentTest extends TestCase
         $this->category = ServiceCategory::create(['name' => 'Plumbing', 'is_active' => true]);
     }
 
+    /**
+     * A request in either segment.
+     *
+     * A corporate one is given an organisation because ServiceRequest refuses
+     * to save without one — see the invariant on the model. Phase 0 could
+     * create a bare corporate request; from Phase 1 that is a bug, and this
+     * helper is where the rule shows up.
+     */
     private function makeRequest(array $attributes = []): ServiceRequest
     {
         $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+
+        $corporate = ($attributes['segment'] ?? null) === ServiceRequest::SEGMENT_CORPORATE;
+
+        if ($corporate && !array_key_exists('client_organisation_id', $attributes)) {
+            $attributes['client_organisation_id'] = ClientOrganisation::create([
+                'name' => 'Acme Property Managers ' . uniqid(),
+            ])->id;
+        }
 
         return ServiceRequest::create(array_merge([
             'request_id' => 'REQ-SEG-' . strtoupper(substr(uniqid(), -6)),

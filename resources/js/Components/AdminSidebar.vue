@@ -8,6 +8,8 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
+import { usePage } from '@inertiajs/vue3'
 import AppSidebar from './AppSidebar.vue'
 
 defineProps({
@@ -17,7 +19,10 @@ defineProps({
     },
 })
 
-const navItems = [
+const page = usePage()
+const corporateEnabled = computed(() => !!page.props.corporate?.enabled)
+
+const baseItems = [
     { key: 'dashboard', href: '/admin/dashboard', icon: 'fas fa-tachometer-alt', label: 'Dashboard', caption: 'Overall activity' },
     { key: 'projects', href: '/admin/projects/dashboard', icon: 'fas fa-project-diagram', label: 'Projects', caption: 'Timelines and delivery' },
     { key: 'rfq', href: '/admin/rfq', icon: 'fas fa-file-alt', label: 'RFQ Management', caption: 'Quotes and approvals' },
@@ -46,4 +51,26 @@ const navItems = [
     },
     { key: 'audit-logs', href: '/admin/audit-logs', icon: 'fas fa-clipboard-list', label: 'Audit Logs', caption: 'History and traceability' },
 ]
+
+// The Property Management & Corporate module ships in phases and its screens
+// reach main before the journey they set up exists. The routes 404 while the
+// module is off; this keeps the entry out of the menu to match, so nobody
+// clicks their way into a dead end.
+const corporateItem = {
+    key: 'organisations',
+    href: '/admin/organisations',
+    icon: 'fas fa-building',
+    label: 'Corporate Accounts',
+    caption: 'Management companies and properties',
+}
+
+const navItems = computed(() => {
+    if (!corporateEnabled.value) return baseItems
+
+    // Placed next to Users: both answer "who are we dealing with".
+    const items = [...baseItems]
+    const at = items.findIndex(i => i.key === 'users')
+    items.splice(at === -1 ? items.length : at + 1, 0, corporateItem)
+    return items
+})
 </script>

@@ -291,11 +291,28 @@
 | Route gate for future corporate routes | ✅ | `corporate` middleware alias → `EnsureCorporateModuleEnabled` (404 while off) |
 | Regression cover | ✅ | `tests/Feature/CorporateSegmentTest.php` |
 
-### Phases 1–7 — not started
+### Phase 1 — Corporate accounts & properties
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| The organisation is the client of record (CA-1) | ✅ | `client_organisations`; `users` stays the login identity |
+| Properties pre-set per client by admin (CA-2) | ✅ | `properties` + `Admin\PropertyController`, nested under the account |
+| Property stamped on the request (CA-3) | ✅ | `service_requests.property_id` + `Property::label` accessor used everywhere |
+| Jobs filterable and searchable by property (CA-4) | ✅ | `ServiceRequest::scopeForProperty`, wired into the admin job and RFQ lists |
+| One account spans properties of different owners (CA-5) | ✅ | `properties.owner_name` / `owner_kra_pin` per building (answers OQ-9) |
+| Requester / verifier / approver / accounts positions (CA-6) | ✅ | `organisation_members.position` — not a platform role |
+| Per-client 1- or 2-stage approval workflow (CA-7) | ✅ | `client_organisations.approval_workflow` + `approvalChain()`; enforced in Phase 2 |
+| Pre-set authorised signatories (CA-9) | ✅ | `organisation_members.signature_path`, `display_name`, `can_approve_up_to` |
+| Dropdown-first setup (CA-11) | ✅ | Property, position and workflow are all pickers |
+| Account readiness check | ✅ | Show screen states what setup is still missing before the account can take work |
+| Corporate/retail consistency invariant | ✅ | `ServiceRequest::booted()` — a request cannot be half corporate |
+| MySQL identifier-length guard | ✅ | `MigrationSafetyTest::test_no_index_name_exceeds_the_mysql_identifier_limit` |
+| Regression cover | ✅ | `tests/Feature/CorporateAccountsTest.php` (27 tests) |
+
+### Phases 2–7 — not started
 
 | Phase | Scope | Requirement IDs | Status |
 |-------|-------|-----------------|--------|
-| 1 | Corporate accounts, properties, organisation members, signatories | CA-1…CA-5, CA-9, CA-11 | ⬜ |
 | 2 | Corporate REQ lifecycle, 1/2-stage approvals, LPO + landlord PIN + signature, reference numbering | CA-6…CA-8, RQ-1…RQ-5, RQ-8, RQ-9 | ⬜ |
 | 3 | Deposit float ledger, work gating, admin override | DP-1…DP-6, DP-9 | ⬜ |
 | 4 | In-tray, proforma & tax invoicing, eTIMS, WHT/WHVAT, settlement, 360° view | DP-7, DP-8, IN-1…IN-13 | ⬜ |

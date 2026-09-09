@@ -1,7 +1,7 @@
 # Property Management & Corporate Module — Analysis & Implementation Plan
 
 > Source brief: *"Technician World Property Management & Corporate Level Module — Brief"*, LNI → WEBPIN, dated 28.08.2026 (8 pages).
-> Plan drafted: 2026-09-09. Status: **Phase 0 delivered** on `feat/corporate-segment-foundations`; Phases 1–7 not started.
+> Plan drafted: 2026-09-09. Status: **Phases 0–1 delivered** on `feat/corporate-segment-foundations`; Phases 2–7 not started.
 > Companion docs: `FEATURE_TRACKER.md`, `REQUISITION_MODULE_DOCUMENTATION.md`, `ADMIN_ASSISTED_RFQ_PLAN.md`.
 
 ---
@@ -305,14 +305,19 @@ Each phase is independently shippable and leaves the retail module untouched.
 
 **Exit:** ✅ 461 tests green (450 pre-existing + 11 new in `tests/Feature/CorporateSegmentTest.php`); `segment` present and defaulted on dev MySQL; nothing user-visible changed.
 
-### Phase 1 — Corporate accounts & properties *(≈2 weeks)* — CA-1…CA-5, CA-9, CA-11
-- `client_organisations`, `properties`, `organisation_members` + admin CRUD, modelled on `ServiceCategoryController`.
-- Attach existing/new client users to an organisation; onboarding screen for a management company.
-- Property dropdown on the corporate REQ form; property stamped on the REQ and rendered on every downstream artefact.
-- Property filter on admin/PM job lists.
-- Authorised-signatory list per organisation (CA-9).
+### Phase 1 — Corporate accounts & properties *(≈2 weeks)* — ✅ **delivered**
+- ✅ `client_organisations`, `properties`, `organisation_members` with admin CRUD, modelled on `ServiceCategoryController`. Screens at `/admin/organisations`, behind the `corporate` gate.
+- ✅ Client users attach to one organisation with a position. **Position is not a platform role** — `users.role` stays `client`, so no existing `role === 'client'` check needed revisiting.
+- ✅ Property carried on the request (`property_id`) with a single `Property::label` accessor, so the picker, the quotation and the invoice cannot name the same building three ways.
+- ✅ Property filter **and** name/code search on the admin job and RFQ lists (CA-4).
+- ✅ Authorised signatories per organisation: `display_name` for documents, `signature_path`, and an optional `can_approve_up_to` ceiling (CA-9).
+- ✅ **OQ-9 answered in the build**: the landlord's PIN lives on the property, since the landlord is a fact about the building. The Phase 2 approval screen defaults from it and allows an override.
+- ✅ A **readiness panel** on the account screen states what setup is still missing — a two-stage company is asked for a verifier, a single-stage one never is.
+- ✅ A **consistency invariant** on `ServiceRequest`: a corporate request must carry an organisation, a retail one must carry none, and neither a property nor a requester from another company can be attached.
 
-**Exit:** an admin can onboard a management company with 12 properties and 5 staff; a REQ carries its property; job lists filter by it.
+**Exit:** ✅ an admin onboards a management company with its buildings and its people; a request carries its property; the job list filters and searches by building. 489 tests green (461 before Phase 1, plus 27 new and one migration-safety guard).
+
+**Found and fixed in passing:** the auto-generated name for one composite index came to 68 characters, over MySQL's 64-character limit. The `CREATE` failed, and because table creations are guarded with `hasTable` for retry-safety, the retry then skipped the table and **reported success with the index missing**. `MigrationSafetyTest` now measures every index name the migrations build and fails over 64 — the check is verified to catch the original bug.
 
 ### Phase 2 — Corporate REQ lifecycle & approvals *(≈3 weeks)* — CA-6…CA-8, CA-10, RQ-1…RQ-5, RQ-8, RQ-9
 - Corporate queue separated from retail on the admin RFQ screen.
@@ -391,7 +396,7 @@ These change the build. OQ-1 through OQ-5 gate Phases 3–4.
 | **OQ-6** | eTIMS: manual PDF upload now, or API integration with KRA? | Manual upload in Phase 4; API as a later phase. |
 | **OQ-7** | Digital signature (RQ-5, SL-13): a stored signature image plus name, or a cryptographic signature? | Stored image + name + audit timestamp. |
 | **OQ-8** | Who supplies the ~4,000 catalogue items, in what format, and when? This is the long pole on Phase 7. | Need a CSV/XLSX sample of ~50 rows before Phase 7 starts. |
-| **OQ-9** | Does the landlord PIN vary per property? If so it belongs on `properties` and defaults onto the LPO page. | Store on `properties`, default and allow override at approval. |
+| **OQ-9** | ✅ *Settled in Phase 1.* The landlord PIN is stored on `properties` and will default onto the LPO page, overridable at approval. Confirm this matches how they actually work. | Done — confirm only. |
 | **OQ-10** | Should any existing retail clients be migrated to corporate accounts, or is this new-clients-only? | New accounts only; no migration in scope. |
 | **OQ-11** | Is the daily consolidated report a fixed send time, or configurable per client? | Configurable per organisation, default 17:00 EAT. |
 | **OQ-12** | When an approver declines a **variation card**, does the REQ pause, or continue on the original scope? | Continue on original scope; the card is a separate object. |

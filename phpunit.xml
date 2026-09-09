@@ -30,5 +30,12 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
+        <!--
+            Pinned so the suite does not read the developer's own .env. The
+            corporate module is on locally while it is being built, and without
+            this the tests that assert it ships off would pass or fail
+            depending on whose machine ran them.
+        -->
+        <env name="CORPORATE_MODULE_ENABLED" value="false"/>
     </php>
 </phpunit>

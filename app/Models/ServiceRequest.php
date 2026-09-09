@@ -14,6 +14,9 @@ class ServiceRequest extends Model
         'job_reference',
         'user_id',
         'segment',
+        'client_organisation_id',
+        'property_id',
+        'raised_by_member_id',
         'assigned_pm_id',
         'service_category_id',
         'technician_id',
@@ -243,11 +246,99 @@ class ServiceRequest extends Model
         return 'REQ-' . now()->format('Ymd') . '-' . strtoupper(substr(uniqid(), -4));
     }
 
+    // ==================== INVARIANTS ====================
+
+    /**
+     * A request cannot be half corporate.
+     *
+     * Every corporate document — quotation, variation, invoice — is stamped
+     * with the property it was raised against, and the float that pays for the
+     * work belongs to the organisation. A corporate request missing either is
+     * not a request with a gap in it; it is a request that cannot be quoted,
+     * approved, billed or reported on, and the failure would surface much
+     * later as a blank field on an invoice somebody has already posted.
+     *
+     * The mirror rule matters just as much: a retail request carrying an
+     * organisation would be picked up by the corporate float and billed
+     * against a client who never agreed to one.
+     *
+     * A LogicException rather than a validation error on purpose. User input
+     * is validated at the controller; anything reaching here with the two out
+     * of step is a bug in our own code, and failing loudly at the write is how
+     * it gets found in a test rather than in a client's accounts.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (self $request) {
+            if ($request->isCorporate()) {
+                if (!$request->client_organisation_id) {
+                    throw new \LogicException(
+                        'A corporate service request must belong to a client organisation.'
+                    );
+                }
+            } elseif ($request->client_organisation_id || $request->property_id || $request->raised_by_member_id) {
+                throw new \LogicException(
+                    'A retail service request cannot carry corporate account details. '
+                    . 'Set segment to "' . self::SEGMENT_CORPORATE . '" first.'
+                );
+            }
+
+            // Only on change: this runs on every status transition, and a
+            // lookup per save for a value that has not moved is wasted.
+            if ($request->isDirty('property_id') && $request->property_id) {
+                $belongs = Property::where('id', $request->property_id)
+                    ->where('client_organisation_id', $request->client_organisation_id)
+                    ->exists();
+
+                if (!$belongs) {
+                    throw new \LogicException(
+                        'The property does not belong to this request\'s client organisation.'
+                    );
+                }
+            }
+
+            if ($request->isDirty('raised_by_member_id') && $request->raised_by_member_id) {
+                $belongs = OrganisationMember::where('id', $request->raised_by_member_id)
+                    ->where('client_organisation_id', $request->client_organisation_id)
+                    ->exists();
+
+                if (!$belongs) {
+                    throw new \LogicException(
+                        'The requester is not a member of this request\'s client organisation.'
+                    );
+                }
+            }
+        });
+    }
+
     // ==================== RELATIONSHIPS ====================
 
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    /** The management company this request belongs to. Null for retail. */
+    public function organisation()
+    {
+        return $this->belongsTo(ClientOrganisation::class, 'client_organisation_id');
+    }
+
+    /** The building the work is in. Null for retail. */
+    public function property()
+    {
+        return $this->belongsTo(Property::class);
+    }
+
+    /**
+     * The membership that raised it — the caretaker, not their login.
+     *
+     * Held as the membership so the request can still say who asked and in
+     * what capacity after that person has left the company.
+     */
+    public function raisedByMember()
+    {
+        return $this->belongsTo(OrganisationMember::class, 'raised_by_member_id');
     }
 
     public function assignedPm()
@@ -739,6 +830,28 @@ class ServiceRequest extends Model
         }
 
         return $query->where('segment', $segment);
+    }
+
+    /** Requests for one management company. */
+    public function scopeForOrganisation($query, int $organisationId)
+    {
+        return $query->where('client_organisation_id', $organisationId);
+    }
+
+    /**
+     * Requests in one building.
+     *
+     * The brief asks for the job lists to filter by property name; this is
+     * that filter. A null or non-numeric value is a no-op rather than an empty
+     * result, for the same reason `inSegment` is.
+     */
+    public function scopeForProperty($query, $propertyId)
+    {
+        if (blank($propertyId) || !is_numeric($propertyId)) {
+            return $query;
+        }
+
+        return $query->where('property_id', (int) $propertyId);
     }
 
     public function scopePendingRFQ($query)

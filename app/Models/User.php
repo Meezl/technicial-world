@@ -118,6 +118,37 @@ class User extends Authenticatable implements MustVerifyEmail
     // ==================== RELATIONSHIPS ====================
 
     /**
+     * This user's standing inside a property management company, if any.
+     *
+     * Null for every retail client, every technician and every member of
+     * staff — which is the point. `role` says what kind of account this is;
+     * the membership says what this person may do inside one client's
+     * organisation. See OrganisationMember.
+     */
+    public function organisationMembership()
+    {
+        return $this->hasOne(OrganisationMember::class);
+    }
+
+    public function organisation()
+    {
+        return $this->hasOneThrough(
+            ClientOrganisation::class,
+            OrganisationMember::class,
+            'user_id',
+            'id',
+            'id',
+            'client_organisation_id'
+        );
+    }
+
+    /** Does this account act on behalf of a management company? */
+    public function isCorporateClient(): bool
+    {
+        return $this->organisationMembership()->where('is_active', true)->exists();
+    }
+
+    /**
      * Get the technician profile for this user.
      */
     public function technician()

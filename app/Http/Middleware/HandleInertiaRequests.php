@@ -43,6 +43,12 @@ class HandleInertiaRequests extends Middleware
                 'verification_grace_remaining' => fn () => $request->session()->get('verification_grace_remaining'),
                 'verification_denied_reason' => fn () => $request->session()->get('verification_denied_reason'),
             ],
+            // Whether the Property Management & Corporate module is switched
+            // on. Shared rather than fetched per page so navigation can hide
+            // what it must not offer without every controller passing a flag.
+            'corporate' => [
+                'enabled' => \App\Support\CorporateModule::enabled(),
+            ],
             'ziggy' => fn () => [
                 ...(new Ziggy)->toArray(),
                 'location' => $request->url(),

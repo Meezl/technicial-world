@@ -374,6 +374,29 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     // Technician Leads
     Route::get('/technician-leads', [AdminDashboardController::class, 'technicianLeads'])->name('admin.technician-leads');
 
+    // ==================== PROPERTY MANAGEMENT & CORPORATE ====================
+    //
+    // Behind the `corporate` middleware: the module ships in phases and these
+    // screens are reachable long before the journey they set up exists. 404
+    // while CORPORATE_MODULE_ENABLED is off.
+    //
+    // See PROPERTY_MANAGEMENT_MODULE_PLAN.md.
+    Route::middleware('corporate')->group(function () {
+        Route::get('/organisations', [\App\Http\Controllers\Admin\ClientOrganisationController::class, 'index'])->name('admin.organisations.index');
+        Route::post('/organisations', [\App\Http\Controllers\Admin\ClientOrganisationController::class, 'store'])->name('admin.organisations.store');
+        Route::get('/organisations/{organisation}', [\App\Http\Controllers\Admin\ClientOrganisationController::class, 'show'])->name('admin.organisations.show');
+        Route::put('/organisations/{organisation}', [\App\Http\Controllers\Admin\ClientOrganisationController::class, 'update'])->name('admin.organisations.update');
+        Route::delete('/organisations/{organisation}', [\App\Http\Controllers\Admin\ClientOrganisationController::class, 'destroy'])->name('admin.organisations.destroy');
+
+        Route::post('/organisations/{organisation}/properties', [\App\Http\Controllers\Admin\PropertyController::class, 'store'])->name('admin.organisations.properties.store');
+        Route::put('/organisations/{organisation}/properties/{property}', [\App\Http\Controllers\Admin\PropertyController::class, 'update'])->name('admin.organisations.properties.update');
+        Route::delete('/organisations/{organisation}/properties/{property}', [\App\Http\Controllers\Admin\PropertyController::class, 'destroy'])->name('admin.organisations.properties.destroy');
+
+        Route::post('/organisations/{organisation}/members', [\App\Http\Controllers\Admin\OrganisationMemberController::class, 'store'])->name('admin.organisations.members.store');
+        Route::put('/organisations/{organisation}/members/{member}', [\App\Http\Controllers\Admin\OrganisationMemberController::class, 'update'])->name('admin.organisations.members.update');
+        Route::delete('/organisations/{organisation}/members/{member}', [\App\Http\Controllers\Admin\OrganisationMemberController::class, 'destroy'])->name('admin.organisations.members.destroy');
+    });
+
     // ==================== PROJECT MANAGEMENT ROUTES ====================
     Route::get('/projects/dashboard', [ProjectManagementController::class, 'dashboard'])->name('admin.projects.dashboard');
     Route::get('/projects', [ProjectManagementController::class, 'index'])->name('admin.projects');

@@ -235,7 +235,14 @@ class AdminDashboardController extends Controller
 
     public function jobs(Request $request)
     {
-        $query = ServiceRequest::with(['user', 'serviceCategory', 'technician.user', 'leadTechnician.user', 'subTasks.technician.user'])
+        $query = ServiceRequest::with([
+                'user', 'serviceCategory', 'technician.user', 'leadTechnician.user',
+                'subTasks.technician.user',
+                // Corporate jobs are identified by the building they are in
+                // rather than by the person who logged them, so the list has
+                // to be able to say which one. Null on every retail row.
+                'organisation:id,name', 'property:id,name,code',
+            ])
             ->orderBy('created_at', 'desc');
 
         // Search Filter
@@ -246,6 +253,12 @@ class AdminDashboardController extends Controller
                     ->orWhereHas('user', function ($q) use ($search) {
                         $q->where('name', 'like', "%{$search}%")
                             ->orWhere('email', 'like', "%{$search}%");
+                    })
+                    // "What is open at Jitegemea Flats" is a question the
+                    // office asks daily once a portfolio is on the system.
+                    ->orWhereHas('property', function ($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%")
+                            ->orWhere('code', 'like', "%{$search}%");
                     });
             });
         }
@@ -254,6 +267,10 @@ class AdminDashboardController extends Controller
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
+
+        // Property filter. A no-op unless one is asked for, so the retail
+        // view of this page is unchanged.
+        $query->forProperty($request->input('property'));
 
         $jobs = $query->paginate(10)->withQueryString();
 
@@ -264,7 +281,14 @@ class AdminDashboardController extends Controller
         return Inertia::render('Admin/Jobs', [
             'jobs' => $jobs,
             'technicians' => $technicians,
-            'filters' => $request->only(['search', 'status'])
+            // Only the buildings that actually have jobs on this list — an
+            // empty picker of 200 properties helps nobody.
+            'properties' => \App\Models\Property::query()
+                ->whereHas('serviceRequests')
+                ->with('organisation:id,name')
+                ->orderBy('name')
+                ->get(['id', 'name', 'code', 'client_organisation_id']),
+            'filters' => $request->only(['search', 'status', 'property'])
         ]);
     }
 
@@ -2557,6 +2581,9 @@ class AdminDashboardController extends Controller
         $segment = $request->input('segment', ServiceRequest::SEGMENT_RETAIL);
         $query->inSegment($segment);
 
+        // Filter the queue down to one building. No-op when absent.
+        $query->forProperty($request->input('property'));
+
         // Search filter
         if ($search = $request->input('search')) {
             $query->where(function ($q) use ($search) {
@@ -2648,6 +2675,7 @@ class AdminDashboardController extends Controller
                 'status' => $request->input('status', 'all'),
                 'origin' => $request->input('origin', 'all'),
                 'segment' => $segment,
+                'property' => $request->input('property'),
                 'sort' => $sortOrder,
                 'per_page' => $perPage,
                 'needs_action' => $needsAction,
