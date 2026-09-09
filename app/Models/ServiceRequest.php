@@ -13,6 +13,7 @@ class ServiceRequest extends Model
         'request_id',
         'job_reference',
         'user_id',
+        'segment',
         'assigned_pm_id',
         'service_category_id',
         'technician_id',
@@ -170,6 +171,29 @@ class ServiceRequest extends Model
     const RFQ_STATUS_QUOTED = 'quoted';
     const RFQ_STATUS_APPROVED = 'approved';
     const RFQ_STATUS_REJECTED = 'rejected';
+
+    // ==================== SEGMENTS ====================
+
+    /**
+     * Which module owns this request.
+     *
+     * Retail is the day-to-day client: a per-job deposit clears before the
+     * crew is assigned and milestone payments settle silently. Corporate is a
+     * property management company: a standing float unlocks the work, invoices
+     * batch until the float drops through a threshold, and the client is an
+     * organisation with its own approval hierarchy.
+     *
+     * The difference is commercial, not operational — everything from
+     * assignment onwards is the same pipeline. See
+     * PROPERTY_MANAGEMENT_MODULE_PLAN.md.
+     */
+    const SEGMENT_RETAIL = 'retail';
+    const SEGMENT_CORPORATE = 'corporate';
+
+    const SEGMENTS = [
+        self::SEGMENT_RETAIL => 'Retail',
+        self::SEGMENT_CORPORATE => 'Property Management & Corporate',
+    ];
 
     /**
      * All valid statuses for display.
@@ -683,6 +707,40 @@ class ServiceRequest extends Model
 
     // ==================== SCOPES ====================
 
+    /**
+     * Retail requests only.
+     *
+     * The default for every list that existed before the corporate module.
+     * Written as an explicit filter rather than a global scope on purpose: a
+     * global scope would silently hide corporate rows from reports and admin
+     * tooling that legitimately want to see everything, and the bug that
+     * causes is invisible.
+     */
+    public function scopeRetail($query)
+    {
+        return $query->where('segment', self::SEGMENT_RETAIL);
+    }
+
+    /** Property management and corporate requests only. */
+    public function scopeCorporate($query)
+    {
+        return $query->where('segment', self::SEGMENT_CORPORATE);
+    }
+
+    /**
+     * Restrict to one segment, or to none when `all` is asked for.
+     *
+     * For screens that offer a segment filter rather than assuming one.
+     */
+    public function scopeInSegment($query, ?string $segment)
+    {
+        if ($segment === null || $segment === 'all' || !array_key_exists($segment, self::SEGMENTS)) {
+            return $query;
+        }
+
+        return $query->where('segment', $segment);
+    }
+
     public function scopePendingRFQ($query)
     {
         return $query->where('rfq_status', self::RFQ_STATUS_PENDING);
@@ -994,6 +1052,20 @@ class ServiceRequest extends Model
     }
 
     // ==================== HELPERS ====================
+
+    public function isCorporate(): bool
+    {
+        return $this->segment === self::SEGMENT_CORPORATE;
+    }
+
+    public function isRetail(): bool
+    {
+        // Null-safe rather than a strict comparison: a request built in memory
+        // has no attributes from the database yet, and the column default only
+        // lands on insert. Treating "not corporate" as retail keeps a
+        // half-built model on the path it will actually take once saved.
+        return !$this->isCorporate();
+    }
 
     public function recalculateProgress()
     {

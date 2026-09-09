@@ -274,6 +274,41 @@
 
 ---
 
+## 23. Property Management & Corporate Module
+
+> Source: *Property Management & Corporate Level Module — Brief* (LNI → WEBPIN, 28.08.2026).
+> Full analysis, data model, phasing and open questions: `PROPERTY_MANAGEMENT_MODULE_PLAN.md`.
+> Requirement IDs below are the ones used in that plan.
+
+### Phase 0 — Segment seam & feature flag
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| `segment` discriminator on every request | ✅ | `service_requests.segment`, defaulted `retail`; composite index on `(segment, status)` |
+| Segment constants, scopes and helpers | ✅ | `ServiceRequest::SEGMENT_*`, `scopeRetail`, `scopeCorporate`, `scopeInSegment`, `isCorporate()`, `isRetail()` |
+| Corporate requests kept out of the retail RFQ queues (CA-10) | ✅ | `AdminDashboardController::rfq()` and `PMDashboardController::rfqs()` default to `retail`; `?segment=` overrides |
+| Feature flag | ✅ | `config/corporate.php` + `CORPORATE_MODULE_ENABLED`, read through `App\Support\CorporateModule` |
+| Route gate for future corporate routes | ✅ | `corporate` middleware alias → `EnsureCorporateModuleEnabled` (404 while off) |
+| Regression cover | ✅ | `tests/Feature/CorporateSegmentTest.php` |
+
+### Phases 1–7 — not started
+
+| Phase | Scope | Requirement IDs | Status |
+|-------|-------|-----------------|--------|
+| 1 | Corporate accounts, properties, organisation members, signatories | CA-1…CA-5, CA-9, CA-11 | ⬜ |
+| 2 | Corporate REQ lifecycle, 1/2-stage approvals, LPO + landlord PIN + signature, reference numbering | CA-6…CA-8, RQ-1…RQ-5, RQ-8, RQ-9 | ⬜ |
+| 3 | Deposit float ledger, work gating, admin override | DP-1…DP-6, DP-9 | ⬜ |
+| 4 | In-tray, proforma & tax invoicing, eTIMS, WHT/WHVAT, settlement, 360° view | DP-7, DP-8, IN-1…IN-13 | ⬜ |
+| 5 | Client-raised variation cards | VC-1…VC-5 | ⬜ |
+| 6 | Consolidated daily client report, printable security roster | RP-1, RP-2 | ⬜ |
+| 7 | SLA rate schedule, auto-quoting, visibility projections, digital signature | SL-1…SL-16 | ⬜ |
+| — | Client-side security portal | RP-3 | 🔲 Deferred |
+
+> Phases 3 and 4 are blocked on open questions OQ-1…OQ-5 in the plan; Phase 7 is blocked on
+> a sample of the rate schedule (OQ-8).
+
+---
+
 ## Backend Architecture Summary
 
 ### Models (36 total)

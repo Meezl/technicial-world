@@ -2544,6 +2544,19 @@ class AdminDashboardController extends Controller
             $q->whereIn('status', \App\Models\VariationOrder::COUNTS_TOWARD_CONTRACT);
         }], 'net_amount');
 
+        // Property management work does not belong in this queue. It is priced
+        // against a negotiated rate schedule, unlocked by a standing float
+        // rather than a per-job deposit, and approved by the client's own
+        // hierarchy — none of which the controls on this page can do. The
+        // brief is explicit that corporate requests arrive in their own
+        // segment and are not lumped with retail.
+        //
+        // Defaulted rather than forced: an admin can still ask for the
+        // corporate rows with ?segment=corporate, so nothing becomes
+        // unreachable in the window before the corporate queue itself ships.
+        $segment = $request->input('segment', ServiceRequest::SEGMENT_RETAIL);
+        $query->inSegment($segment);
+
         // Search filter
         if ($search = $request->input('search')) {
             $query->where(function ($q) use ($search) {
@@ -2634,6 +2647,7 @@ class AdminDashboardController extends Controller
                 'search' => $request->input('search', ''),
                 'status' => $request->input('status', 'all'),
                 'origin' => $request->input('origin', 'all'),
+                'segment' => $segment,
                 'sort' => $sortOrder,
                 'per_page' => $perPage,
                 'needs_action' => $needsAction,
