@@ -16,11 +16,15 @@ class ClientOrganisation extends Model
 {
     protected $fillable = [
         'name', 'kra_pin', 'billing_email', 'phone', 'address', 'logo_path',
-        'approval_workflow', 'is_active', 'created_by',
+        'approval_workflow', 'vat_rate', 'whvat_rate', 'wht_rate',
+        'is_active', 'created_by',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'vat_rate' => 'decimal:2',
+        'whvat_rate' => 'decimal:2',
+        'wht_rate' => 'decimal:2',
     ];
 
     /** Column defaults are not applied to an in-memory model. */
@@ -69,6 +73,26 @@ class ClientOrganisation extends Model
     public function depositAccount(): \Illuminate\Database\Eloquent\Relations\HasOne
     {
         return $this->hasOne(DepositAccount::class);
+    }
+
+    public function invoices(): HasMany
+    {
+        return $this->hasMany(Invoice::class);
+    }
+
+    public function invoiceBatches(): HasMany
+    {
+        return $this->hasMany(InvoiceBatch::class);
+    }
+
+    public function settlements(): HasMany
+    {
+        return $this->hasMany(Settlement::class);
+    }
+
+    public function taxCertificates(): HasMany
+    {
+        return $this->hasMany(TaxCertificate::class);
     }
 
     public function creator(): BelongsTo

@@ -357,6 +357,12 @@ class ServiceRequest extends Model
         return $this->hasMany(CorporateApproval::class)->orderBy('sequence');
     }
 
+    /** The bill this job raised when it closed. Corporate only. */
+    public function corporateInvoice()
+    {
+        return $this->hasOne(Invoice::class)->where('status', '!=', Invoice::STATUS_VOID);
+    }
+
     public function assignedPm()
     {
         return $this->belongsTo(User::class, 'assigned_pm_id');

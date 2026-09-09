@@ -152,6 +152,13 @@ Route::middleware(['auth', 'corporate'])->prefix('corporate')->group(function ()
     Route::get('/requests/{serviceRequest}/approval', [\App\Http\Controllers\Corporate\CorporateApprovalController::class, 'show'])->name('corporate.approvals.show');
     Route::post('/requests/{serviceRequest}/approve', [\App\Http\Controllers\Corporate\CorporateApprovalController::class, 'approve'])->name('corporate.approvals.approve');
     Route::post('/requests/{serviceRequest}/decline', [\App\Http\Controllers\Corporate\CorporateApprovalController::class, 'decline'])->name('corporate.approvals.decline');
+
+    // Billing: what is owed, posting a payment against it, and the
+    // withholding certificates that finish it off.
+    Route::get('/billing', [\App\Http\Controllers\Corporate\CorporateBillingController::class, 'index'])->name('corporate.billing.index');
+    Route::post('/billing/settlements', [\App\Http\Controllers\Corporate\CorporateBillingController::class, 'storeSettlement'])->name('corporate.billing.settlements.store');
+    Route::post('/billing/certificates', [\App\Http\Controllers\Corporate\CorporateBillingController::class, 'storeCertificate'])->name('corporate.billing.certificates.store');
+    Route::get('/requests/{serviceRequest}/overview', [\App\Http\Controllers\Corporate\CorporateBillingController::class, 'job'])->name('corporate.requests.overview');
 });
 
 Route::middleware(['auth', 'role:project_manager'])->prefix('pm')->group(function () {
@@ -419,6 +426,26 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
         Route::post('/organisations/{organisation}/deposit/override', [\App\Http\Controllers\Admin\DepositAccountController::class, 'override'])->name('admin.organisations.deposit.override');
         Route::delete('/organisations/{organisation}/deposit/override', [\App\Http\Controllers\Admin\DepositAccountController::class, 'clearOverride'])->name('admin.organisations.deposit.override.clear');
         Route::post('/organisations/{organisation}/deposit/adjust', [\App\Http\Controllers\Admin\DepositAccountController::class, 'adjust'])->name('admin.organisations.deposit.adjust');
+
+        // Invoicing: the in-tray, the dispatch that empties it, and the
+        // paperwork that follows.
+        Route::get('/corporate-invoices', [\App\Http\Controllers\Admin\CorporateInvoiceController::class, 'index'])->name('admin.corporate.invoices.index');
+        Route::get('/corporate-invoices/organisation/{organisation}', [\App\Http\Controllers\Admin\CorporateInvoiceController::class, 'show'])->name('admin.corporate.invoices.organisation');
+        Route::post('/corporate-invoices/organisation/{organisation}/dispatch', [\App\Http\Controllers\Admin\CorporateInvoiceController::class, 'dispatchBatch'])->name('admin.corporate.invoices.dispatch');
+        Route::get('/corporate-invoices/{invoice}', [\App\Http\Controllers\Admin\CorporateInvoiceController::class, 'showInvoice'])->name('admin.corporate.invoices.show');
+        Route::get('/corporate-invoices/{invoice}/pdf', [\App\Http\Controllers\Admin\CorporateInvoiceController::class, 'pdf'])->name('admin.corporate.invoices.pdf');
+        Route::post('/corporate-invoices/{invoice}/etims', [\App\Http\Controllers\Admin\CorporateInvoiceController::class, 'attachEtims'])->name('admin.corporate.invoices.etims');
+        Route::post('/corporate-invoices/{invoice}/void', [\App\Http\Controllers\Admin\CorporateInvoiceController::class, 'void'])->name('admin.corporate.invoices.void');
+        Route::get('/corporate-batches/{batch}/pdf', [\App\Http\Controllers\Admin\CorporateInvoiceController::class, 'batchPdf'])->name('admin.corporate.batches.pdf');
+
+        // The accountant's queue: payments and withholding certificates.
+        Route::get('/corporate-settlements', [\App\Http\Controllers\Admin\CorporateSettlementController::class, 'index'])->name('admin.corporate.settlements.index');
+        Route::post('/corporate-settlements', [\App\Http\Controllers\Admin\CorporateSettlementController::class, 'store'])->name('admin.corporate.settlements.store');
+        Route::post('/corporate-settlements/{settlement}/validate', [\App\Http\Controllers\Admin\CorporateSettlementController::class, 'validateSettlement'])->name('admin.corporate.settlements.validate');
+        Route::post('/corporate-settlements/{settlement}/reject', [\App\Http\Controllers\Admin\CorporateSettlementController::class, 'rejectSettlement'])->name('admin.corporate.settlements.reject');
+        Route::post('/corporate-certificates', [\App\Http\Controllers\Admin\CorporateSettlementController::class, 'storeCertificate'])->name('admin.corporate.certificates.store');
+        Route::post('/corporate-certificates/{certificate}/validate', [\App\Http\Controllers\Admin\CorporateSettlementController::class, 'validateCertificate'])->name('admin.corporate.certificates.validate');
+        Route::post('/corporate-certificates/{certificate}/reject', [\App\Http\Controllers\Admin\CorporateSettlementController::class, 'rejectCertificate'])->name('admin.corporate.certificates.reject');
 
         Route::post('/organisations/{organisation}/members', [\App\Http\Controllers\Admin\OrganisationMemberController::class, 'store'])->name('admin.organisations.members.store');
         Route::put('/organisations/{organisation}/members/{member}', [\App\Http\Controllers\Admin\OrganisationMemberController::class, 'update'])->name('admin.organisations.members.update');

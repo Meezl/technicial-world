@@ -1,7 +1,7 @@
 # Property Management & Corporate Module — Analysis & Implementation Plan
 
 > Source brief: *"Technician World Property Management & Corporate Level Module — Brief"*, LNI → WEBPIN, dated 28.08.2026 (8 pages).
-> Plan drafted: 2026-09-09. Status: **Phases 0–3 delivered** on `feat/corporate-segment-foundations`; Phases 4–7 not started.
+> Plan drafted: 2026-09-09. Status: **Phases 0–4 delivered** on `feat/corporate-segment-foundations`; Phases 5–7 not started.
 > Companion docs: `FEATURE_TRACKER.md`, `REQUISITION_MODULE_DOCUMENTATION.md`, `ADMIN_ASSISTED_RFQ_PLAN.md`.
 
 ---
@@ -348,7 +348,7 @@ Each phase is independently shippable and leaves the retail module untouched.
 
 **Not yet called by the product:** `consume()` and the tax-certificate top-up are built and tested; Phase 4 wires them to job closure and certificate validation.
 
-### Phase 4 — In-tray, invoicing, tax & settlement *(≈4 weeks)* — DP-7, DP-8, IN-1…IN-13
+### Phase 4 — In-tray, invoicing, tax & settlement *(≈4 weeks)* — ✅ **delivered**
 - In-tray: closed jobs generate a **held** invoice; float consumption posted on closure (DP-7).
 - Threshold trigger → batch dispatch of proformas to the client's portal + email, plus an **internal alert** to raise the tax invoice (IN-3).
 - PDF templates for both modes — one consolidated invoice and per-REQ invoices — carrying every field in IN-6 (TW PIN, bank details, logo, REQ numbers, requester, approver, property, associated VOs).
@@ -360,7 +360,15 @@ Each phase is independently shippable and leaves the retail module untouched.
 - Tax certificate upload → accountant validation → job closes fully paid; both events post float top-ups, capped at the ceiling (DP-8, DP-9, IN-9).
 - **360° REQ view** assembling reports, VOs, invoices, POPs, cheque images and certificates (IN-13).
 
-**Exit:** the §8 worked example runs end to end and the float returns to 500,000.
+**Exit:** ✅ the §8 worked example runs end to end against MySQL and the float returns to exactly 500,000. 586 tests green.
+
+**Decided while building:**
+- **Withholding depends on how the client is billed.** Two jobs invoiced separately are withheld against individually (net 306,206.89); the same work on one consolidated form is withheld against once (306,206.90). The batch computes per its own output mode, and the PDF prints the batch's figures rather than re-summing — the client pays from that document and we reconcile the bank against the batch, so the two must agree. A test pins it.
+- **Allocations can never exceed the payment.** Ticking each invoice at face value against a transfer that arrived short by the withholding would mark them all paid and top the float up with cash that never came.
+- **Invoice status is derived, never stepped.** Cash and certificates arrive weeks apart in either order; a status nudged along by whichever landed last is wrong the moment one is reversed.
+- **A validated payment cannot be rejected** — the float has already moved. Corrections are adjustments carrying a reason.
+
+**Still manual:** eTIMS receipts are uploaded, not fetched from KRA (OQ-6). `config/corporate.php` needs the issuer PIN and bank details set before invoices go out — they print blank otherwise.
 
 ### Phase 5 — Variation cards *(≈1.5 weeks)* — VC-1…VC-5
 - `variation_cards`: client-raised scope request with justification.
@@ -398,9 +406,9 @@ These change the build. OQ-1 through OQ-5 gate Phases 3–4.
 | ID | Question | Our recommendation |
 |---|---|---|
 | **OQ-1** | ⚙️ *Built both ways in Phase 3* — approval encumbers, closure spends, and assignment is gated on `balance − committed`. This is correct under either answer, so it is no longer blocking; confirm it matches how they think about it. | Done — confirm only. |
-| **OQ-2** | ⚙️ *Assumed in Phase 3* — the threshold is measured against remaining float, which is the only reading under which the illustration's arithmetic closes. Still worth confirming before Phase 4 builds the invoice trigger on it. | Assumed; confirm before Phase 4. |
-| **OQ-3** | Are float amounts **VAT-inclusive**? The example reduces the float by 120,000 and then invoices 320,000 as a VAT-inclusive figure, so we assume yes. | Float is VAT-inclusive throughout. |
-| **OQ-4** | The brief cites an RTGS of "314,482.76 … in the amount of 306,206.90". Only 306,206.90 reconciles (320,000 − 2% WHVAT 5,517.24 − 3% WHT 8,275.86, both on the ex-VAT value of 275,862.07). Confirm 314,482.76 is a typo. | Implement 306,206.90; make both rates configurable per organisation. |
+| **OQ-2** | ⚙️ *Built on in Phases 3 and 4* — the threshold measures against remaining float, the only reading under which the illustration's arithmetic closes. The invoice trigger now depends on it. **Still the most valuable thing to confirm.** | Assumed; please confirm. |
+| **OQ-3** | ⚙️ *Assumed in Phase 4* — amounts are VAT-inclusive throughout, which is the only reading consistent with the illustration. Confirm. | Assumed; confirm. |
+| **OQ-4** | ⚙️ *Implemented in Phase 4* — 306,206.90, reproduced exactly by `taxBreakdown()`. 314,482.76 is treated as a slip (it is the gross less WHVAT alone). Rates are configurable nationally and per client. Confirm. | Done; confirm the slip. |
 | **OQ-5** | One active float per organisation, or can a client run several (e.g. per portfolio)? | One active float per organisation; model allows more later. |
 | **OQ-6** | eTIMS: manual PDF upload now, or API integration with KRA? | Manual upload in Phase 4; API as a later phase. |
 | **OQ-7** | Digital signature (RQ-5, SL-13): a stored signature image plus name, or a cryptographic signature? | Stored image + name + audit timestamp. |

@@ -56,13 +56,29 @@ const baseItems = [
 // reach main before the journey they set up exists. The routes 404 while the
 // module is off; this keeps the entry out of the menu to match, so nobody
 // clicks their way into a dead end.
-const corporateItem = {
-    key: 'organisations',
-    href: '/admin/organisations',
-    icon: 'fas fa-building',
-    label: 'Corporate Accounts',
-    caption: 'Management companies and properties',
-}
+const corporateItems = [
+    {
+        key: 'organisations',
+        href: '/admin/organisations',
+        icon: 'fas fa-building',
+        label: 'Corporate Accounts',
+        caption: 'Management companies and properties',
+    },
+    {
+        key: 'corporate-invoices',
+        href: '/admin/corporate-invoices',
+        icon: 'fas fa-file-invoice',
+        label: 'Corporate Invoicing',
+        caption: 'In-trays, dispatch and eTIMS',
+    },
+    {
+        key: 'corporate-settlements',
+        href: '/admin/corporate-settlements',
+        icon: 'fas fa-money-check-alt',
+        label: 'Corporate Payments',
+        caption: 'Confirm payments and tax certificates',
+    },
+]
 
 const navItems = computed(() => {
     if (!corporateEnabled.value) return baseItems
@@ -70,7 +86,7 @@ const navItems = computed(() => {
     // Placed next to Users: both answer "who are we dealing with".
     const items = [...baseItems]
     const at = items.findIndex(i => i.key === 'users')
-    items.splice(at === -1 ? items.length : at + 1, 0, corporateItem)
+    items.splice(at === -1 ? items.length : at + 1, 0, ...corporateItems)
     return items
 })
 </script>

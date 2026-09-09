@@ -346,11 +346,29 @@
 > `consume()` and the tax-certificate top-up are built and tested but not yet called by the
 > product: Phase 4 wires them to job closure and certificate validation.
 
-### Phases 4–7 — not started
+### Phase 4 — In-tray, invoicing, tax & settlement
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| Invoices raised per closed job and held (IN-1, DP-7) | ✅ | Hooked into `JobService::transitionState`, the seam both closure paths share; idempotent |
+| Threshold trigger dispatches the in-tray as proformas (IN-2) | ✅ | `InvoicingService::shouldDispatch()` measures **remaining float**, not the in-tray total |
+| Internal alert to raise the hard-copy tax invoice (IN-3) | ✅ | The corporate invoicing screen flags accounts that have tripped, plus the dispatch flash |
+| Downloadable / printable PDFs + eTIMS (IN-4) | ✅ | `pdf.corporate-invoice`; eTIMS upload promotes a proforma to a tax invoice |
+| Consolidated **or** separate output (IN-5) | ✅ | `InvoiceBatch::output_mode`; withholding computed per the mode actually used |
+| Every field the brief requires on the invoice (IN-6) | ✅ | PIN, bank details, logo, REQ numbers, requester, approver, property, and each variation with its own requester/approver |
+| WHVAT + WHT on the VAT-exclusive value (IN-7) | ✅ | `InvoicingService::taxBreakdown()`, reconciled against the brief's worked example; rates configurable per client |
+| Accountant validates; job stays alive for certificates (IN-8) | ✅ | `SettlementService::validate()` — tops the float by cash received, not invoice value |
+| Certificates close the job as fully paid (IN-9, DP-8) | ✅ | `validateCertificate()` posts the second top-up, capped at the ceiling (DP-9) |
+| Client batch settlement: one POP, ticked jobs (IN-10) | ✅ | `Client/Corporate/Billing.vue`; allocations can never exceed the payment |
+| Cheque + remittance statement capture (IN-11) | ✅ | `settlements.proof_path` / `statement_path`, method `cheque` |
+| TW-side entry when a client emails the POP (IN-12) | ✅ | `CorporateSettlementController::store` |
+| 360° job view (IN-13) | ✅ | `Client/Corporate/Job360.vue` — approvals, variations, reports, invoice, payments, certificates |
+| Regression cover | ✅ | `tests/Feature/CorporateInvoicingTest.php` (32 tests) |
+
+### Phases 5–7 — not started
 
 | Phase | Scope | Requirement IDs | Status |
 |-------|-------|-----------------|--------|
-| 4 | In-tray, proforma & tax invoicing, eTIMS, WHT/WHVAT, settlement, 360° view | DP-7, DP-8, IN-1…IN-13 | ⬜ |
 | 5 | Client-raised variation cards | VC-1…VC-5 | ⬜ |
 | 6 | Consolidated daily client report, printable security roster | RP-1, RP-2 | ⬜ |
 | 7 | SLA rate schedule, auto-quoting, visibility projections, digital signature | SL-1…SL-16 | ⬜ |
