@@ -411,6 +411,16 @@
 | Technician projection with per-line release (SL-16) | ✅ | `releaseToTechnician()` / `withdrawFromTechnician()`; a technician sees only their own, only when opened |
 | Regression cover | ✅ | `tests/Feature/RateScheduleQuotingTest.php` (33 tests) |
 
+### Client portal navigation
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| Corporate members reach their own screens | ✅ | `ClientSidebar` / `ClientBottomNav` branch on the shared `corporate.membership` prop |
+| Menu is position-aware | ✅ | A requester is offered Jobs / Raise a Job / Variation Cards; verifiers and approvers add Approvals; organisation-wide positions add Billing |
+| Retail portal untouched | ✅ | `membership` is null for every retail client, every technician and every member of staff |
+| No menu item leads to a 403 | ✅ | Billing narrowed to `ORGANISATION_WIDE_POSITIONS`, matching the visibility rule used everywhere else |
+| Regression cover | ✅ | `tests/Feature/CorporateNavigationTest.php` (9 tests) |
+
 ### Deferred
 
 | Scope | Requirement IDs | Status |

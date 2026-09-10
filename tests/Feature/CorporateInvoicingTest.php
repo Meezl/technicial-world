@@ -348,7 +348,14 @@ class CorporateInvoicingTest extends TestCase
     {
         $this->close($this->job(120000));
 
-        $invoices = $this->actingAs($this->requester->user)
+        // Billing belongs to the positions that see the whole account, so the
+        // check is made as one of them.
+        $accounts = $this->org->members()->create([
+            'user_id' => User::factory()->create(['role' => User::ROLE_CLIENT])->id,
+            'position' => OrganisationMember::POSITION_ACCOUNTS,
+        ]);
+
+        $invoices = $this->actingAs($accounts->user)
             ->get(route('corporate.billing.index'))
             ->assertOk()
             ->viewData('page')['props']['invoices'];

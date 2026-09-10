@@ -32,6 +32,17 @@ class CorporateBillingController extends Controller
     public function index(Request $request)
     {
         $member = $this->member($request->user());
+
+        // The money screens belong to the positions that see the whole
+        // account. A caretaker sees only the jobs they raised — that is the
+        // rule everywhere else on this module — so showing them every invoice
+        // the company has ever had would be the one place it did not hold.
+        abort_unless(
+            in_array($member->position, ServiceRequest::ORGANISATION_WIDE_POSITIONS, true),
+            403,
+            'Billing is handled by your managers and accounts team.'
+        );
+
         $organisationId = $member->client_organisation_id;
 
         return Inertia::render('Client/Corporate/Billing', [
