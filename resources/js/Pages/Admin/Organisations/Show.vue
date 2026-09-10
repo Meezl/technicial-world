@@ -137,7 +137,7 @@
                                     <td><strong>{{ m.user?.name }}</strong><div><small class="muted">{{ m.user?.email }}</small></div></td>
                                     <td><span class="status-badge">{{ positions[m.position] || m.position }}</span></td>
                                     <td><small>{{ m.display_name || '—' }}</small></td>
-                                    <td><small>{{ m.can_approve_up_to ? `KES ${Number(m.can_approve_up_to).toLocaleString()}` : 'No limit' }}</small></td>
+                                    <td><small>{{ m.can_approve_up_to ? `KES ${money(m.can_approve_up_to)}` : 'No limit' }}</small></td>
                                     <td>
                                         <span :class="['status-badge', m.is_active ? 'status-completed' : 'status-failed']">
                                             {{ m.is_active ? 'Active' : 'Inactive' }}
@@ -285,6 +285,9 @@ const readinessLabels = {
 
 const saving = ref(false)
 const base = `/admin/organisations/${props.organisation.id}`
+
+// Always two decimals on money.
+const money = (v) => Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 // ---- Properties ----
 const showPropertyModal = ref(false)

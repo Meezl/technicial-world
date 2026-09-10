@@ -421,6 +421,17 @@
 | No menu item leads to a 403 | ✅ | Billing narrowed to `ORGANISATION_WIDE_POSITIONS`, matching the visibility rule used everywhere else |
 | Regression cover | ✅ | `tests/Feature/CorporateNavigationTest.php` (9 tests) |
 
+### Demo data
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| One command stands up a working account | ✅ | `php artisan corporate:demo` — company, 2 properties, 5 people, 500k float, 10-item catalogue, 5 jobs |
+| A job at every stage, so no screen is empty | ✅ | Awaiting quote, with the verifier, with the approver, in progress (+ variation card), and closed (raising a held invoice) |
+| Opens above its own threshold | ✅ | Otherwise the first thing anybody tries — staffing a job — is refused |
+| Exact teardown | ✅ | `--remove` / `--fresh`, matched on the account and the `@corporate-demo.test` domain, never on "recently created" |
+| Refuses production | ✅ | `--force` plus an interactive confirmation |
+| Regression cover | ✅ | `tests/Feature/CorporateDemoSeederTest.php` (8 tests) |
+
 ### Deferred
 
 | Scope | Requirement IDs | Status |

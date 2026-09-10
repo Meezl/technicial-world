@@ -13,7 +13,7 @@
             </div>
             <div class="amount-box" v-if="request.quote_amount">
                 <small>Quotation</small>
-                <div class="amount">KES {{ Number(request.quote_amount).toLocaleString() }}</div>
+                <div class="amount">KES {{ money(request.quote_amount) }}</div>
             </div>
         </header>
 

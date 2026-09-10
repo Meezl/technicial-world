@@ -4,7 +4,7 @@
         <p class="sub">
             {{ membership.organisation }} · {{ membership.position_label }}
             <span v-if="membership.can_approve_up_to">
-                · limit KES {{ Number(membership.can_approve_up_to).toLocaleString() }}
+                · limit KES {{ money(membership.can_approve_up_to) }}
             </span>
         </p>
 
@@ -24,7 +24,7 @@
                     <strong>{{ reference(r) }}</strong>
                     <span class="muted"> · {{ r.property ? (r.property.code ? `${r.property.name} (${r.property.code})` : r.property.name) : '—' }}</span>
                 </div>
-                <div class="amount">KES {{ Number(r.quote_amount || 0).toLocaleString() }}</div>
+                <div class="amount">KES {{ money(r.quote_amount) }}</div>
             </div>
             <p class="desc">{{ r.description }}</p>
             <div class="job-foot">
@@ -51,6 +51,9 @@ const props = defineProps({
 const page = usePage()
 const flash = computed(() => page.props.flash || {})
 const isDecider = computed(() => ['verifier', 'approver'].includes(props.membership.position))
+
+// Always two decimals — see the note in Requests.vue.
+const money = (v) => Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 const reference = (r) => {
     const revision = Number(r.quote_revision_count || 0)

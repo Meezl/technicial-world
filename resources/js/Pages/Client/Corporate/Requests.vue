@@ -46,7 +46,7 @@
                         <td>{{ r.property ? (r.property.code ? `${r.property.name} (${r.property.code})` : r.property.name) : '—' }}</td>
                         <td class="desc">{{ r.description }}</td>
                         <td>{{ r.raised_by_member?.display_name || r.raised_by_member?.user?.name || '—' }}</td>
-                        <td>{{ r.quote_amount ? `KES ${Number(r.quote_amount).toLocaleString()}` : '—' }}</td>
+                        <td>{{ r.quote_amount ? `KES ${money(r.quote_amount)}` : '—' }}</td>
                         <td><span :class="['pill', stageClass(r)]">{{ stageLabel(r) }}</span></td>
                         <td>
                             <Link :href="`/corporate/requests/${r.id}/approval`" class="link">Open</Link>
@@ -77,6 +77,10 @@ const props = defineProps({
 
 const page = usePage()
 const flash = computed(() => page.props.flash || {})
+
+// Always two decimals. A bare toLocaleString renders 122078.4 as "122,078.4",
+// which reads as a typo on a figure somebody is being asked to agree to.
+const money = (v) => Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 const filterByProperty = (value) => {
     router.get('/corporate/requests', value ? { property: value } : {}, {
