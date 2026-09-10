@@ -164,6 +164,11 @@ Route::middleware(['auth', 'corporate'])->prefix('corporate')->group(function ()
     Route::get('/variation-cards', [\App\Http\Controllers\Corporate\VariationCardController::class, 'index'])->name('corporate.variation-cards.index');
     Route::post('/variation-cards', [\App\Http\Controllers\Corporate\VariationCardController::class, 'store'])->name('corporate.variation-cards.store');
     Route::post('/variation-cards/{card}/decide', [\App\Http\Controllers\Corporate\VariationCardController::class, 'decide'])->name('corporate.variation-cards.decide');
+
+    // Composing a request from the catalogue.
+    Route::get('/catalogue/search', [\App\Http\Controllers\Corporate\CatalogueRequestController::class, 'search'])->name('corporate.catalogue.search');
+    Route::post('/requests/{serviceRequest}/items', [\App\Http\Controllers\Corporate\CatalogueRequestController::class, 'storeItem'])->name('corporate.requests.items.store');
+    Route::delete('/requests/{serviceRequest}/items/{item}', [\App\Http\Controllers\Corporate\CatalogueRequestController::class, 'destroyItem'])->name('corporate.requests.items.destroy');
 });
 
 Route::middleware(['auth', 'role:project_manager'])->prefix('pm')->group(function () {
@@ -453,6 +458,27 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
         Route::post('/corporate-certificates', [\App\Http\Controllers\Admin\CorporateSettlementController::class, 'storeCertificate'])->name('admin.corporate.certificates.store');
         Route::post('/corporate-certificates/{certificate}/validate', [\App\Http\Controllers\Admin\CorporateSettlementController::class, 'validateCertificate'])->name('admin.corporate.certificates.validate');
         Route::post('/corporate-certificates/{certificate}/reject', [\App\Http\Controllers\Admin\CorporateSettlementController::class, 'rejectCertificate'])->name('admin.corporate.certificates.reject');
+
+        // The rate schedule: the catalogue quotations are priced from.
+        Route::get('/rates', [\App\Http\Controllers\Admin\RateScheduleController::class, 'index'])->name('admin.rates.index');
+        Route::post('/rates', [\App\Http\Controllers\Admin\RateScheduleController::class, 'store'])->name('admin.rates.store');
+        Route::get('/rates/{schedule}', [\App\Http\Controllers\Admin\RateScheduleController::class, 'show'])->name('admin.rates.show');
+        Route::post('/rates/{schedule}/activate', [\App\Http\Controllers\Admin\RateScheduleController::class, 'activate'])->name('admin.rates.activate');
+        Route::post('/rates/{schedule}/next-version', [\App\Http\Controllers\Admin\RateScheduleController::class, 'draftNext'])->name('admin.rates.next-version');
+        Route::post('/rates/{schedule}/import', [\App\Http\Controllers\Admin\RateScheduleController::class, 'import'])->name('admin.rates.import');
+        Route::post('/rates/{schedule}/items', [\App\Http\Controllers\Admin\RateScheduleController::class, 'storeItem'])->name('admin.rates.items.store');
+        Route::put('/rates/{schedule}/items/{item}', [\App\Http\Controllers\Admin\RateScheduleController::class, 'updateItem'])->name('admin.rates.items.update');
+        Route::get('/rates/{schedule}/items/{item}/history', [\App\Http\Controllers\Admin\RateScheduleController::class, 'itemHistory'])->name('admin.rates.items.history');
+
+        // Composing a quotation from what the client picked.
+        Route::get('/compose/{serviceRequest}', [\App\Http\Controllers\Admin\QuotationComposerController::class, 'show'])->name('admin.compose.show');
+        Route::post('/compose/{serviceRequest}/auto-populate', [\App\Http\Controllers\Admin\QuotationComposerController::class, 'autoPopulate'])->name('admin.compose.auto-populate');
+        Route::post('/compose/{serviceRequest}/ancillary', [\App\Http\Controllers\Admin\QuotationComposerController::class, 'addAncillary'])->name('admin.compose.ancillary');
+        Route::put('/compose/{serviceRequest}/items/{item}', [\App\Http\Controllers\Admin\QuotationComposerController::class, 'updateItem'])->name('admin.compose.items.update');
+        Route::delete('/compose/{serviceRequest}/items/{item}', [\App\Http\Controllers\Admin\QuotationComposerController::class, 'destroyItem'])->name('admin.compose.items.destroy');
+        Route::post('/compose/{serviceRequest}/items/{item}/assign', [\App\Http\Controllers\Admin\QuotationComposerController::class, 'assignLine'])->name('admin.compose.items.assign');
+        Route::post('/compose/{serviceRequest}/prices', [\App\Http\Controllers\Admin\QuotationComposerController::class, 'togglePrices'])->name('admin.compose.prices');
+        Route::post('/compose/{serviceRequest}/sign', [\App\Http\Controllers\Admin\QuotationComposerController::class, 'sign'])->name('admin.compose.sign');
 
         Route::post('/organisations/{organisation}/members', [\App\Http\Controllers\Admin\OrganisationMemberController::class, 'store'])->name('admin.organisations.members.store');
         Route::put('/organisations/{organisation}/members/{member}', [\App\Http\Controllers\Admin\OrganisationMemberController::class, 'update'])->name('admin.organisations.members.update');

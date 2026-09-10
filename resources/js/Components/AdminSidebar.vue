@@ -78,6 +78,13 @@ const corporateItems = [
         label: 'Corporate Payments',
         caption: 'Confirm payments and tax certificates',
     },
+    {
+        key: 'rates',
+        href: '/admin/rates',
+        icon: 'fas fa-list-ol',
+        label: 'Rate Schedules',
+        caption: 'The catalogue quotations price from',
+    },
 ]
 
 const navItems = computed(() => {

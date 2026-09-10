@@ -49,6 +49,11 @@ class ServiceRequest extends Model
         'quote_last_revised_at',
         'down_payment_requested',
         'quote_notes',
+        'prices_visible_to_requester',
+        'quote_signed_by',
+        'quote_signature_path',
+        'quote_signed_at',
+        'rate_schedule_id',
         'expected_duration_days',
         'commencement_at',
         'target_completion_at',
@@ -113,6 +118,8 @@ class ServiceRequest extends Model
         'started_at' => 'datetime',
         'assigned_at' => 'datetime',
         'commencement_gated' => 'boolean',
+        'prices_visible_to_requester' => 'boolean',
+        'quote_signed_at' => 'datetime',
         'completed_date' => 'datetime',
         'client_confirmation_date' => 'datetime',
         'client_verification_sent_at' => 'datetime',
@@ -361,6 +368,17 @@ class ServiceRequest extends Model
     public function corporateInvoice()
     {
         return $this->hasOne(Invoice::class)->where('status', '!=', Invoice::STATUS_VOID);
+    }
+
+    /** The catalogue lines this job was composed from. */
+    public function items()
+    {
+        return $this->hasMany(ServiceRequestItem::class)->orderBy('sort_order')->orderBy('id');
+    }
+
+    public function rateSchedule()
+    {
+        return $this->belongsTo(RateSchedule::class);
     }
 
     public function assignedPm()

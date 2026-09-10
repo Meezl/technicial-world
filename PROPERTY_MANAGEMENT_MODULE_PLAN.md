@@ -1,7 +1,7 @@
 # Property Management & Corporate Module — Analysis & Implementation Plan
 
 > Source brief: *"Technician World Property Management & Corporate Level Module — Brief"*, LNI → WEBPIN, dated 28.08.2026 (8 pages).
-> Plan drafted: 2026-09-09. Status: **Phases 0–6 delivered** on `feat/corporate-segment-foundations`; Phase 7 not started.
+> Plan drafted: 2026-09-09. Status: **All seven phases delivered** on `feat/corporate-segment-foundations`. RP-3 (security portal) remains deferred by design.
 > Companion docs: `FEATURE_TRACKER.md`, `REQUISITION_MODULE_DOCUMENTATION.md`, `ADMIN_ASSISTED_RFQ_PLAN.md`.
 
 ---
@@ -395,7 +395,7 @@ Each phase is independently shippable and leaves the retail module untouched.
 
 **RP-3 (security portal) remains deferred** — but `ServiceRequest::attendanceRoster()` returns the roster as data, so a portal would consume the same source rather than scraping the PDF.
 
-### Phase 7 — SLA rate schedule & auto-quoting *(≈5 weeks, parallelisable from Phase 3)* — SL-1…SL-16
+### Phase 7 — SLA rate schedule & auto-quoting *(≈5 weeks)* — ✅ **delivered**
 - `rate_schedules` / `rate_items` / `rate_item_revisions` with component decomposition and derived composite rate (SL-2, SL-3).
 - Bulk import (CSV/XLSX) for the ~4,000 items, plus admin CRUD and revision history.
 - Client request builder: typeahead over description + search terms, quantity, per-item urgency, location detail (SL-5…SL-7, SL-15).
@@ -405,7 +405,13 @@ Each phase is independently shippable and leaves the retail module untouched.
 - Digital signature on the quote before dispatch (SL-13).
 - **Projection service** with client / security / technician presets: price masking, per-line audience filtering, open/close visibility windows (SL-12, SL-14, SL-16).
 
-**Exit:** a client composes a 10 Sq.M tiling + 2 toilets request from the catalogue and TW returns a priced, signed, scheduled quote in under a minute.
+**Exit:** ✅ the brief's own example runs: a caretaker composes 10 Sq.M of granito and 2 close-couple toilets, and one button prices it — **in 16ms**, against the "thirty seconds" asked for. Typing "toilet" returns exactly the three types the brief names. 664 tests green.
+
+**Built without the catalogue sample (OQ-8).** The structure the brief describes is unambiguous even though its illustrative totals are not, so the design is generic over the data: components are named in one place, units are normalised on import, and columns are matched by header name rather than position — whatever spreadsheet the list arrives in should load. What real data will still settle is whether six components are enough and whether any item needs a per-client override.
+
+**A new discrepancy to raise (OQ-13).** The brief's worked example lists six components summing to **8,215** and then says the rate "will add up to say Kshs. 6,000.00"; adding 500 to the tile is then said to make the full rate 8,000 rather than 6,500. The figures are illustrative placeholders, so the implemented rule is the one that is consistent throughout: composite = sum of components, and a component moving by X moves the composite by exactly X. Worth confirming no seventh component or discount step is missing.
+
+**Found in the browser, not the tests:** the compose screen 500'd. `unit_label` is an appended attribute reading a column that an ordinary partial select omits, and its typed return had no fallback. Thirty-one passing tests never rendered that page.
 
 ---
 
@@ -422,7 +428,8 @@ These change the build. OQ-1 through OQ-5 gate Phases 3–4.
 | **OQ-5** | One active float per organisation, or can a client run several (e.g. per portfolio)? | One active float per organisation; model allows more later. |
 | **OQ-6** | eTIMS: manual PDF upload now, or API integration with KRA? | Manual upload in Phase 4; API as a later phase. |
 | **OQ-7** | Digital signature (RQ-5, SL-13): a stored signature image plus name, or a cryptographic signature? | Stored image + name + audit timestamp. |
-| **OQ-8** | Who supplies the ~4,000 catalogue items, in what format, and when? This is the long pole on Phase 7. | Need a CSV/XLSX sample of ~50 rows before Phase 7 starts. |
+| **OQ-8** | ⚙️ *Phase 7 built without it.* The importer matches columns by header name and normalises units, so most spreadsheet shapes should load — but nothing has been tried against real data. **A CSV of ~50 real rows is still the most valuable thing to send.** | Import and see what breaks. |
+| **OQ-13** | *New.* The brief's rate example lists components summing to 8,215 but says the rate is "say 6,000", and a +500 tile is said to make it 8,000. Implemented as composite = sum of components. Is a component or a discount step missing? | Confirm the arithmetic. |
 | **OQ-9** | ✅ *Settled in Phase 1.* The landlord PIN is stored on `properties` and will default onto the LPO page, overridable at approval. Confirm this matches how they actually work. | Done — confirm only. |
 | **OQ-10** | Should any existing retail clients be migrated to corporate accounts, or is this new-clients-only? | New accounts only; no migration in scope. |
 | **OQ-11** | ✅ *Settled in Phase 6.* Configurable per organisation (`daily_report_hour`), defaulting to 17:00. Confirm the default suits them. | Done — confirm only. |

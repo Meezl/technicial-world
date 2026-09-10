@@ -390,12 +390,32 @@
 | Security portal (RP-3) | 🔲 Deferred | The roster is already returned as data by `ServiceRequest::attendanceRoster()`, so a portal consumes the same source |
 | Regression cover | ✅ | `tests/Feature/CorporateDailyReportTest.php` (20 tests) |
 
-### Phase 7 — not started
+### Phase 7 — SLA rate schedule & auto-quoting
 
-| Phase | Scope | Requirement IDs | Status |
-|-------|-------|-----------------|--------|
-| 7 | SLA rate schedule, auto-quoting, visibility projections, digital signature | SL-1…SL-16 | ⬜ |
-| — | Client-side security portal | RP-3 | 🔲 Deferred |
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| Per-client negotiated schedule, versioned (SL-1) | ✅ | `rate_schedules`; activating supersedes rather than overwrites, so old quotes keep their figures |
+| Rate decomposed into six components (SL-2, SL-3) | ✅ | `rate_items`; composite derived on save — a component moves, the composite moves by exactly that |
+| ~4,000 items with pre-set units (SL-4) | ✅ | CSV import matching columns by name; unit normalisation refuses what it cannot recognise |
+| Searchable typeahead (SL-5) | ✅ | `scopeMatching` over description, code, category and search terms — "toilet" finds a WC pan |
+| Per-item urgency (SL-6) | ✅ | `service_request_items.urgency` |
+| Building and requester on every request (SL-7) | ✅ | Already carried from Phase 1 |
+| One-click auto-populate (SL-8) | ✅ | `QuotationComposerService::autoPopulate()` — rates snapshotted onto the line, not joined |
+| Ancillary costs at the bottom (SL-9) | ✅ | `addAncillary()` |
+| VAT-exclusive lines, VAT re-adjusting (SL-10) | ✅ | `totals()` — derived by subtraction so the parts always add to the whole |
+| Per-line start and end dates (SL-11) | ✅ | `planned_start` / `planned_end` — the access schedule |
+| Approver can hide prices, share items and dates (SL-12) | ✅ | `project($request, 'security')` — never shows money |
+| Digital signature before dispatch (SL-13) | ✅ | `sign()`; refuses while any line is unpriced |
+| Requester sees no rates unless opened (SL-14) | ✅ | `prices_visible_to_requester`, default off; the typeahead never returns a rate |
+| Location within the property per line (SL-15) | ✅ | `location_detail` |
+| Technician projection with per-line release (SL-16) | ✅ | `releaseToTechnician()` / `withdrawFromTechnician()`; a technician sees only their own, only when opened |
+| Regression cover | ✅ | `tests/Feature/RateScheduleQuotingTest.php` (33 tests) |
+
+### Deferred
+
+| Scope | Requirement IDs | Status |
+|-------|-----------------|--------|
+| Client-side security portal | RP-3 | 🔲 Deferred — the roster is already exposed as data |
 
 > Phases 3 and 4 are blocked on open questions OQ-1…OQ-5 in the plan; Phase 7 is blocked on
 > a sample of the rate schedule (OQ-8).

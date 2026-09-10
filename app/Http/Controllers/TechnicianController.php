@@ -288,6 +288,21 @@ class TechnicianController extends Controller
         'client_quote_approved_at',
         'proxy_quote_approved_by',
         'proxy_quote_approved_at',
+        // Rate-schedule quoting. Which price list a job was quoted from,
+        // whether we have opened the rates to the client, and our own
+        // signature on the quotation — all of it is the quotation, and none of
+        // it is a fact about the work.
+        //
+        // A technician does get the scope, the quantities and the location,
+        // but through QuotationComposerService::project(), which sends the
+        // lines that are theirs with the money stripped out.
+        'prices_visible_to_requester',
+        'quote_signed_by',
+        'quote_signature_path',
+        'quote_signed_at',
+        'rate_schedule_id',
+        'items',
+        'rateSchedule',
     ];
 
     private function technicianSafeJob(ServiceRequest $serviceRequest, int $technicianId): ServiceRequest
