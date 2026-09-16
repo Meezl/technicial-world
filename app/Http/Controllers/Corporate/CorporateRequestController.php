@@ -143,10 +143,7 @@ class CorporateRequestController extends Controller
             try {
                 $sr = ServiceRequest::with(['serviceCategory', 'user', 'property', 'organisation'])->find($id);
                 if (!$sr) return;
-                \Illuminate\Support\Facades\Notification::send(
-                    User::where('role', User::ROLE_ADMIN)->get(),
-                    new \App\Notifications\NewServiceRequestNotification($sr)
-                );
+                app(\App\Services\NotificationService::class)->notifyNewRfq($sr);
             } catch (\Throwable $e) {
                 \Illuminate\Support\Facades\Log::warning('Corporate RFQ notify failed', [
                     'service_request_id' => $id,

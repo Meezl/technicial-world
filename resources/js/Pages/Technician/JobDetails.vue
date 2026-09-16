@@ -16,6 +16,40 @@
         </header>
 
         <main class="pwa-content job-page">
+            <!-- The office is waiting to hear whether this technician will
+                 take the job. Declining sends it straight back for
+                 reassignment, so it goes first on the page. -->
+            <section v-for="assignment in pendingAssignments" :key="assignment.id" class="assignment-response">
+                <div class="assignment-response-copy">
+                    <strong>You have been assigned to this job</strong>
+                    <p>
+                        <template v-if="assignment.sub_task_title">Your task: {{ assignment.sub_task_title }}. </template>
+                        <template v-else-if="assignment.role_on_job">Your role: {{ assignment.role_on_job }}. </template>
+                        Please accept it, or decline so the office can reassign it.
+                    </p>
+                </div>
+
+                <div v-if="decliningId === assignment.id" class="assignment-decline-form">
+                    <textarea
+                        v-model="declineReason"
+                        rows="3"
+                        class="input"
+                        placeholder="Why can't you take this job?"
+                    ></textarea>
+                    <p v-if="page.props.errors?.reason" class="assignment-error">{{ page.props.errors.reason }}</p>
+                    <div class="assignment-response-actions">
+                        <button class="btn btn-outline" :disabled="responding" @click="decliningId = null">Cancel</button>
+                        <button class="btn btn-danger" :disabled="responding || declineReason.trim().length < 5" @click="declineAssignment(assignment)">
+                            Confirm decline
+                        </button>
+                    </div>
+                </div>
+                <div v-else class="assignment-response-actions">
+                    <button class="btn btn-outline" :disabled="responding" @click="startDecline(assignment)">Decline</button>
+                    <button class="btn btn-primary" :disabled="responding" @click="acceptAssignment(assignment)">Accept</button>
+                </div>
+            </section>
+
             <section class="hero-card">
                 <div class="hero-copy">
                     <span class="hero-kicker">Field Job</span>
@@ -720,7 +754,34 @@ const props = defineProps({
     scope: { type: Object, default: () => ({}) },
     assignmentFiles: { type: Array, default: () => [] },
     commencementBlocker: { type: String, default: null },
+    pendingAssignments: { type: Array, default: () => [] },
 })
+
+// Answering the assignment.
+const responding = ref(false)
+const decliningId = ref(null)
+const declineReason = ref('')
+
+const acceptAssignment = (assignment) => {
+    responding.value = true
+    router.post(`/technician/assignments/${assignment.id}/accept`, {}, {
+        preserveScroll: true,
+        onFinish: () => { responding.value = false },
+    })
+}
+
+const startDecline = (assignment) => {
+    decliningId.value = assignment.id
+    declineReason.value = ''
+}
+
+const declineAssignment = (assignment) => {
+    responding.value = true
+    router.post(`/technician/assignments/${assignment.id}/decline`, { reason: declineReason.value }, {
+        preserveScroll: true,
+        onFinish: () => { responding.value = false },
+    })
+}
 
 // What this technician is owed: their own task, or — for the lead, who signs
 // off the whole assignment — the job-wide list. Never the quotation's notes or
@@ -1624,6 +1685,27 @@ defineOptions({ layout: null })
 
 /* Office hold on starting work. Muted rather than alarming — this is a
    normal state on a job whose paperwork is still moving, not a fault. */
+.assignment-response {
+    margin: 0 0 1rem;
+    padding: 1rem;
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 12px;
+    color: #1E3A8A;
+    font-size: 0.9rem;
+}
+.assignment-response-copy strong { display: block; margin-bottom: 4px; }
+.assignment-response-copy p { margin: 0 0 0.75rem; line-height: 1.45; }
+.assignment-response-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+}
+.assignment-decline-form textarea { width: 100%; margin-bottom: 0.5rem; }
+.assignment-error { color: #B91C1C; margin: 0 0 0.5rem; font-size: 0.85rem; }
+.assignment-response .btn-danger { background: #DC2626; color: #fff; border: none; }
+.assignment-response .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .commencement-hold {
     display: flex;
     gap: 0.7rem;

@@ -154,8 +154,13 @@
                     </div>
                     
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
-                        <!-- Using plain button for now, can implement accept/decline logic later -->
-                        <button class="btn btn-primary" @click.stop="startJob(job)">
+                        <!-- Accepting or declining happens on the job page,
+                             where the technician can read what they are
+                             taking on first. -->
+                        <button v-if="job.awaiting_response" class="btn btn-primary" @click.stop="router.visit(`/technician/jobs/${job.id}`)">
+                            Accept / Decline
+                        </button>
+                        <button v-else class="btn btn-primary" @click.stop="startJob(job)">
                             Start Job
                         </button>
                     </div>

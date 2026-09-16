@@ -7,8 +7,6 @@ use Inertia\Inertia;
 use App\Models\ServiceRequest;
 use App\Models\ServiceCategory;
 use App\Models\User;
-use App\Notifications\NewServiceRequestNotification;
-use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 
 use App\Support\UploadRuntime;
@@ -97,7 +95,7 @@ class ServiceRequestController extends Controller
             $serviceRequest->update(['files' => $uploadedFiles]);
         }
 
-        // Defer admin notifications to AFTER the response is sent so the
+        // Defer the client confirmation and office alerts to AFTER the response is sent so the
         // user doesn't sit waiting on SMTP roundtrips. This eliminates the
         // 30s timeout that happened when several admins / PMs needed
         // notifying serially.
@@ -106,8 +104,7 @@ class ServiceRequestController extends Controller
             try {
                 $sr = ServiceRequest::with(['serviceCategory', 'user'])->find($srId);
                 if (!$sr) return;
-                $adminUsers = User::where('role', 'admin')->get();
-                Notification::send($adminUsers, new NewServiceRequestNotification($sr));
+                app(\App\Services\NotificationService::class)->notifyNewRfq($sr);
             } catch (\Throwable $e) {
                 \Illuminate\Support\Facades\Log::warning('NewServiceRequest notify failed', [
                     'service_request_id' => $srId,

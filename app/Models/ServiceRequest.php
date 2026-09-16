@@ -58,6 +58,8 @@ class ServiceRequest extends Model
         'commencement_at',
         'target_completion_at',
         'contact_time_minutes',
+        'office_alerted_at',
+        'office_reminder_count',
         'quote_materials_file_path',
         'quote_materials_file_paths',
         'rejection_reason',
@@ -138,6 +140,8 @@ class ServiceRequest extends Model
         'rating' => 'decimal:1',
         'technician_arrived' => 'boolean',
         'has_sub_tasks' => 'boolean',
+        'office_alerted_at' => 'datetime',
+        'office_reminder_count' => 'integer',
         'client_confirmed_completion' => 'boolean',
     ];
 
@@ -326,7 +330,48 @@ class ServiceRequest extends Model
                 }
             }
         });
+
+        // Start (or stop) the 12-hour client reminders as the job moves in and
+        // out of states that wait on the client. See rfq:remind-actions.
+        static::created(function (self $request) {
+            if ($request->rfq_status === self::RFQ_STATUS_QUOTED) {
+                ActionReminder::openFor($request, ActionReminder::KIND_QUOTE_DECISION);
+            }
+            foreach (self::CLIENT_WAITING_STATUSES as $status => $kind) {
+                if ($request->status === $status) {
+                    ActionReminder::openFor($request, $kind);
+                }
+            }
+        });
+
+        static::updated(function (self $request) {
+            if ($request->wasChanged('rfq_status') || $request->wasChanged('quote_revision_count')) {
+                $request->rfq_status === self::RFQ_STATUS_QUOTED
+                    ? ActionReminder::openFor($request, ActionReminder::KIND_QUOTE_DECISION)
+                    : ActionReminder::closeFor($request, ActionReminder::KIND_QUOTE_DECISION);
+            }
+
+            if ($request->wasChanged('status')) {
+                foreach (self::CLIENT_WAITING_STATUSES as $status => $kind) {
+                    $request->status === $status
+                        ? ActionReminder::openFor($request, $kind)
+                        : ActionReminder::closeFor($request, $kind);
+                }
+
+                // A closed job is not waiting on anybody, whatever the quote
+                // column still says.
+                if (in_array($request->status, [self::STATUS_CLOSED, self::STATUS_CANCELLED, self::STATUS_ARCHIVED], true)) {
+                    ActionReminder::closeFor($request, ActionReminder::KIND_QUOTE_DECISION);
+                }
+            }
+        });
     }
+
+    /** Job statuses that wait on the client, and the reminder each one opens. */
+    public const CLIENT_WAITING_STATUSES = [
+        self::STATUS_AWAITING_CLIENT_VERIFICATION => ActionReminder::KIND_COMPLETION_VERIFICATION,
+        self::STATUS_AWAITING_CLIENT_DATE_RESPONSE => ActionReminder::KIND_DATE_RESPONSE,
+    ];
 
     // ==================== RELATIONSHIPS ====================
 
@@ -938,6 +983,19 @@ class ServiceRequest extends Model
     public function scopeAdminAssisted($query)
     {
         return $query->where('submission_mode', self::SUBMISSION_MODE_ADMIN_PROXY);
+    }
+
+    /**
+     * Requests the office was alerted about that nobody has acted on yet: still
+     * pending, not quoted or declined, and with no PM or technician on them.
+     */
+    public function scopeAwaitingOfficeAction($query)
+    {
+        return $query->whereNotNull('office_alerted_at')
+            ->where('status', self::STATUS_PENDING)
+            ->where('rfq_status', self::RFQ_STATUS_PENDING)
+            ->whereNull('assigned_pm_id')
+            ->whereNull('technician_id');
     }
 
     /**

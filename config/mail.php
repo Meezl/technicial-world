@@ -129,4 +129,16 @@ return [
 
     'office_archive' => env('MAIL_OFFICE_ARCHIVE', 'info@technicianworld.co.ke'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | New Request Alerts
+    |--------------------------------------------------------------------------
+    |
+    | The shared inbox told about every new client request alongside the admins
+    | and PMs, and reminded every two hours until somebody picks it up.
+    |
+    */
+
+    'new_request_inbox' => env('MAIL_NEW_REQUEST_INBOX', 'info@technicianworld.co.ke'),
+
 ];

@@ -575,6 +575,9 @@ Route::middleware(['auth', 'role:technician'])->group(function () {
     Route::post('/technician/profile/withdraw-changes', [\App\Http\Controllers\TechnicianController::class, 'withdrawPendingProfileChanges'])->name('technician.profile.withdraw-changes');
     Route::post('/technician/availability', [\App\Http\Controllers\TechnicianController::class, 'updateAvailability'])->name('technician.availability');
     Route::post('/technician/jobs/{serviceRequest}/status', [\App\Http\Controllers\TechnicianController::class, 'updateJobStatus'])->name('technician.jobs.status');
+    // Answering an assignment.
+    Route::post('/technician/assignments/{jobAssignment}/accept', [\App\Http\Controllers\TechnicianController::class, 'acceptAssignment'])->name('technician.assignments.accept');
+    Route::post('/technician/assignments/{jobAssignment}/decline', [\App\Http\Controllers\TechnicianController::class, 'declineAssignment'])->name('technician.assignments.decline');
     Route::post('/technician/tools/{tool}/return', [\App\Http\Controllers\TechnicianController::class, 'returnTool'])->name('technician.tools.return');
     // Technician hands PPE (stock) back themselves, against their own issue.
     Route::post('/technician/tool-issuances/{toolIssuance}/return', [\App\Http\Controllers\TechnicianController::class, 'returnToolIssuance'])->name('technician.tool-issuances.return');
