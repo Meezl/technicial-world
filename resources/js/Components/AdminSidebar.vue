@@ -56,44 +56,35 @@ const baseItems = [
 // reach main before the journey they set up exists. The routes 404 while the
 // module is off; this keeps the entry out of the menu to match, so nobody
 // clicks their way into a dead end.
-const corporateItems = [
-    {
-        key: 'organisations',
-        href: '/admin/organisations',
-        icon: 'fas fa-building',
-        label: 'Corporate Accounts',
-        caption: 'Management companies and properties',
-    },
-    {
-        key: 'corporate-invoices',
-        href: '/admin/corporate-invoices',
-        icon: 'fas fa-file-invoice',
-        label: 'Corporate Invoicing',
-        caption: 'In-trays, dispatch and eTIMS',
-    },
-    {
-        key: 'corporate-settlements',
-        href: '/admin/corporate-settlements',
-        icon: 'fas fa-money-check-alt',
-        label: 'Corporate Payments',
-        caption: 'Confirm payments and tax certificates',
-    },
-    {
-        key: 'rates',
-        href: '/admin/rates',
-        icon: 'fas fa-list-ol',
-        label: 'Rate Schedules',
-        caption: 'The catalogue quotations price from',
-    },
-]
+//
+// One group rather than four loose entries, placed directly under RFQ
+// Management. The first version slotted four items between Users and Jobs —
+// the middle of a twenty-item list — and on UAT they sat just above wherever
+// the sidebar happened to be scrolled, which read as the module not having
+// been deployed at all. A labelled group near the top is visible without
+// scrolling and says what the four screens have in common.
+const corporateGroup = {
+    key: 'property-management',
+    href: '/admin/organisations',
+    icon: 'fas fa-building',
+    label: 'Property Management',
+    caption: 'Corporate accounts, billing and rates',
+    // Child keys match the current-page values the screens already pass, so
+    // the group highlights whichever of them is open.
+    children: [
+        { key: 'organisations', href: '/admin/organisations', label: 'Corporate Accounts', caption: 'Companies, properties and people' },
+        { key: 'corporate-invoices', href: '/admin/corporate-invoices', label: 'Invoicing', caption: 'In-trays, dispatch and eTIMS' },
+        { key: 'corporate-settlements', href: '/admin/corporate-settlements', label: 'Payments', caption: 'Confirm payments and tax certificates' },
+        { key: 'rates', href: '/admin/rates', label: 'Rate Schedules', caption: 'The catalogue quotations price from' },
+    ],
+}
 
 const navItems = computed(() => {
     if (!corporateEnabled.value) return baseItems
 
-    // Placed next to Users: both answer "who are we dealing with".
     const items = [...baseItems]
-    const at = items.findIndex(i => i.key === 'users')
-    items.splice(at === -1 ? items.length : at + 1, 0, ...corporateItems)
+    const at = items.findIndex(i => i.key === 'rfq')
+    items.splice(at === -1 ? 1 : at + 1, 0, corporateGroup)
     return items
 })
 </script>
