@@ -3819,9 +3819,44 @@ const progressLabel = computed(() => {
     return 'Work has not started yet.'
 })
 
+// What a technician can be filtered by is what their profile actually says.
+// `specialization` is the required field the admin onboarding form writes, and
+// it holds a service-category name ("Painting & Decorating"). `trade` is the
+// older lowercase key ("painter") that only self-signup leads carry, with
+// `trades` as its multi-trade list. Reading `trade` alone — as this did — left
+// the dropdown offering the one or two lead-sourced trades while the picker
+// below it listed every technician on the books, so the only way to find
+// anyone was to type their name. Specialisation wins where it is set, so the
+// same trade never appears twice under two spellings.
+const technicianTradeLabels = (tech) => {
+    const specialization = String(tech?.specialization ?? '').trim()
+    const raw = specialization
+        ? [specialization]
+        : [tech?.trade, ...(Array.isArray(tech?.trades) ? tech.trades : [])]
+
+    const byKey = new Map()
+    raw.forEach((value) => {
+        const label = String(value ?? '').trim()
+        if (!label) return
+        const key = label.toLowerCase()
+        // Keep the richer spelling when one profile carries both cases.
+        const existing = byKey.get(key)
+        if (!existing || (existing === key && label !== key)) byKey.set(key, label)
+    })
+
+    return [...byKey.values()]
+}
+
 const availableTrades = computed(() => {
-    const trades = new Set(props.technicians.map(t => t.trade).filter(Boolean))
-    return [...trades].sort()
+    const byKey = new Map()
+    props.technicians.forEach((tech) => {
+        technicianTradeLabels(tech).forEach((label) => {
+            const key = label.toLowerCase()
+            const existing = byKey.get(key)
+            if (!existing || (existing === key && label !== key)) byKey.set(key, label)
+        })
+    })
+    return [...byKey.values()].sort((a, b) => a.localeCompare(b))
 })
 
 const milestoneAssignedTechnicians = computed(() => {
@@ -3908,9 +3943,12 @@ const onMilestoneAllocationTechnicianChange = (index) => {
 const sortedTechnicians = computed(() => {
     let list = [...props.technicians]
 
-    // Filter by trade
+    // Filter by trade — matched against every trade the profile declares,
+    // case-insensitively, so a lead's "painting" and an onboarded technician's
+    // "Painting & Decorating" both answer the same option.
     if (techFilterTrade.value) {
-        list = list.filter(t => t.trade === techFilterTrade.value)
+        const wanted = techFilterTrade.value.toLowerCase()
+        list = list.filter(t => technicianTradeLabels(t).some(label => label.toLowerCase() === wanted))
     }
 
     // Filter by availability status

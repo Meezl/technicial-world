@@ -186,8 +186,10 @@
                                 <option value="">All Specializations</option>
                                 <!-- Show every active service category, not just those already
                                      covered by a registered technician — so admin can search
-                                     for a trade we don't yet have anyone for. -->
-                                <option v-for="cat in activeServiceCategories" :key="cat.id" :value="cat.name">{{ cat.name }}</option>
+                                     for a trade we don't yet have anyone for. Specialisations
+                                     held by technicians but no longer offered are listed after
+                                     them, so nobody is unreachable by any filter. -->
+                                <option v-for="name in specializationFilterOptions" :key="name" :value="name">{{ name }}</option>
                             </select>
                         </label>
                         <label class="filter-field">
@@ -986,6 +988,17 @@ const uniqueSpecializations = computed(() => {
 const activeServiceCategories = computed(() =>
     props.serviceCategories.filter(c => c.is_active),
 )
+
+// The filter offers every live category plus any specialisation a technician
+// actually carries that is not one of them (a retired category, or free text
+// from before the categories were tidied). Without the second group those
+// technicians match no option at all and can only be found by name.
+const specializationFilterOptions = computed(() => {
+    const names = activeServiceCategories.value.map(c => c.name)
+    const known = new Set(names)
+    const extras = uniqueSpecializations.value.filter(s => !known.has(s))
+    return [...names, ...extras]
+})
 
 // Options for the Specialization dropdown in the technician form. Creating a
 // technician offers the live categories; editing offers every category —
