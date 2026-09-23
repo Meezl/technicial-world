@@ -370,6 +370,12 @@ class AdminDashboardController extends Controller
         return Inertia::render('Admin/JobDetails', [
             'job' => $job,
             'technicians' => $technicians,
+            // The trade filter on every technician picker is the service
+            // category list, not whatever text the technicians happen to
+            // carry — so the office filters by the same trades it sells.
+            'serviceCategories' => \App\Models\ServiceCategory::where('is_active', true)
+                ->orderBy('name')
+                ->pluck('name'),
             'budgetSummary' => $budgetSummary,
             // Kinds for the document upload form, and which of them a
             // technician on the job is allowed to see once shared — so the

@@ -2724,6 +2724,11 @@ const props = defineProps({
         type: Array,
         default: () => []
     },
+    // Active service category names — the trade filter's option list.
+    serviceCategories: {
+        type: Array,
+        default: () => []
+    },
     budgetSummary: {
         type: Object,
         default: null
@@ -3819,15 +3824,17 @@ const progressLabel = computed(() => {
     return 'Work has not started yet.'
 })
 
-// What a technician can be filtered by is what their profile actually says.
-// `specialization` is the required field the admin onboarding form writes, and
-// it holds a service-category name ("Painting & Decorating"). `trade` is the
-// older lowercase key ("painter") that only self-signup leads carry, with
-// `trades` as its multi-trade list. Reading `trade` alone — as this did — left
-// the dropdown offering the one or two lead-sourced trades while the picker
-// below it listed every technician on the books, so the only way to find
-// anyone was to type their name. Specialisation wins where it is set, so the
-// same trade never appears twice under two spellings.
+// The trade filter is the service category list — the same trades the office
+// sells and the Technicians page filters by — and each option collects the
+// technicians registered under it. Building the list from technician records
+// instead put every historical spelling in the dropdown ("Carpentry" beside
+// "Carpentry & Woodwork", "Interior Painter" beside "Painting & Decorating").
+//
+// A technician's own trade text is still what places them in a category:
+// `specialization` is the field the admin onboarding form writes, with the
+// older lowercase `trade` key and its `trades` list as the fallback for
+// profiles that came in through the public lead form and have no
+// specialization.
 const technicianTradeLabels = (tech) => {
     const specialization = String(tech?.specialization ?? '').trim()
     const raw = specialization
@@ -3848,15 +3855,25 @@ const technicianTradeLabels = (tech) => {
 }
 
 const availableTrades = computed(() => {
-    const byKey = new Map()
+    const categories = props.serviceCategories
+        .map(name => String(name ?? '').trim())
+        .filter(Boolean)
+    const known = new Set(categories.map(name => name.toLowerCase()))
+
+    // Anything a technician still carries that is not an offered category —
+    // a retired trade, or free text predating the dropdown. Listed after the
+    // categories so those technicians are never outside every filter, and it
+    // empties itself as the data is cleaned up.
+    const leftovers = new Map()
     props.technicians.forEach((tech) => {
         technicianTradeLabels(tech).forEach((label) => {
             const key = label.toLowerCase()
-            const existing = byKey.get(key)
-            if (!existing || (existing === key && label !== key)) byKey.set(key, label)
+            if (known.has(key) || leftovers.has(key)) return
+            leftovers.set(key, label)
         })
     })
-    return [...byKey.values()].sort((a, b) => a.localeCompare(b))
+
+    return [...categories, ...[...leftovers.values()].sort((a, b) => a.localeCompare(b))]
 })
 
 const milestoneAssignedTechnicians = computed(() => {

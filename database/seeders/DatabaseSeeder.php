@@ -170,7 +170,7 @@ class DatabaseSeeder extends Seeder
             ['user_id' => $techUser1->id],
             [
                 'technician_id' => 'TECH-001',
-                'specialization' => 'Master Electrician',
+                'specialization' => 'Electrical Services',
                 'trade' => 'electrician',
                 'location' => 'Nairobi',
                 'availability' => 'available',
@@ -191,7 +191,7 @@ class DatabaseSeeder extends Seeder
             ['user_id' => $techUser2->id],
             [
                 'technician_id' => 'TECH-002',
-                'specialization' => 'Senior Plumber',
+                'specialization' => 'Plumbing & Fitting',
                 'trade' => 'plumber',
                 'location' => 'Nairobi',
                 'availability' => 'available',
@@ -212,7 +212,7 @@ class DatabaseSeeder extends Seeder
             ['user_id' => $techUser3->id],
             [
                 'technician_id' => 'TECH-003',
-                'specialization' => 'Interior Painter',
+                'specialization' => 'Painting & Decorating',
                 'trade' => 'painter',
                 'location' => 'Nairobi',
                 'availability' => 'busy',
@@ -232,7 +232,7 @@ class DatabaseSeeder extends Seeder
             ['user_id' => $techUser4->id],
             [
                 'technician_id' => 'TECH-004',
-                'specialization' => 'Carpenter',
+                'specialization' => 'Carpentry & Woodwork',
                 'trade' => 'carpenter',
                 'location' => 'Mombasa',
                 'availability' => 'available',
