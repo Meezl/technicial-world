@@ -61,7 +61,7 @@ class TechnicianPerformanceSeeder extends Seeder
             [
                 'name' => 'John Excellence',
                 'email' => 'john.excellence@tech.com',
-                'specialization' => 'Electrical',
+                'specialization' => 'Electrical Services',
                 'availability' => 'available',
                 'location' => 'Nairobi',
                 'bio' => 'Highly experienced electrical technician with 10+ years in the field',
@@ -72,7 +72,7 @@ class TechnicianPerformanceSeeder extends Seeder
             [
                 'name' => 'Sarah Plumber',
                 'email' => 'sarah.plumber@tech.com',
-                'specialization' => 'Plumbing',
+                'specialization' => 'Plumbing & Fitting',
                 'availability' => 'available',
                 'location' => 'Mombasa',
                 'bio' => 'Expert plumber specializing in residential and commercial projects',
@@ -83,7 +83,7 @@ class TechnicianPerformanceSeeder extends Seeder
             [
                 'name' => 'Mike HVAC',
                 'email' => 'mike.hvac@tech.com',
-                'specialization' => 'HVAC',
+                'specialization' => 'HVAC Services',
                 'availability' => 'available',
                 'location' => 'Nairobi',
                 'bio' => 'HVAC specialist with focus on air conditioning systems',
@@ -94,7 +94,7 @@ class TechnicianPerformanceSeeder extends Seeder
             [
                 'name' => 'David Carpenter',
                 'email' => 'david.carpenter@tech.com',
-                'specialization' => 'Carpentry',
+                'specialization' => 'Carpentry & Woodwork',
                 'availability' => 'available',
                 'location' => 'Kisumu',
                 'bio' => 'Skilled carpenter specializing in custom furniture',

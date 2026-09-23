@@ -62,6 +62,17 @@ class MigrationSafetyTest extends TestCase
         '2026_06_09_101805_update_tool_requests_for_multi_tool' => 'Pre-dates this guard; already applied.',
         '2026_06_16_000000_dedupe_service_categories_and_add_aluminium_glass' => 'Pre-dates this guard; already applied.',
         '2026_08_04_000000_create_req_billing_milestones_table' => 'Pre-dates this guard; already applied.',
+
+        // Deliberate: both delete duplicate `service_categories` rows — two
+        // names for one trade ("Painting" beside "Painting & Decorating",
+        // "Carpentry" beside "Carpentry & Woodwork"). Nothing is lost that is
+        // not a duplicate: every `service_requests` row on a duplicate is
+        // re-pointed at the canonical category first, and only the now-unused
+        // row is removed. Deleting them is the point — while they exist,
+        // technicians are split across two spellings of the same trade and
+        // the office cannot filter for them.
+        '2026_09_23_000000_merge_painting_into_painting_and_decorating' => 'Deletes only duplicate category rows, after re-pointing their jobs.',
+        '2026_09_23_000001_merge_legacy_specializations_into_canonical_categories' => 'Deletes only duplicate category rows, after re-pointing their jobs.',
     ];
 
     public function test_no_migration_destroys_existing_data_on_the_way_up(): void
@@ -128,6 +139,14 @@ class MigrationSafetyTest extends TestCase
             '2026_08_05_000002_add_rejection_capacity_to_progress_reports',
             '2026_08_12_000000_normalize_completed_subtask_progress',
             '2026_08_12_000001_add_office_pipeline_to_progress_reports',
+
+            // Backfills reviewed: they rewrite `technicians.specialization`
+            // and `service_requests.service_category_id` from a duplicate
+            // trade name onto the canonical one. The values they overwrite
+            // are exactly the ones being merged away, and both are idempotent
+            // — a second run matches nothing.
+            '2026_09_23_000000_merge_painting_into_painting_and_decorating',
+            '2026_09_23_000001_merge_legacy_specializations_into_canonical_categories',
         ];
 
         $this->assertSame(
