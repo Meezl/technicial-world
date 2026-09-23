@@ -186,6 +186,18 @@ class ProgressService
                 'released_by' => $pmId,
             ]);
 
+            // A management company gets one report a day covering every job,
+            // not one per job as it is released. Releasing still does the same
+            // thing — the reports become the client's to see — but the telling
+            // is batched by CorporateDigestService, which is the whole point:
+            // a company with a dozen buildings under way would otherwise get a
+            // dozen emails a day and read none of them.
+            //
+            // Retail is unchanged: one email per release, as before.
+            if ($serviceRequest->isCorporate()) {
+                return $reports->count();
+            }
+
             // One email, after the response is sent, carrying the whole batch.
             $reportIds = $reports->pluck('id')->all();
             $srId = $serviceRequest->id;

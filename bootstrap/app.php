@@ -28,6 +28,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'role' => \App\Http\Middleware\RoleMiddleware::class,
             'verified.grace' => \App\Http\Middleware\VerifyAccountWithinGracePeriod::class,
+            // Property Management & Corporate module. Off by default; see
+            // config/corporate.php.
+            'corporate' => \App\Http\Middleware\EnsureCorporateModuleEnabled::class,
         ]);
 
         // Safaricom Daraja webhooks have no CSRF token — exempt them.

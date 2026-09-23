@@ -13,6 +13,10 @@ class ServiceRequest extends Model
         'request_id',
         'job_reference',
         'user_id',
+        'segment',
+        'client_organisation_id',
+        'property_id',
+        'raised_by_member_id',
         'assigned_pm_id',
         'service_category_id',
         'technician_id',
@@ -45,10 +49,17 @@ class ServiceRequest extends Model
         'quote_last_revised_at',
         'down_payment_requested',
         'quote_notes',
+        'prices_visible_to_requester',
+        'quote_signed_by',
+        'quote_signature_path',
+        'quote_signed_at',
+        'rate_schedule_id',
         'expected_duration_days',
         'commencement_at',
         'target_completion_at',
         'contact_time_minutes',
+        'office_alerted_at',
+        'office_reminder_count',
         'quote_materials_file_path',
         'quote_materials_file_paths',
         'rejection_reason',
@@ -109,6 +120,8 @@ class ServiceRequest extends Model
         'started_at' => 'datetime',
         'assigned_at' => 'datetime',
         'commencement_gated' => 'boolean',
+        'prices_visible_to_requester' => 'boolean',
+        'quote_signed_at' => 'datetime',
         'completed_date' => 'datetime',
         'client_confirmation_date' => 'datetime',
         'client_verification_sent_at' => 'datetime',
@@ -127,6 +140,8 @@ class ServiceRequest extends Model
         'rating' => 'decimal:1',
         'technician_arrived' => 'boolean',
         'has_sub_tasks' => 'boolean',
+        'office_alerted_at' => 'datetime',
+        'office_reminder_count' => 'integer',
         'client_confirmed_completion' => 'boolean',
     ];
 
@@ -170,6 +185,29 @@ class ServiceRequest extends Model
     const RFQ_STATUS_QUOTED = 'quoted';
     const RFQ_STATUS_APPROVED = 'approved';
     const RFQ_STATUS_REJECTED = 'rejected';
+
+    // ==================== SEGMENTS ====================
+
+    /**
+     * Which module owns this request.
+     *
+     * Retail is the day-to-day client: a per-job deposit clears before the
+     * crew is assigned and milestone payments settle silently. Corporate is a
+     * property management company: a standing float unlocks the work, invoices
+     * batch until the float drops through a threshold, and the client is an
+     * organisation with its own approval hierarchy.
+     *
+     * The difference is commercial, not operational — everything from
+     * assignment onwards is the same pipeline. See
+     * PROPERTY_MANAGEMENT_MODULE_PLAN.md.
+     */
+    const SEGMENT_RETAIL = 'retail';
+    const SEGMENT_CORPORATE = 'corporate';
+
+    const SEGMENTS = [
+        self::SEGMENT_RETAIL => 'Retail',
+        self::SEGMENT_CORPORATE => 'Property Management & Corporate',
+    ];
 
     /**
      * All valid statuses for display.
@@ -219,11 +257,173 @@ class ServiceRequest extends Model
         return 'REQ-' . now()->format('Ymd') . '-' . strtoupper(substr(uniqid(), -4));
     }
 
+    // ==================== INVARIANTS ====================
+
+    /**
+     * A request cannot be half corporate.
+     *
+     * Every corporate document — quotation, variation, invoice — is stamped
+     * with the property it was raised against, and the float that pays for the
+     * work belongs to the organisation. A corporate request missing either is
+     * not a request with a gap in it; it is a request that cannot be quoted,
+     * approved, billed or reported on, and the failure would surface much
+     * later as a blank field on an invoice somebody has already posted.
+     *
+     * The mirror rule matters just as much: a retail request carrying an
+     * organisation would be picked up by the corporate float and billed
+     * against a client who never agreed to one.
+     *
+     * A LogicException rather than a validation error on purpose. User input
+     * is validated at the controller; anything reaching here with the two out
+     * of step is a bug in our own code, and failing loudly at the write is how
+     * it gets found in a test rather than in a client's accounts.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (self $request) {
+            if ($request->isCorporate()) {
+                if (!$request->client_organisation_id) {
+                    throw new \LogicException(
+                        'A corporate service request must belong to a client organisation.'
+                    );
+                }
+            } elseif ($request->client_organisation_id || $request->property_id || $request->raised_by_member_id) {
+                throw new \LogicException(
+                    'A retail service request cannot carry corporate account details. '
+                    . 'Set segment to "' . self::SEGMENT_CORPORATE . '" first.'
+                );
+            }
+
+            // Only on change: this runs on every status transition, and a
+            // lookup per save for a value that has not moved is wasted.
+            if ($request->isDirty('property_id') && $request->property_id) {
+                $belongs = Property::where('id', $request->property_id)
+                    ->where('client_organisation_id', $request->client_organisation_id)
+                    ->exists();
+
+                if (!$belongs) {
+                    throw new \LogicException(
+                        'The property does not belong to this request\'s client organisation.'
+                    );
+                }
+            }
+
+            if (($request->isDirty('raised_by_member_id') || $request->isDirty('user_id')) && $request->raised_by_member_id) {
+                $member = OrganisationMember::find($request->raised_by_member_id);
+
+                if (!$member || $member->client_organisation_id !== $request->client_organisation_id) {
+                    throw new \LogicException(
+                        'The requester is not a member of this request\'s client organisation.'
+                    );
+                }
+
+                // The membership and the account must name the same person.
+                // They drift when a request is reassigned to another caretaker
+                // and only one of the two is moved — after which the request
+                // sits on one person's dashboard while the paperwork credits
+                // another. Reassignment moves both; this is what makes sure of
+                // it.
+                if ((int) $member->user_id !== (int) $request->user_id) {
+                    throw new \LogicException(
+                        'The requester membership does not belong to the account this request is filed under.'
+                    );
+                }
+            }
+        });
+
+        // Start (or stop) the 12-hour client reminders as the job moves in and
+        // out of states that wait on the client. See rfq:remind-actions.
+        static::created(function (self $request) {
+            if ($request->rfq_status === self::RFQ_STATUS_QUOTED) {
+                ActionReminder::openFor($request, ActionReminder::KIND_QUOTE_DECISION);
+            }
+            foreach (self::CLIENT_WAITING_STATUSES as $status => $kind) {
+                if ($request->status === $status) {
+                    ActionReminder::openFor($request, $kind);
+                }
+            }
+        });
+
+        static::updated(function (self $request) {
+            if ($request->wasChanged('rfq_status') || $request->wasChanged('quote_revision_count')) {
+                $request->rfq_status === self::RFQ_STATUS_QUOTED
+                    ? ActionReminder::openFor($request, ActionReminder::KIND_QUOTE_DECISION)
+                    : ActionReminder::closeFor($request, ActionReminder::KIND_QUOTE_DECISION);
+            }
+
+            if ($request->wasChanged('status')) {
+                foreach (self::CLIENT_WAITING_STATUSES as $status => $kind) {
+                    $request->status === $status
+                        ? ActionReminder::openFor($request, $kind)
+                        : ActionReminder::closeFor($request, $kind);
+                }
+
+                // A closed job is not waiting on anybody, whatever the quote
+                // column still says.
+                if (in_array($request->status, [self::STATUS_CLOSED, self::STATUS_CANCELLED, self::STATUS_ARCHIVED], true)) {
+                    ActionReminder::closeFor($request, ActionReminder::KIND_QUOTE_DECISION);
+                }
+            }
+        });
+    }
+
+    /** Job statuses that wait on the client, and the reminder each one opens. */
+    public const CLIENT_WAITING_STATUSES = [
+        self::STATUS_AWAITING_CLIENT_VERIFICATION => ActionReminder::KIND_COMPLETION_VERIFICATION,
+        self::STATUS_AWAITING_CLIENT_DATE_RESPONSE => ActionReminder::KIND_DATE_RESPONSE,
+    ];
+
     // ==================== RELATIONSHIPS ====================
 
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    /** The management company this request belongs to. Null for retail. */
+    public function organisation()
+    {
+        return $this->belongsTo(ClientOrganisation::class, 'client_organisation_id');
+    }
+
+    /** The building the work is in. Null for retail. */
+    public function property()
+    {
+        return $this->belongsTo(Property::class);
+    }
+
+    /**
+     * The membership that raised it — the caretaker, not their login.
+     *
+     * Held as the membership so the request can still say who asked and in
+     * what capacity after that person has left the company.
+     */
+    public function raisedByMember()
+    {
+        return $this->belongsTo(OrganisationMember::class, 'raised_by_member_id');
+    }
+
+    /** The client's own sign-off chain. Empty for retail. */
+    public function corporateApprovals()
+    {
+        return $this->hasMany(CorporateApproval::class)->orderBy('sequence');
+    }
+
+    /** The bill this job raised when it closed. Corporate only. */
+    public function corporateInvoice()
+    {
+        return $this->hasOne(Invoice::class)->where('status', '!=', Invoice::STATUS_VOID);
+    }
+
+    /** The catalogue lines this job was composed from. */
+    public function items()
+    {
+        return $this->hasMany(ServiceRequestItem::class)->orderBy('sort_order')->orderBy('id');
+    }
+
+    public function rateSchedule()
+    {
+        return $this->belongsTo(RateSchedule::class);
     }
 
     public function assignedPm()
@@ -683,6 +883,88 @@ class ServiceRequest extends Model
 
     // ==================== SCOPES ====================
 
+    /**
+     * Retail requests only.
+     *
+     * The default for every list that existed before the corporate module.
+     * Written as an explicit filter rather than a global scope on purpose: a
+     * global scope would silently hide corporate rows from reports and admin
+     * tooling that legitimately want to see everything, and the bug that
+     * causes is invisible.
+     */
+    public function scopeRetail($query)
+    {
+        return $query->where('segment', self::SEGMENT_RETAIL);
+    }
+
+    /** Property management and corporate requests only. */
+    public function scopeCorporate($query)
+    {
+        return $query->where('segment', self::SEGMENT_CORPORATE);
+    }
+
+    /**
+     * Restrict to one segment, or to none when `all` is asked for.
+     *
+     * For screens that offer a segment filter rather than assuming one.
+     */
+    public function scopeInSegment($query, ?string $segment)
+    {
+        if ($segment === null || $segment === 'all' || !array_key_exists($segment, self::SEGMENTS)) {
+            return $query;
+        }
+
+        return $query->where('segment', $segment);
+    }
+
+    /**
+     * Everything one client-side person may see.
+     *
+     * The query-shaped twin of isVisibleToClient(). Both exist because a list
+     * and a single-record check that disagree is how somebody ends up with a
+     * row on their dashboard they get a 403 on when they click it.
+     */
+    public function scopeVisibleToClient($query, User $user)
+    {
+        $member = $user->organisationMembership()->where('is_active', true)->first();
+
+        $wideView = $member && in_array($member->position, self::ORGANISATION_WIDE_POSITIONS, true);
+
+        if (!$wideView) {
+            return $query->where('user_id', $user->id);
+        }
+
+        return $query->where(function ($q) use ($user, $member) {
+            $q->where('user_id', $user->id)
+                ->orWhere(function ($q) use ($member) {
+                    $q->where('segment', self::SEGMENT_CORPORATE)
+                        ->where('client_organisation_id', $member->client_organisation_id);
+                });
+        });
+    }
+
+    /** Requests for one management company. */
+    public function scopeForOrganisation($query, int $organisationId)
+    {
+        return $query->where('client_organisation_id', $organisationId);
+    }
+
+    /**
+     * Requests in one building.
+     *
+     * The brief asks for the job lists to filter by property name; this is
+     * that filter. A null or non-numeric value is a no-op rather than an empty
+     * result, for the same reason `inSegment` is.
+     */
+    public function scopeForProperty($query, $propertyId)
+    {
+        if (blank($propertyId) || !is_numeric($propertyId)) {
+            return $query;
+        }
+
+        return $query->where('property_id', (int) $propertyId);
+    }
+
     public function scopePendingRFQ($query)
     {
         return $query->where('rfq_status', self::RFQ_STATUS_PENDING);
@@ -701,6 +983,19 @@ class ServiceRequest extends Model
     public function scopeAdminAssisted($query)
     {
         return $query->where('submission_mode', self::SUBMISSION_MODE_ADMIN_PROXY);
+    }
+
+    /**
+     * Requests the office was alerted about that nobody has acted on yet: still
+     * pending, not quoted or declined, and with no PM or technician on them.
+     */
+    public function scopeAwaitingOfficeAction($query)
+    {
+        return $query->whereNotNull('office_alerted_at')
+            ->where('status', self::STATUS_PENDING)
+            ->where('rfq_status', self::RFQ_STATUS_PENDING)
+            ->whereNull('assigned_pm_id')
+            ->whereNull('technician_id');
     }
 
     /**
@@ -994,6 +1289,85 @@ class ServiceRequest extends Model
     }
 
     // ==================== HELPERS ====================
+
+    /**
+     * How this request is referenced on paper.
+     *
+     * A revision keeps the request's own number and gains an R suffix, so
+     * REQ-ABC123 and REQ-ABC123/R2 are visibly the same job at two prices.
+     * Derived rather than stored: the revision counter is already the single
+     * source of truth, and a second copy of it would eventually disagree.
+     */
+    public function getQuoteReferenceAttribute(): string
+    {
+        $revision = (int) ($this->quote_revision_count ?? 0);
+
+        return $revision > 0
+            ? sprintf('%s/R%d', $this->request_id, $revision)
+            : (string) $this->request_id;
+    }
+
+    /**
+     * May this client-side person see this request at all?
+     *
+     * Retail is unchanged: your own requests and nothing else. Corporate adds
+     * one rule — the people who sign work off, and the people who pay for it,
+     * see everything in their own company. A caretaker still sees only what
+     * they raised, which is what the brief asks for: the other juniors do not
+     * need to see it unless the senior manager hands it to them.
+     *
+     * Deliberately not a Gate: it is called from list queries as well as from
+     * single-record checks, and the two have to agree.
+     */
+    public function isVisibleToClient(?User $user): bool
+    {
+        if (!$user) {
+            return false;
+        }
+
+        if ((int) $this->user_id === (int) $user->id) {
+            return true;
+        }
+
+        if (!$this->isCorporate() || !$this->client_organisation_id) {
+            return false;
+        }
+
+        $member = $user->relationLoaded('organisationMembership')
+            ? $user->organisationMembership
+            : $user->organisationMembership()->first();
+
+        return $member
+            && $member->is_active
+            && (int) $member->client_organisation_id === (int) $this->client_organisation_id
+            && in_array($member->position, self::ORGANISATION_WIDE_POSITIONS, true);
+    }
+
+    /**
+     * Positions that see the whole company's work rather than only their own.
+     *
+     * Accounts is here because settling an invoice means seeing the jobs it
+     * covers; a requester is not, because that is the whole point of the rule.
+     */
+    const ORGANISATION_WIDE_POSITIONS = [
+        OrganisationMember::POSITION_VERIFIER,
+        OrganisationMember::POSITION_APPROVER,
+        OrganisationMember::POSITION_ACCOUNTS,
+    ];
+
+    public function isCorporate(): bool
+    {
+        return $this->segment === self::SEGMENT_CORPORATE;
+    }
+
+    public function isRetail(): bool
+    {
+        // Null-safe rather than a strict comparison: a request built in memory
+        // has no attributes from the database yet, and the column default only
+        // lands on insert. Treating "not corporate" as retail keeps a
+        // half-built model on the path it will actually take once saved.
+        return !$this->isCorporate();
+    }
 
     public function recalculateProgress()
     {

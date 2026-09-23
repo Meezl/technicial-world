@@ -51,10 +51,34 @@ class VariationOrderController extends Controller
 
             // Raise and send in one step.
             'send_now' => 'nullable|boolean',
+
+            // Pricing a card the client's manager has already agreed to.
+            'variation_card_id' => [
+                'nullable',
+                Rule::exists('variation_cards', 'id')
+                    ->where('service_request_id', $serviceRequest->id)
+                    ->where('status', \App\Models\VariationCard::STATUS_APPROVED),
+            ],
+
+            // Re-pricing one the client sent back. The revision keeps the
+            // variation's own number and gains an R suffix.
+            'supersedes_id' => [
+                'nullable',
+                Rule::exists('variation_orders', 'id')->where('service_request_id', $serviceRequest->id),
+            ],
         ]);
 
         try {
             $vo = $this->variations->create($serviceRequest, $data, $request->user());
+
+            // Binding the card is what stops the same agreed scope being
+            // priced twice onto the contract.
+            if (!empty($data['variation_card_id'])) {
+                app(\App\Services\VariationCardService::class)->attachQuotation(
+                    \App\Models\VariationCard::findOrFail($data['variation_card_id']),
+                    $vo
+                );
+            }
 
             if ($request->boolean('send_now')) {
                 $this->variations->sendToClient($vo, $request->user());

@@ -12,13 +12,72 @@ use Illuminate\Support\Facades\Notification;
 class NotificationService
 {
     /**
-     * Notify admins and PMs about a new RFQ.
+     * A client has just raised a request: confirm it to them, and alert the
+     * admins, the PMs and the office inbox.
+     *
+     * Stamps office_alerted_at, which is what makes the request eligible for
+     * the two-hourly reminders in `rfq:remind-unactioned`.
      */
     public function notifyNewRfq(ServiceRequest $serviceRequest): void
     {
-        $admins = User::where('role', User::ROLE_ADMIN)->get();
-        foreach ($admins as $admin) {
-            $admin->notify(new \App\Notifications\NewServiceRequestNotification($serviceRequest));
+        $serviceRequest->loadMissing(['serviceCategory', 'user']);
+
+        if ($serviceRequest->user?->email) {
+            try {
+                \Illuminate\Support\Facades\Mail::to($serviceRequest->user->email)
+                    ->send(new \App\Mail\ServiceRequestReceived($serviceRequest));
+            } catch (\Throwable $e) {
+                // The office still needs to hear about it even if the client's
+                // confirmation bounced.
+                \Illuminate\Support\Facades\Log::warning('ServiceRequestReceived email failed', [
+                    'service_request_id' => $serviceRequest->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $this->alertOfficeAboutRfq($serviceRequest, 0);
+
+        $serviceRequest->forceFill(['office_alerted_at' => now()])->saveQuietly();
+    }
+
+    /**
+     * Send the new-request alert (or the Nth reminder of it) to every active
+     * admin and PM, plus the office inbox.
+     */
+    public function alertOfficeAboutRfq(ServiceRequest $serviceRequest, int $reminder): void
+    {
+        $notification = new \App\Notifications\NewServiceRequestNotification($serviceRequest, $reminder);
+
+        $staff = User::whereIn('role', [User::ROLE_ADMIN, User::ROLE_PROJECT_MANAGER])
+            ->where('is_active', true)
+            ->get();
+
+        foreach ($staff as $user) {
+            try {
+                $user->notify($notification);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('New RFQ alert failed', [
+                    'service_request_id' => $serviceRequest->id,
+                    'user_id' => $user->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $inbox = trim((string) config('mail.new_request_inbox'));
+
+        // Skip the inbox if it already belongs to one of the staff above, so it
+        // does not get the same mail twice.
+        if ($inbox !== '' && !$staff->contains(fn ($u) => strcasecmp((string) $u->email, $inbox) === 0)) {
+            try {
+                Notification::route('mail', $inbox)->notify($notification);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('New RFQ inbox alert failed', [
+                    'service_request_id' => $serviceRequest->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
     }
 

@@ -36,6 +36,22 @@ class PaymentRequest extends Model
         'paid_at' => 'datetime',
     ];
 
+    protected static function booted(): void
+    {
+        // The client is reminded every 12 hours until it is paid or withdrawn.
+        static::created(function (self $paymentRequest) {
+            if ($paymentRequest->status === self::STATUS_PENDING) {
+                ActionReminder::openFor($paymentRequest, ActionReminder::KIND_PAYMENT);
+            }
+        });
+
+        static::updated(function (self $paymentRequest) {
+            if ($paymentRequest->wasChanged('status') && $paymentRequest->status !== self::STATUS_PENDING) {
+                ActionReminder::closeFor($paymentRequest, ActionReminder::KIND_PAYMENT);
+            }
+        });
+    }
+
     const STATUS_PENDING = 'pending';
     const STATUS_PAID = 'paid';
     const STATUS_CANCELLED = 'cancelled';
@@ -44,6 +60,9 @@ class PaymentRequest extends Model
     const METHOD_CHEQUE = 'cheque';
     const METHOD_CASH = 'cash';
     const METHOD_BANK_DEPOSIT = 'bank_deposit';
+
+    /** Paid outside M-Pesa: the client records it, then the office confirms. */
+    const OFFLINE_METHODS = [self::METHOD_CHEQUE, self::METHOD_CASH, self::METHOD_BANK_DEPOSIT];
 
     /**
      * Generate a unique payment request ID.

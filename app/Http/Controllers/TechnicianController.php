@@ -62,6 +62,11 @@ class TechnicianController extends Controller
             $decorate = function ($job) use ($jobEarnings, $technician, $postableCounts) {
                 $job->setAttribute('compensation_summary', $jobEarnings->get($job->id));
                 $job->setAttribute('postable_report_count', (int) ($postableCounts[$job->id] ?? 0));
+                $job->setAttribute('awaiting_response', $job->jobAssignments()
+                    ->where('technician_id', $technician->id)
+                    ->where('status', \App\Models\JobAssignment::STATUS_PENDING)
+                    ->whereHas('actionReminders', fn ($q) => $q->whereNull('resolved_at'))
+                    ->exists());
                 return $this->technicianSafeJob($job, $technician->id);
             };
 
@@ -232,6 +237,9 @@ class TechnicianController extends Controller
             'isLeadTechnician' => $serviceRequest->isLeadTechnician($technician->id),
             'scope' => $this->jobScopeForTechnician($serviceRequest, $technician->id),
             'assignmentFiles' => $this->assignmentFilesFor($serviceRequest, $technician->id),
+            // Assignments on this job still waiting for this technician to
+            // accept or decline.
+            'pendingAssignments' => $this->pendingAssignmentsFor($serviceRequest, $technician->id),
             // Why the start buttons are unavailable, if they are. Sent as the
             // reason rather than a boolean so the technician is told what is
             // happening instead of finding a dead control — and deliberately
@@ -240,6 +248,70 @@ class TechnicianController extends Controller
                 ? null
                 : app(\App\Services\JobAuthorisationService::class)->commencementBlocker($serviceRequest),
         ]);
+    }
+
+    public function acceptAssignment(\App\Models\JobAssignment $jobAssignment)
+    {
+        $this->authorizeOwnAssignment($jobAssignment);
+
+        if (!$jobAssignment->isAwaitingResponse()) {
+            return back()->with('error', 'This assignment has already been answered.');
+        }
+
+        app(\App\Services\AssignmentResponseService::class)->accept($jobAssignment);
+
+        return back()->with('success', 'Assignment accepted.');
+    }
+
+    public function declineAssignment(Request $request, \App\Models\JobAssignment $jobAssignment)
+    {
+        $this->authorizeOwnAssignment($jobAssignment);
+
+        if (!$jobAssignment->isAwaitingResponse()) {
+            return back()->with('error', 'This assignment has already been answered.');
+        }
+
+        $data = $request->validate([
+            'reason' => 'required|string|min:5|max:1000',
+        ], [
+            'reason.required' => 'Tell the office why, so they can plan around it.',
+        ]);
+
+        app(\App\Services\AssignmentResponseService::class)->decline($jobAssignment, $data['reason']);
+
+        return redirect()->route('technician.dashboard')
+            ->with('success', 'Assignment declined. The office has been told so they can reassign it.');
+    }
+
+    private function authorizeOwnAssignment(\App\Models\JobAssignment $jobAssignment): void
+    {
+        $technician = auth()->user()->technician;
+
+        abort_unless($technician && (int) $jobAssignment->technician_id === (int) $technician->id, 403);
+    }
+
+    /**
+     * Only assignments made since technicians could answer them — the ones
+     * with a reminder opened. Every older assignment is also "pending", only
+     * because nothing could ever move it, and asking a technician to accept a
+     * job they finished months ago would be nonsense.
+     */
+    private function pendingAssignmentsFor(ServiceRequest $serviceRequest, int $technicianId): array
+    {
+        return $serviceRequest->jobAssignments()
+            ->with('subTask:id,title')
+            ->where('technician_id', $technicianId)
+            ->where('status', \App\Models\JobAssignment::STATUS_PENDING)
+            ->whereHas('actionReminders', fn ($q) => $q->whereNull('resolved_at'))
+            ->get()
+            ->map(fn ($assignment) => [
+                'id' => $assignment->id,
+                'role_on_job' => $assignment->role_on_job,
+                'sub_task_title' => $assignment->subTask?->title,
+                'expected_start' => $assignment->expected_start?->toDateTimeString(),
+                'assigned_at' => $assignment->created_at?->toDateTimeString(),
+            ])
+            ->all();
     }
 
     /**
@@ -288,6 +360,21 @@ class TechnicianController extends Controller
         'client_quote_approved_at',
         'proxy_quote_approved_by',
         'proxy_quote_approved_at',
+        // Rate-schedule quoting. Which price list a job was quoted from,
+        // whether we have opened the rates to the client, and our own
+        // signature on the quotation — all of it is the quotation, and none of
+        // it is a fact about the work.
+        //
+        // A technician does get the scope, the quantities and the location,
+        // but through QuotationComposerService::project(), which sends the
+        // lines that are theirs with the money stripped out.
+        'prices_visible_to_requester',
+        'quote_signed_by',
+        'quote_signature_path',
+        'quote_signed_at',
+        'rate_schedule_id',
+        'items',
+        'rateSchedule',
     ];
 
     private function technicianSafeJob(ServiceRequest $serviceRequest, int $technicianId): ServiceRequest
@@ -1049,6 +1136,9 @@ class TechnicianController extends Controller
                 );
             }
         }
+
+        // Getting on with the job answers the assignment.
+        app(\App\Services\AssignmentResponseService::class)->acceptAllFor($serviceRequest, $technician);
 
         if ($action === 'en_route') {
             $serviceRequest->update([

@@ -34,6 +34,21 @@ class JobAuthorisationService
      */
     public function assignmentBlocker(ServiceRequest $serviceRequest): ?string
     {
+        // Corporate work is unlocked by how much of the client's float is
+        // left, not by whether this job has been paid for. Checked before the
+        // approval rules below because it is a different question and can bite
+        // on a job that is perfectly well approved: the brief is explicit that
+        // below the threshold, requests still arrive but cannot be worked on.
+        //
+        // Placed in this shared blocker rather than at each call site for the
+        // reason the method comment already gives — the admin, PM and sub-task
+        // paths drifted apart the last time a rule lived in three places.
+        if ($serviceRequest->isCorporate()) {
+            if ($floatBlocker = app(DepositService::class)->staffingBlocker($serviceRequest)) {
+                return $floatBlocker;
+            }
+        }
+
         if ($this->isQuoteApproved($serviceRequest)) {
             return null;
         }

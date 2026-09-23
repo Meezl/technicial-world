@@ -23,3 +23,29 @@ Schedule::command('authorisations:sweep')
     ->hourly()
     ->withoutOverlapping()
     ->runInBackground();
+
+// One consolidated progress report per management company per day.
+//
+// Hourly rather than daily because each account chooses the hour its own day
+// ends at — the command sends only to the ones whose hour has come, and skips
+// any that already had today's. See CorporateDigestService::dueNow().
+Schedule::command('corporate:daily-reports')
+    ->hourly()
+    ->withoutOverlapping()
+    ->runInBackground();
+
+// Remind the office about new client requests nobody has acted on, every two
+// hours per request. The sweep runs often so each reminder lands close to its
+// two-hour mark; the command itself decides which requests are due.
+Schedule::command('rfq:remind-unactioned')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();
+
+// Remind clients about quotations, payments, sign-offs and dates waiting on
+// them, and technicians about assignments they have not answered — every 12
+// hours per item until it is done. Runs often so each lands near its mark.
+Schedule::command('reminders:send-actions')
+    ->everyThirtyMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();

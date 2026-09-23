@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\DB;
 
 /**
  * A signed, numbered change stacked on an approved quote.
@@ -17,7 +18,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class VariationOrder extends Model
 {
     protected $fillable = [
-        'vo_number', 'service_request_id', 'origin', 'status',
+        'vo_number', 'revision', 'base_number', 'supersedes_id', 'variation_card_id',
+        'service_request_id', 'origin', 'status',
         'materials_delta', 'labor_delta', 'transport_delta', 'net_amount',
         'reason', 'internal_notes', 'additional_days', 'is_client_visible',
         'created_by', 'approved_by',
@@ -31,6 +33,7 @@ class VariationOrder extends Model
         'net_amount'        => 'decimal:2',
         'is_client_visible' => 'boolean',
         'additional_days'   => 'integer',
+        'revision'          => 'integer',
         'sent_at'           => 'datetime',
         'approved_at'       => 'datetime',
         'declined_at'       => 'datetime',
@@ -38,6 +41,7 @@ class VariationOrder extends Model
 
     /** Column defaults are not applied to the in-memory model. */
     protected $attributes = [
+        'revision'          => 0,
         'origin'            => self::ORIGIN_TW,
         'status'            => self::STATUS_DRAFT,
         'is_client_visible' => true,
@@ -158,8 +162,59 @@ class VariationOrder extends Model
      */
     public static function nextNumberFor(ServiceRequest $sr): string
     {
-        $used = static::where('service_request_id', $sr->id)->count();
+        return static::nextBaseNumberFor($sr);
+    }
+
+    /**
+     * The next /VO-nn for this job.
+     *
+     * Counts distinct base numbers rather than rows, so a variation that has
+     * been revised three times still occupies one slot in the sequence. The
+     * brief is explicit that revisions stay inside /VO-01 and only a genuinely
+     * new variation moves to /VO-02.
+     */
+    public static function nextBaseNumberFor(ServiceRequest $sr): string
+    {
+        $used = static::where('service_request_id', $sr->id)
+            ->distinct()
+            ->count(DB::raw('COALESCE(base_number, vo_number)'));
 
         return sprintf('%s/VO-%02d', $sr->request_id, $used + 1);
+    }
+
+    /** REQ-ABC123/VO-01/R02 — the same variation, priced again. */
+    public static function revisionNumberFor(string $baseNumber, int $revision): string
+    {
+        return $revision > 0
+            ? sprintf('%s/R%02d', $baseNumber, $revision)
+            : $baseNumber;
+    }
+
+    /** The whole chain of attempts at this variation, oldest first. */
+    public function revisions()
+    {
+        return static::where('service_request_id', $this->service_request_id)
+            ->where(function ($q) {
+                $q->where('base_number', $this->base_number ?: $this->vo_number)
+                    ->orWhere('vo_number', $this->base_number ?: $this->vo_number);
+            })
+            ->orderBy('revision');
+    }
+
+    /**
+     * Superseded by a later attempt.
+     *
+     * Only the newest revision in a chain is live; the earlier ones are the
+     * paper trail the brief asks to keep, and none of them counts toward the
+     * contract because only an approved variation ever does.
+     */
+    public function isSuperseded(): bool
+    {
+        return static::where('supersedes_id', $this->id)->exists();
+    }
+
+    public function card(): BelongsTo
+    {
+        return $this->belongsTo(VariationCard::class, 'variation_card_id');
     }
 }

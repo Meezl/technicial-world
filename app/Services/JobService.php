@@ -41,6 +41,30 @@ class JobService
 
         $serviceRequest->update(['status' => $newStatus]);
 
+        $serviceRequest = $serviceRequest->fresh();
+
+        // A closed corporate job bills itself and spends the float.
+        //
+        // Hooked here rather than at the two closure call sites because both
+        // of them — the client verifying, and the office closing without
+        // them — pass through this method, and a job that closed one way and
+        // not the other would silently never be invoiced.
+        //
+        // Raising is idempotent, so a job reopened and closed again does not
+        // bill twice. Deliberately not allowed to take the transition down
+        // with it: a failure to raise the invoice is worth an alert, but it
+        // is not worth leaving the job stuck in a state it has already left.
+        if ($newStatus === ServiceRequest::STATUS_CLOSED && $serviceRequest->isCorporate()) {
+            try {
+                app(\App\Services\InvoicingService::class)->raiseHeldInvoice($serviceRequest, auth()->user());
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error('Corporate invoice could not be raised on closure', [
+                    'service_request_id' => $serviceRequest->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         return $serviceRequest->fresh();
     }
 

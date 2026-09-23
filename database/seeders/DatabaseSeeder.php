@@ -145,13 +145,17 @@ class DatabaseSeeder extends Seeder
 
         // ==================== SERVICE CATEGORIES ====================
 
+        // Canonical names only. The short forms ("Painting", "Electrical")
+        // were merged away by migration; seeding them again re-creates the
+        // duplicates and strands technicians under a category the filters
+        // no longer offer.
         $categories = [
-            ['name' => 'Electrical', 'icon' => 'fas fa-bolt', 'description' => 'All electrical installations and repairs'],
-            ['name' => 'Plumbing', 'icon' => 'fas fa-tint', 'description' => 'Plumbing installations and repairs'],
-            ['name' => 'Painting', 'icon' => 'fas fa-paint-roller', 'description' => 'Interior and exterior painting'],
-            ['name' => 'Carpentry', 'icon' => 'fas fa-hammer', 'description' => 'Woodwork and carpentry services'],
-            ['name' => 'Masonry', 'icon' => 'fas fa-cubes', 'description' => 'Bricklaying and masonry work'],
-            ['name' => 'HVAC', 'icon' => 'fas fa-wind', 'description' => 'Heating ventilation and air conditioning'],
+            ['name' => 'Electrical Services', 'icon' => 'fas fa-bolt', 'description' => 'All electrical installations and repairs'],
+            ['name' => 'Plumbing & Fitting', 'icon' => 'fas fa-tint', 'description' => 'Plumbing installations and repairs'],
+            ['name' => 'Painting & Decorating', 'icon' => 'fas fa-paint-roller', 'description' => 'Interior and exterior painting'],
+            ['name' => 'Carpentry & Woodwork', 'icon' => 'fas fa-hammer', 'description' => 'Woodwork and carpentry services'],
+            ['name' => 'Masonry & Construction', 'icon' => 'fas fa-cubes', 'description' => 'Bricklaying and masonry work'],
+            ['name' => 'HVAC Services', 'icon' => 'fas fa-wind', 'description' => 'Heating ventilation and air conditioning'],
             ['name' => 'Welding', 'icon' => 'fas fa-fire', 'description' => 'Metal fabrication and welding'],
             ['name' => 'General Maintenance', 'icon' => 'fas fa-wrench', 'description' => 'General building maintenance'],
         ];

@@ -8,6 +8,8 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
+import { usePage } from '@inertiajs/vue3'
 import AppSidebar from './AppSidebar.vue'
 
 defineProps({
@@ -17,7 +19,10 @@ defineProps({
     },
 })
 
-const navItems = [
+const page = usePage()
+const corporateEnabled = computed(() => !!page.props.corporate?.enabled)
+
+const baseItems = [
     { key: 'dashboard', href: '/admin/dashboard', icon: 'fas fa-tachometer-alt', label: 'Dashboard', caption: 'Overall activity' },
     { key: 'projects', href: '/admin/projects/dashboard', icon: 'fas fa-project-diagram', label: 'Projects', caption: 'Timelines and delivery' },
     { key: 'rfq', href: '/admin/rfq', icon: 'fas fa-file-alt', label: 'RFQ Management', caption: 'Quotes and approvals' },
@@ -46,4 +51,40 @@ const navItems = [
     },
     { key: 'audit-logs', href: '/admin/audit-logs', icon: 'fas fa-clipboard-list', label: 'Audit Logs', caption: 'History and traceability' },
 ]
+
+// The Property Management & Corporate module ships in phases and its screens
+// reach main before the journey they set up exists. The routes 404 while the
+// module is off; this keeps the entry out of the menu to match, so nobody
+// clicks their way into a dead end.
+//
+// One group rather than four loose entries, placed directly under RFQ
+// Management. The first version slotted four items between Users and Jobs —
+// the middle of a twenty-item list — and on UAT they sat just above wherever
+// the sidebar happened to be scrolled, which read as the module not having
+// been deployed at all. A labelled group near the top is visible without
+// scrolling and says what the four screens have in common.
+const corporateGroup = {
+    key: 'property-management',
+    href: '/admin/organisations',
+    icon: 'fas fa-building',
+    label: 'Property Management',
+    caption: 'Corporate accounts, billing and rates',
+    // Child keys match the current-page values the screens already pass, so
+    // the group highlights whichever of them is open.
+    children: [
+        { key: 'organisations', href: '/admin/organisations', label: 'Corporate Accounts', caption: 'Companies, properties and people' },
+        { key: 'corporate-invoices', href: '/admin/corporate-invoices', label: 'Invoicing', caption: 'In-trays, dispatch and eTIMS' },
+        { key: 'corporate-settlements', href: '/admin/corporate-settlements', label: 'Payments', caption: 'Confirm payments and tax certificates' },
+        { key: 'rates', href: '/admin/rates', label: 'Rate Schedules', caption: 'The catalogue quotations price from' },
+    ],
+}
+
+const navItems = computed(() => {
+    if (!corporateEnabled.value) return baseItems
+
+    const items = [...baseItems]
+    const at = items.findIndex(i => i.key === 'rfq')
+    items.splice(at === -1 ? 1 : at + 1, 0, corporateGroup)
+    return items
+})
 </script>

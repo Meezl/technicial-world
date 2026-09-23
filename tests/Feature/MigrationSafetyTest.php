@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 /**
@@ -21,6 +22,10 @@ use Tests\TestCase;
  */
 class MigrationSafetyTest extends TestCase
 {
+    // The two source-reading tests do not need a database. The index-name
+    // check does — it measures the schema the migrations actually built.
+    use RefreshDatabase;
+
     /**
      * Operations that can lose data that already exists.
      *
@@ -131,6 +136,65 @@ class MigrationSafetyTest extends TestCase
             "A migration writes to existing rows and has not been reviewed.\n"
             . "Confirm it only touches columns it creates, then add it to the known list."
         );
+    }
+
+    /**
+     * MySQL caps an identifier at 64 characters. Nothing we build may exceed it.
+     *
+     * Laravel derives an index name from the table and every column in it, so
+     * a composite index on a table with long column names overruns the limit
+     * without anyone typing a name at all —
+     * `organisation_members_client_organisation_id_position_is_active_index`
+     * is 68 characters and MySQL refuses the CREATE outright.
+     *
+     * That failure is worse than it looks. Table creations here are guarded
+     * with hasTable so a half-finished deploy can retry; the retry then finds
+     * the table present, skips it, and reports success with the index missing.
+     * A query that was meant to be indexed quietly starts scanning, and there
+     * is nothing in the migration output to say so.
+     *
+     * The test suite runs on SQLite, which has no such limit and would let
+     * every one of these through. But Laravel computes the name identically on
+     * both drivers, so measuring what SQLite actually created is a faithful
+     * check on what MySQL will be asked for. The fix is always the same: pass
+     * an explicit short name as the second argument to index() or unique().
+     */
+    public function test_no_index_name_exceeds_the_mysql_identifier_limit(): void
+    {
+        $this->assertSame('sqlite', \DB::connection()->getDriverName(), 'This check reads SQLite catalogue tables.');
+
+        $offenders = [];
+
+        $tables = \DB::select("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'");
+
+        // Without this the whole check passes on an unmigrated database by
+        // finding nothing to measure — which is exactly how it was written
+        // the first time.
+        $this->assertNotEmpty($tables, 'No tables found: the schema was not migrated, so nothing was checked.');
+
+        foreach ($tables as $table) {
+            foreach (\DB::select('PRAGMA index_list(' . $table->name . ')') as $index) {
+                // Auto-indexes SQLite makes for UNIQUE columns are its own
+                // naming, not ours, and never reach MySQL.
+                if (str_starts_with($index->name, 'sqlite_autoindex_')) {
+                    continue;
+                }
+
+                if (strlen($index->name) > 64) {
+                    $offenders[] = "{$table->name}.{$index->name} (" . strlen($index->name) . ' chars)';
+                }
+            }
+        }
+
+        $this->assertSame([], $offenders, implode("\n", array_merge(
+            ['An index name is too long for MySQL (64 characters):', ''],
+            $offenders,
+            [
+                '',
+                'MySQL will refuse the CREATE. Pass an explicit short name as the',
+                "second argument, e.g. \$table->index([...], 'short_name_idx');",
+            ]
+        )));
     }
 
     /** The body of up(), stopping where down() begins. */

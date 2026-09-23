@@ -72,7 +72,15 @@ class PMDashboardController extends Controller
     {
         $pmId = auth()->id();
 
-        $summaryQuery = ServiceRequest::forPm($pmId);
+        // Corporate work is quoted off a negotiated rate schedule with the
+        // client's own approval chain behind it, so it does not belong in the
+        // retail RFQ queue. Mirrors the same default on the admin list; a PM
+        // can still ask for it with ?segment=corporate.
+        //
+        // See PROPERTY_MANAGEMENT_MODULE_PLAN.md.
+        $segment = $request->input('segment', ServiceRequest::SEGMENT_RETAIL);
+
+        $summaryQuery = ServiceRequest::forPm($pmId)->inSegment($segment);
         $statusSummary = [
             'total' => (clone $summaryQuery)->count(),
             'awaiting_tech_availability' => (clone $summaryQuery)->where('status', 'awaiting_tech_availability')->count(),
@@ -83,6 +91,7 @@ class PMDashboardController extends Controller
         ];
 
         $rfqs = ServiceRequest::forPm($pmId)
+            ->inSegment($segment)
             ->with(['user', 'serviceCategory', 'technician.user', 'latestQuotation.lineItems'])
             ->when($request->status, fn($q, $s) => $q->where('status', $s))
             ->when($request->search, function ($query, $search) {
@@ -117,7 +126,7 @@ class PMDashboardController extends Controller
             'rfqs' => $rfqs,
             'technicians' => $technicians,
             'statusSummary' => $statusSummary,
-            'filters' => $request->only(['status', 'search']),
+            'filters' => array_merge($request->only(['status', 'search']), ['segment' => $segment]),
         ]);
     }
 

@@ -60,6 +60,13 @@ php -r 'foreach (["max_execution_time","max_input_time","memory_limit","upload_m
 echo "==> Starting queue worker in background..."
 (php artisan queue:work --sleep=3 --tries=3 --timeout=90 2>&1 || echo "WARNING: Queue worker exited with error") &
 
+# ── 5b. Scheduler (background, non-fatal) ────────────────────────────────────
+# Runs everything in routes/console.php: new-request reminders, final payment
+# requests, authorisation sweeps and corporate daily reports. Without it none
+# of those ever fire.
+echo "==> Starting scheduler in background..."
+(php artisan schedule:work 2>&1 || echo "WARNING: Scheduler exited with error") &
+
 echo "==> Startup complete. Launching web server..."
 
 # ── 6. Hand off to the web server (FrankenPHP / Caddy) ────────────────────────

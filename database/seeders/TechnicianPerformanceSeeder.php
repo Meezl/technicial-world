@@ -23,12 +23,14 @@ class TechnicianPerformanceSeeder extends Seeder
         $this->command->info('Creating test technicians and performance data...');
 
         // Create service categories if they don't exist
+        // Canonical category names — see DatabaseSeeder for why the short
+        // forms must not come back.
         $categories = [
-            'Electrical',
-            'Plumbing',
-            'HVAC',
-            'Carpentry',
-            'Painting',
+            'Electrical Services',
+            'Plumbing & Fitting',
+            'HVAC Services',
+            'Carpentry & Woodwork',
+            'Painting & Decorating',
         ];
 
         foreach ($categories as $categoryName) {
@@ -103,7 +105,7 @@ class TechnicianPerformanceSeeder extends Seeder
             [
                 'name' => 'Lisa Painter',
                 'email' => 'lisa.painter@tech.com',
-                'specialization' => 'Painting',
+                'specialization' => 'Painting & Decorating',
                 'availability' => 'busy',
                 'location' => 'Nairobi',
                 'bio' => 'Professional painter for interior and exterior projects',

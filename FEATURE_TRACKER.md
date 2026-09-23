@@ -274,6 +274,175 @@
 
 ---
 
+## 23. Property Management & Corporate Module
+
+> Source: *Property Management & Corporate Level Module — Brief* (LNI → WEBPIN, 28.08.2026).
+> Full analysis, data model, phasing and open questions: `PROPERTY_MANAGEMENT_MODULE_PLAN.md`.
+> Requirement IDs below are the ones used in that plan.
+
+### Phase 0 — Segment seam & feature flag
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| `segment` discriminator on every request | ✅ | `service_requests.segment`, defaulted `retail`; composite index on `(segment, status)` |
+| Segment constants, scopes and helpers | ✅ | `ServiceRequest::SEGMENT_*`, `scopeRetail`, `scopeCorporate`, `scopeInSegment`, `isCorporate()`, `isRetail()` |
+| Corporate requests kept out of the retail RFQ queues (CA-10) | ✅ | `AdminDashboardController::rfq()` and `PMDashboardController::rfqs()` default to `retail`; `?segment=` overrides |
+| Feature flag | ✅ | `config/corporate.php` + `CORPORATE_MODULE_ENABLED`, read through `App\Support\CorporateModule` |
+| Route gate for future corporate routes | ✅ | `corporate` middleware alias → `EnsureCorporateModuleEnabled` (404 while off) |
+| Regression cover | ✅ | `tests/Feature/CorporateSegmentTest.php` |
+
+### Phase 1 — Corporate accounts & properties
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| The organisation is the client of record (CA-1) | ✅ | `client_organisations`; `users` stays the login identity |
+| Properties pre-set per client by admin (CA-2) | ✅ | `properties` + `Admin\PropertyController`, nested under the account |
+| Property stamped on the request (CA-3) | ✅ | `service_requests.property_id` + `Property::label` accessor used everywhere |
+| Jobs filterable and searchable by property (CA-4) | ✅ | `ServiceRequest::scopeForProperty`, wired into the admin job and RFQ lists |
+| One account spans properties of different owners (CA-5) | ✅ | `properties.owner_name` / `owner_kra_pin` per building (answers OQ-9) |
+| Requester / verifier / approver / accounts positions (CA-6) | ✅ | `organisation_members.position` — not a platform role |
+| Per-client 1- or 2-stage approval workflow (CA-7) | ✅ | `client_organisations.approval_workflow` + `approvalChain()`; enforced in Phase 2 |
+| Pre-set authorised signatories (CA-9) | ✅ | `organisation_members.signature_path`, `display_name`, `can_approve_up_to` |
+| Dropdown-first setup (CA-11) | ✅ | Property, position and workflow are all pickers |
+| Account readiness check | ✅ | Show screen states what setup is still missing before the account can take work |
+| Corporate/retail consistency invariant | ✅ | `ServiceRequest::booted()` — a request cannot be half corporate |
+| MySQL identifier-length guard | ✅ | `MigrationSafetyTest::test_no_index_name_exceeds_the_mysql_identifier_limit` |
+| Regression cover | ✅ | `tests/Feature/CorporateAccountsTest.php` (27 tests) |
+
+### Phase 2 — Corporate REQ lifecycle & approvals
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| Requester raises work against a building (RQ-1) | ✅ | `Corporate\CorporateRequestController::store`, property scoped to their own portfolio |
+| Configurable 1- or 2-stage approval routing (CA-7, RQ-2) | ✅ | `corporate_approvals` + `CorporateApprovalService`; chain materialised on quote send |
+| Decline with comments back to admin **and** PM (RQ-3) | ✅ | `CorporateApprovalDecision` mailable to both; `rfq_status` → rejected with the reason |
+| Approval transition page: LPO no. + copy, landlord PIN, signatory (RQ-5) | ✅ | Captured on the final approve row; PIN defaults from the property, signatory from the pre-set list |
+| Approved job runs the existing pipeline (RQ-4) | ✅ | → `ready_for_assignment`; **no deposit step** (DP-6) |
+| Visibility scoping: requester sees own, seniors see all (CA-8) | ✅ | `isVisibleToClient()` + `scopeVisibleToClient()` — one rule, list and record |
+| Senior manager reassigns a request (CA-8) | ✅ | `reassign`; membership and account move together, enforced by the model |
+| Quote revision references `/R1`, `/R2` (RQ-8) | ✅ | `ServiceRequest::quote_reference`, derived from the revision counter |
+| Approved / declined / superseded colour coding (RQ-9) | ✅ | Approval trail on the review screen; declined and superseded steps stay visible |
+| Retail approval path cannot bypass the chain | ✅ | `ClientController::approveRFQ`/`declineRFQ` return 409 for corporate |
+| Regression cover | ✅ | `tests/Feature/CorporateApprovalChainTest.php` (29 tests) |
+
+> VO revision suffixes (`/VO-01/R01`, the second half of RQ-8) land with the variation-card
+> flow in Phase 5, where that journey lives. `/VO-01` → `/VO-02` already works.
+
+### Phase 3 — Deposit float ledger & work gating
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| Book a deposit with amount and date (DP-1) | ✅ | `deposit_accounts` + an opening `booking` entry — never an opening column |
+| Absolute **or** percentage top-up threshold (DP-2) | ✅ | `threshold_type` / `threshold_value`; the brief gives it both ways |
+| Assignment gated on remaining float, not per-job payment (DP-3) | ✅ | `DepositService::staffingBlocker()`, called from `JobAuthorisationService::assignmentBlocker()` — the one seam admin, PM and sub-task paths share |
+| Below threshold, requests still accepted but not workable (DP-4) | ✅ | The gate is at assignment; raising and quoting are untouched |
+| Admin-only override switch (DP-5) | ✅ | Separate `override_threshold_value` with a reason and an expiry, checked on read |
+| No down-payment on corporate work (DP-6) | ✅ | `requestPayment` refuses corporate with an explanation |
+| Top-up capped at the agreed float (DP-9) | ✅ | `DepositService::topUp()` applies only the headroom |
+| Commitment tracked apart from consumption | ✅ | approval encumbers, closure spends; `available = balance − committed` (answers OQ-1 safely either way) |
+| Append-only ledger | ✅ | Corrections are offsetting `adjustment` entries with a reason; nothing is ever edited |
+| Regression cover | ✅ | `tests/Feature/DepositFloatTest.php` (25 tests), incl. the plan's §8 worked example |
+
+> `consume()` and the tax-certificate top-up are built and tested but not yet called by the
+> product: Phase 4 wires them to job closure and certificate validation.
+
+### Phase 4 — In-tray, invoicing, tax & settlement
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| Invoices raised per closed job and held (IN-1, DP-7) | ✅ | Hooked into `JobService::transitionState`, the seam both closure paths share; idempotent |
+| Threshold trigger dispatches the in-tray as proformas (IN-2) | ✅ | `InvoicingService::shouldDispatch()` measures **remaining float**, not the in-tray total |
+| Internal alert to raise the hard-copy tax invoice (IN-3) | ✅ | The corporate invoicing screen flags accounts that have tripped, plus the dispatch flash |
+| Downloadable / printable PDFs + eTIMS (IN-4) | ✅ | `pdf.corporate-invoice`; eTIMS upload promotes a proforma to a tax invoice |
+| Consolidated **or** separate output (IN-5) | ✅ | `InvoiceBatch::output_mode`; withholding computed per the mode actually used |
+| Every field the brief requires on the invoice (IN-6) | ✅ | PIN, bank details, logo, REQ numbers, requester, approver, property, and each variation with its own requester/approver |
+| WHVAT + WHT on the VAT-exclusive value (IN-7) | ✅ | `InvoicingService::taxBreakdown()`, reconciled against the brief's worked example; rates configurable per client |
+| Accountant validates; job stays alive for certificates (IN-8) | ✅ | `SettlementService::validate()` — tops the float by cash received, not invoice value |
+| Certificates close the job as fully paid (IN-9, DP-8) | ✅ | `validateCertificate()` posts the second top-up, capped at the ceiling (DP-9) |
+| Client batch settlement: one POP, ticked jobs (IN-10) | ✅ | `Client/Corporate/Billing.vue`; allocations can never exceed the payment |
+| Cheque + remittance statement capture (IN-11) | ✅ | `settlements.proof_path` / `statement_path`, method `cheque` |
+| TW-side entry when a client emails the POP (IN-12) | ✅ | `CorporateSettlementController::store` |
+| 360° job view (IN-13) | ✅ | `Client/Corporate/Job360.vue` — approvals, variations, reports, invoice, payments, certificates |
+| Regression cover | ✅ | `tests/Feature/CorporateInvoicingTest.php` (32 tests) |
+
+### Phase 5 — Variation cards
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| Junior raises a card with justification (VC-1) | ✅ | `variation_cards` + `VariationCardService::raise()`; numbered `REQ-XXX/VC-01` |
+| Senior manager approves or declines with comments (VC-2) | ✅ | Approver only — a verifier signs off on prices, not on spending decisions. A decline must say what to do instead |
+| Approved card surfaces to TW, who quote it (VC-3) | ✅ | `readyToQuote()`; `variations.store` accepts `variation_card_id` and binds the two |
+| Original quote stands; variations stack (VC-4) | ✅ | Unchanged — the variation ledger already worked this way |
+| All variations retained; only approved ones count (VC-5) | ✅ | Unchanged, and now covered for revisions too |
+| VO revision numbering `/VO-01/R01` (RQ-8, second half) | ✅ | `revision`, `base_number`, `supersedes_id`; revisions never consume the next `/VO-nn` |
+| Corporate variations approved by the senior manager | ✅ | `assertClientMayDecide()` — closes the same hole the quotation path had |
+| Regression cover | ✅ | `tests/Feature/VariationCardTest.php` (27 tests) |
+
+### Phase 6 — Consolidated daily reporting & site access
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| One report per client per day, segmented by job (RP-1) | ✅ | `CorporateDigestService` + `corporate:daily-reports`, scheduled hourly so each account picks its own hour |
+| Per-job release emails suppressed for corporate | ✅ | `ProgressService::releaseToClient` returns before mailing for corporate; retail unchanged |
+| Send is idempotent | ✅ | `progress_reports.corporate_digest_id` — the same work can never be reported twice |
+| Configurable send time per client (OQ-11) | ✅ | `client_organisations.daily_report_hour`, defaulting to `config('corporate.daily_report_hour')` |
+| Printable security roster (RP-2) | ✅ | `pdf.attendance-roster` — name, ID number, passport photo, role on site, attendance dates, with signature blocks |
+| Security portal (RP-3) | 🔲 Deferred | The roster is already returned as data by `ServiceRequest::attendanceRoster()`, so a portal consumes the same source |
+| Regression cover | ✅ | `tests/Feature/CorporateDailyReportTest.php` (20 tests) |
+
+### Phase 7 — SLA rate schedule & auto-quoting
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| Per-client negotiated schedule, versioned (SL-1) | ✅ | `rate_schedules`; activating supersedes rather than overwrites, so old quotes keep their figures |
+| Rate decomposed into six components (SL-2, SL-3) | ✅ | `rate_items`; composite derived on save — a component moves, the composite moves by exactly that |
+| ~4,000 items with pre-set units (SL-4) | ✅ | CSV import matching columns by name; unit normalisation refuses what it cannot recognise |
+| Searchable typeahead (SL-5) | ✅ | `scopeMatching` over description, code, category and search terms — "toilet" finds a WC pan |
+| Per-item urgency (SL-6) | ✅ | `service_request_items.urgency` |
+| Building and requester on every request (SL-7) | ✅ | Already carried from Phase 1 |
+| One-click auto-populate (SL-8) | ✅ | `QuotationComposerService::autoPopulate()` — rates snapshotted onto the line, not joined |
+| Ancillary costs at the bottom (SL-9) | ✅ | `addAncillary()` |
+| VAT-exclusive lines, VAT re-adjusting (SL-10) | ✅ | `totals()` — derived by subtraction so the parts always add to the whole |
+| Per-line start and end dates (SL-11) | ✅ | `planned_start` / `planned_end` — the access schedule |
+| Approver can hide prices, share items and dates (SL-12) | ✅ | `project($request, 'security')` — never shows money |
+| Digital signature before dispatch (SL-13) | ✅ | `sign()`; refuses while any line is unpriced |
+| Requester sees no rates unless opened (SL-14) | ✅ | `prices_visible_to_requester`, default off; the typeahead never returns a rate |
+| Location within the property per line (SL-15) | ✅ | `location_detail` |
+| Technician projection with per-line release (SL-16) | ✅ | `releaseToTechnician()` / `withdrawFromTechnician()`; a technician sees only their own, only when opened |
+| Regression cover | ✅ | `tests/Feature/RateScheduleQuotingTest.php` (33 tests) |
+
+### Client portal navigation
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| Corporate members reach their own screens | ✅ | `ClientSidebar` / `ClientBottomNav` branch on the shared `corporate.membership` prop |
+| Menu is position-aware | ✅ | A requester is offered Jobs / Raise a Job / Variation Cards; verifiers and approvers add Approvals; organisation-wide positions add Billing |
+| Retail portal untouched | ✅ | `membership` is null for every retail client, every technician and every member of staff |
+| No menu item leads to a 403 | ✅ | Billing narrowed to `ORGANISATION_WIDE_POSITIONS`, matching the visibility rule used everywhere else |
+| Regression cover | ✅ | `tests/Feature/CorporateNavigationTest.php` (9 tests) |
+
+### Demo data
+
+| Feature | Status | Implementation |
+|---------|--------|---------------|
+| One command stands up a working account | ✅ | `php artisan corporate:demo` — company, 2 properties, 5 people, 500k float, 10-item catalogue, 5 jobs |
+| A job at every stage, so no screen is empty | ✅ | Awaiting quote, with the verifier, with the approver, in progress (+ variation card), and closed (raising a held invoice) |
+| Opens above its own threshold | ✅ | Otherwise the first thing anybody tries — staffing a job — is refused |
+| Exact teardown | ✅ | `--remove` / `--fresh`, matched on the account and the `@corporate-demo.test` domain, never on "recently created" |
+| Refuses production | ✅ | `--force` plus an interactive confirmation |
+| Regression cover | ✅ | `tests/Feature/CorporateDemoSeederTest.php` (8 tests) |
+
+### Deferred
+
+| Scope | Requirement IDs | Status |
+|-------|-----------------|--------|
+| Client-side security portal | RP-3 | 🔲 Deferred — the roster is already exposed as data |
+
+> Phases 3 and 4 are blocked on open questions OQ-1…OQ-5 in the plan; Phase 7 is blocked on
+> a sample of the rate schedule (OQ-8).
+
+---
+
 ## Backend Architecture Summary
 
 ### Models (36 total)

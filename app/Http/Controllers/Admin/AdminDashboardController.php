@@ -235,7 +235,14 @@ class AdminDashboardController extends Controller
 
     public function jobs(Request $request)
     {
-        $query = ServiceRequest::with(['user', 'serviceCategory', 'technician.user', 'leadTechnician.user', 'subTasks.technician.user'])
+        $query = ServiceRequest::with([
+                'user', 'serviceCategory', 'technician.user', 'leadTechnician.user',
+                'subTasks.technician.user',
+                // Corporate jobs are identified by the building they are in
+                // rather than by the person who logged them, so the list has
+                // to be able to say which one. Null on every retail row.
+                'organisation:id,name', 'property:id,name,code',
+            ])
             ->orderBy('created_at', 'desc');
 
         // Search Filter
@@ -246,6 +253,12 @@ class AdminDashboardController extends Controller
                     ->orWhereHas('user', function ($q) use ($search) {
                         $q->where('name', 'like', "%{$search}%")
                             ->orWhere('email', 'like', "%{$search}%");
+                    })
+                    // "What is open at Jitegemea Flats" is a question the
+                    // office asks daily once a portfolio is on the system.
+                    ->orWhereHas('property', function ($q) use ($search) {
+                        $q->where('name', 'like', "%{$search}%")
+                            ->orWhere('code', 'like', "%{$search}%");
                     });
             });
         }
@@ -254,6 +267,10 @@ class AdminDashboardController extends Controller
         if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
+
+        // Property filter. A no-op unless one is asked for, so the retail
+        // view of this page is unchanged.
+        $query->forProperty($request->input('property'));
 
         $jobs = $query->paginate(10)->withQueryString();
 
@@ -264,7 +281,14 @@ class AdminDashboardController extends Controller
         return Inertia::render('Admin/Jobs', [
             'jobs' => $jobs,
             'technicians' => $technicians,
-            'filters' => $request->only(['search', 'status'])
+            // Only the buildings that actually have jobs on this list — an
+            // empty picker of 200 properties helps nobody.
+            'properties' => \App\Models\Property::query()
+                ->whereHas('serviceRequests')
+                ->with('organisation:id,name')
+                ->orderBy('name')
+                ->get(['id', 'name', 'code', 'client_organisation_id']),
+            'filters' => $request->only(['search', 'status', 'property'])
         ]);
     }
 
@@ -2544,6 +2568,22 @@ class AdminDashboardController extends Controller
             $q->whereIn('status', \App\Models\VariationOrder::COUNTS_TOWARD_CONTRACT);
         }], 'net_amount');
 
+        // Property management work does not belong in this queue. It is priced
+        // against a negotiated rate schedule, unlocked by a standing float
+        // rather than a per-job deposit, and approved by the client's own
+        // hierarchy — none of which the controls on this page can do. The
+        // brief is explicit that corporate requests arrive in their own
+        // segment and are not lumped with retail.
+        //
+        // Defaulted rather than forced: an admin can still ask for the
+        // corporate rows with ?segment=corporate, so nothing becomes
+        // unreachable in the window before the corporate queue itself ships.
+        $segment = $request->input('segment', ServiceRequest::SEGMENT_RETAIL);
+        $query->inSegment($segment);
+
+        // Filter the queue down to one building. No-op when absent.
+        $query->forProperty($request->input('property'));
+
         // Search filter
         if ($search = $request->input('search')) {
             $query->where(function ($q) use ($search) {
@@ -2634,6 +2674,8 @@ class AdminDashboardController extends Controller
                 'search' => $request->input('search', ''),
                 'status' => $request->input('status', 'all'),
                 'origin' => $request->input('origin', 'all'),
+                'segment' => $segment,
+                'property' => $request->input('property'),
                 'sort' => $sortOrder,
                 'per_page' => $perPage,
                 'needs_action' => $needsAction,
@@ -2813,6 +2855,18 @@ class AdminDashboardController extends Controller
 
         app(\App\Services\BillingService::class)
             ->replaceUnbilledMilestones($serviceRequest->fresh(), $billingMilestones);
+
+        // A management company signs off through its own chain — one stage or
+        // two, depending on how that account is configured. Opening it here,
+        // against the revision just written, is what ties an approval to the
+        // figures the approver actually saw: a revision supersedes the open
+        // chain rather than inheriting its decisions.
+        //
+        // No-op for retail, which records its single approval on the request
+        // itself as it always has.
+        if ($serviceRequest->fresh()->isCorporate()) {
+            app(\App\Services\CorporateApprovalService::class)->openChainFor($serviceRequest->fresh());
+        }
 
         // Send the appropriate email
         try {
@@ -3367,6 +3421,19 @@ class AdminDashboardController extends Controller
         if ($serviceRequest->rfq_status !== ServiceRequest::RFQ_STATUS_APPROVED) {
             return response()->json([
                 'error' => 'Payment can only be requested for approved service requests.'
+            ], 422);
+        }
+
+        // A management company is never billed per job. Their float is money
+        // we already hold — that is the whole point of it — and the invoice
+        // goes out in a batch when the float drops through its threshold, not
+        // job by job. Billing one here would ask them to pay twice for the
+        // same work.
+        if ($serviceRequest->isCorporate()) {
+            return response()->json([
+                'error' => 'Corporate jobs are not billed individually. '
+                    . 'This account runs against its standing float, and invoices are raised in a batch '
+                    . 'when the float reaches its threshold.',
             ], 422);
         }
 
@@ -4025,6 +4092,34 @@ class AdminDashboardController extends Controller
         ]);
 
         return back()->with('success', 'Attendance notice sent to ' . $serviceRequest->user->email . '.');
+    }
+
+    /**
+     * The site access list, as a printable sheet.
+     *
+     * The attendance notice tells the client by email; this is the thing they
+     * hand the person on the gate. Same roster data either way — see
+     * ServiceRequest::attendanceRoster() — so the two cannot disagree about
+     * who is expected.
+     */
+    public function attendanceRosterPdf(ServiceRequest $serviceRequest)
+    {
+        $roster = $serviceRequest->attendanceRoster();
+
+        if (empty($roster)) {
+            return back()->with('error', 'Assign at least one technician before printing a site access list.');
+        }
+
+        $serviceRequest->loadMissing(['property', 'organisation']);
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.attendance-roster', [
+            'serviceRequest' => $serviceRequest,
+            'roster' => $roster,
+            'window' => $serviceRequest->attendanceWindow(),
+            'issuer' => config('corporate.issuer'),
+        ])->setPaper('a4');
+
+        return $pdf->download("site-access-{$serviceRequest->request_id}.pdf");
     }
 
     // ==================== QUOTATION DRAFTS ====================
