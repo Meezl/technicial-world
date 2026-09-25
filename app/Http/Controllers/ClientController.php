@@ -357,6 +357,13 @@ class ClientController extends Controller
                     ->retriggerMilestonesForApprovedRevision($serviceRequest->fresh());
             }
 
+            // A client who settled the deposit before getting round to the
+            // approve button has already said yes with their money; the
+            // request becomes a job here rather than waiting for a payment
+            // that has been and gone. A no-op in the usual order of events.
+            app(\App\Services\JobConversionService::class)
+                ->tryConvert($serviceRequest->fresh(), Auth::user(), 'client_quote_approval');
+
             return response()->json(['success' => true, 'message' => 'Quotation approved successfully']);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::error('approveRFQ failed', [

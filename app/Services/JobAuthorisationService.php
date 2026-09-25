@@ -185,6 +185,16 @@ class JobAuthorisationService
             'authorised_by' => $authoriser->id,
         ], $authoriser->id);
 
+        // An authorisation is the office saying "run this one on ours", and a
+        // request still sitting behind the deposit gate is exactly what it is
+        // usually recorded for. Converting here rather than at the two call
+        // sites is the same argument this class makes about the gate itself:
+        // the admin page and the PM page must not be able to disagree about
+        // what authorising a job does. A no-op on a job already converted, and
+        // on a request the authorisation does not unblock.
+        app(JobConversionService::class)
+            ->tryConvert($serviceRequest->fresh(), $authoriser, 'authorisation:' . $type);
+
         return $authorisation;
     }
 

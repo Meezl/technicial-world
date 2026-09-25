@@ -220,12 +220,19 @@ class CorporateApprovalController extends Controller
     {
         $serviceRequest->update([
             'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
-            'status' => ServiceRequest::STATUS_READY_FOR_ASSIGNMENT,
             'client_quote_approved_by' => $user->id,
             'client_quote_approved_at' => now(),
             'approved_quote_revision' => (int) ($serviceRequest->quote_revision_count ?? 0),
             'approved_quote_amount' => $serviceRequest->quote_amount,
         ]);
+
+        // Approval is the whole payment step for a corporate account, so the
+        // request becomes a job here — job reference and all. The conversion
+        // service knows corporate work is not deposit-gated; putting it
+        // through the same door is what gives these jobs the same reference
+        // and the same state log as every other one.
+        app(\App\Services\JobConversionService::class)
+            ->tryConvert($serviceRequest, $user, 'corporate_approval');
 
         app(\App\Services\DepositService::class)->commit($serviceRequest->fresh(), $user);
 

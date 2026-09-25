@@ -72,6 +72,7 @@ class ServiceRequest extends Model
         'scheduled_date',
         'started_at',
         'assigned_at',
+        'converted_to_job_at',
         'commencement_gated',
         'completed_date',
         'completion_notes',
@@ -118,6 +119,7 @@ class ServiceRequest extends Model
         'down_payment_requested' => 'boolean',
         'scheduled_date' => 'datetime',
         'started_at' => 'datetime',
+        'converted_to_job_at' => 'datetime',
         'assigned_at' => 'datetime',
         'commencement_gated' => 'boolean',
         'prices_visible_to_requester' => 'boolean',
@@ -240,13 +242,27 @@ class ServiceRequest extends Model
 
     /**
      * Generate a unique job reference number.
+     *
+     * Counts issued references rather than request ids. Numbering off
+     * `max(id)` skipped every request that never became a job, so the first
+     * job of a year could be TW-2026-0417 — and, worse, two requests
+     * converting in the same second both read the same max and collided on a
+     * unique index. The loop closes that race: the column is unique, so the
+     * worst a concurrent converter can do is make this take a second pass.
      */
     public static function generateJobReference(): string
     {
         $year = now()->format('Y');
-        $last = self::whereYear('created_at', $year)->max('id') ?? 0;
-        $sequence = str_pad($last + 1, 4, '0', STR_PAD_LEFT);
-        return "TW-{$year}-{$sequence}";
+        $sequence = self::whereNotNull('job_reference')
+            ->where('job_reference', 'like', "TW-{$year}-%")
+            ->count();
+
+        do {
+            $sequence++;
+            $reference = sprintf('TW-%s-%04d', $year, $sequence);
+        } while (self::where('job_reference', $reference)->exists());
+
+        return $reference;
     }
 
     /**

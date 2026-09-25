@@ -292,8 +292,11 @@ class AdminDashboardController extends Controller
         ]);
     }
 
-    public function showJob(ServiceRequest $serviceRequest, \App\Services\JobAuthorisationService $authorisations)
-    {
+    public function showJob(
+        ServiceRequest $serviceRequest,
+        \App\Services\JobAuthorisationService $authorisations,
+        \App\Services\JobConversionService $conversions
+    ) {
         $job = $serviceRequest->load([
             'user',
             'serviceCategory',
@@ -399,6 +402,14 @@ class AdminDashboardController extends Controller
                 'live_authorisations' => $authorisations->liveAuthorisations($serviceRequest)->values(),
                 'authorisation_types' => \App\Models\JobAuthorisation::TYPES,
                 'authorisation_descriptions' => \App\Models\JobAuthorisation::TYPE_DESCRIPTIONS,
+                // Whether this request may leave the REQ pipeline at all, and
+                // what the deposit behind that answer looks like. Read from
+                // the same service the conversion enforces with, for the
+                // reason given above about the page re-deriving rules.
+                'conversion_blocker' => $conversions->conversionBlocker($serviceRequest),
+                'is_job' => $conversions->isJob($serviceRequest),
+                'deposit_required' => $conversions->depositRequired($serviceRequest),
+                'deposit_paid' => $conversions->depositPaid($serviceRequest),
             ],
             'approvalEvidence' => $serviceRequest->approvalEvidence(),
             // Who the client is expecting and when — the same reading the
@@ -2676,6 +2687,12 @@ class AdminDashboardController extends Controller
         return Inertia::render('Admin/RFQ', [
             'rfqs' => $rfqs,
             'stats' => $stats,
+            // What each row is waiting on before it can become a job. Batched
+            // rather than derived per row — see JobConversionService.
+            'depositStanding' => app(\App\Services\JobConversionService::class)
+                ->depositStandingFor($rfqs->getCollection()),
+            'authorisationTypes' => \App\Models\JobAuthorisation::TYPES,
+            'authorisationDescriptions' => \App\Models\JobAuthorisation::TYPE_DESCRIPTIONS,
             'filters' => [
                 'search' => $request->input('search', ''),
                 'status' => $request->input('status', 'all'),
@@ -2857,10 +2874,29 @@ class AdminDashboardController extends Controller
             \App\Models\ReqBillingMilestone::where('service_request_id', $serviceRequest->id)
                 ->whereIn('payment_request_id', $cancelledIds)
                 ->update(['payment_request_id' => null, 'triggered_at' => null]);
+
+            // The deposit that was just withdrawn has not been paid, so the
+            // job is back to having none requested. Leaving the flag set is
+            // what would make the revised quotation's deposit look like a
+            // duplicate and refuse to send.
+            $depositStillStanding = PaymentRequest::where('service_request_id', $serviceRequest->id)
+                ->deposit()
+                ->where('status', PaymentRequest::STATUS_PAID)
+                ->exists();
+            if (!$depositStillStanding) {
+                $serviceRequest->update(['down_payment_requested' => false]);
+            }
         }
 
         app(\App\Services\BillingService::class)
             ->replaceUnbilledMilestones($serviceRequest->fresh(), $billingMilestones);
+
+        // A quotation that names a deposit bills it here rather than waiting
+        // for somebody to remember the payment-request modal. The client gets
+        // the quotation and the thing to pay in the same breath, and the job
+        // cannot become a job until it is settled — see JobConversionService.
+        $depositRequest = app(\App\Services\JobConversionService::class)
+            ->raiseDepositRequest($serviceRequest->fresh(), auth()->user());
 
         // A management company signs off through its own chain — one stage or
         // two, depending on how that account is configured. Opening it here,
@@ -2899,6 +2935,14 @@ class AdminDashboardController extends Controller
         $message = $isRevision
             ? "Revised quotation (revision #{$updateData['quote_revision_count']}) sent to client."
             : 'Quotation sent to client successfully!';
+
+        if ($depositRequest) {
+            $message .= sprintf(
+                ' A deposit request for KSH %s (%s) was sent to the client.',
+                number_format((float) $depositRequest->amount, 2),
+                $depositRequest->payment_request_id
+            );
+        }
 
         return redirect()->route('admin.rfq')->with('success', $message);
     }
@@ -3061,6 +3105,12 @@ class AdminDashboardController extends Controller
             'proxy_quote_approved_at' => $serviceRequest->proxy_quote_approved_at?->toDateTimeString(),
             'proxy_quote_approval_note' => $serviceRequest->proxy_quote_approval_note,
         ]);
+
+        // If the office already holds the deposit — the common case on an
+        // admin-assisted job, where payment is often taken over the counter
+        // before the paperwork catches up — the request becomes a job now.
+        app(\App\Services\JobConversionService::class)
+            ->tryConvert($serviceRequest->fresh(), auth()->user(), 'proxy_quote_approval');
 
         return redirect()->route('admin.rfq')
             ->with('success', 'Quotation approved on behalf of the client. The request now continues through the normal workflow.');
@@ -3683,14 +3733,9 @@ class AdminDashboardController extends Controller
             'notes'                => 'Payment confirmed on behalf of client by admin (' . auth()->user()->name . ')',
         ]);
 
-        // Advance the service request status
-        if (in_array($serviceRequest->status, [
-            ServiceRequest::STATUS_AWAITING_PAYMENT,
-            ServiceRequest::STATUS_PAYMENT_PENDING_APPROVAL,
-            'pending',
-        ])) {
-            $serviceRequest->update(['status' => ServiceRequest::STATUS_READY_FOR_ASSIGNMENT]);
-        }
+        // Advance the service request if this payment covers the deposit.
+        app(\App\Services\JobConversionService::class)
+            ->tryConvert($serviceRequest, auth()->user(), 'admin_proxy_payment');
 
         AuditLog::log(AuditLog::ACTION_APPROVAL, $paymentRequest, null, [
             'note'    => 'Admin confirmed payment on behalf of client',
@@ -4209,11 +4254,17 @@ class AdminDashboardController extends Controller
             return back()->withErrors($e->errors());
         }
 
-        return back()->with('success', sprintf(
+        $converted = $serviceRequest->fresh();
+        $message = sprintf(
             '%s authorisation recorded. It lapses on %s unless renewed.',
             $authorisation->label(),
             $authorisation->expires_at->format('d M Y H:i')
-        ));
+        );
+        if ($converted->job_reference && !$serviceRequest->job_reference) {
+            $message .= ' The request is now job ' . $converted->job_reference . '.';
+        }
+
+        return back()->with('success', $message);
     }
 
     public function revokeJobAuthorisation(Request $request, \App\Models\JobAuthorisation $jobAuthorisation)

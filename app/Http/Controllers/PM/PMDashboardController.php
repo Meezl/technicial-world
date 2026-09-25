@@ -10,6 +10,7 @@ use App\Models\Technician;
 use App\Models\TechnicianPaymentSheet;
 use App\Models\TechnicianPaymentEntry;
 use App\Models\JobAssignment;
+use App\Models\JobAuthorisation;
 use App\Models\CompensationAmendment;
 use App\Models\ProgressReport;
 use App\Services\QuotationService;
@@ -274,6 +275,12 @@ class PMDashboardController extends Controller
         return Inertia::render('PM/Jobs', [
             'jobs' => $jobs,
             'technicians' => $technicians,
+            // What each request still waiting on its deposit is waiting for,
+            // and whether the office has already authorised it through.
+            'depositStanding' => app(\App\Services\JobConversionService::class)
+                ->depositStandingFor($jobs->getCollection()),
+            'authorisationTypes' => JobAuthorisation::TYPES,
+            'authorisationDescriptions' => JobAuthorisation::TYPE_DESCRIPTIONS,
             'statusSummary' => $statusSummary,
             'statuses' => ServiceRequest::allStatuses(),
             'filters' => $request->only(['status', 'search']),
@@ -833,6 +840,72 @@ class PMDashboardController extends Controller
         $label = $variant === 'rfq' ? 'rfq-revenue-report' : 'client-revenue-report';
 
         return "{$label}-{$from}-to-{$to}.{$extension}";
+    }
+
+    // ==================== ADVANCE AUTHORISATION ====================
+
+    /**
+     * Let a job continue without the client's money, on this PM's authority.
+     *
+     * The admin has been able to do this since the gate shipped; a PM could
+     * not, which meant the person actually running the job had to go and find
+     * an admin to unblock it. Same service, same audit trail, same expiry —
+     * the only difference is that a PM may only do it on a job that is theirs.
+     */
+    public function storeJobAuthorisation(Request $request, ServiceRequest $serviceRequest, JobAuthorisationService $authorisations)
+    {
+        $this->authorizeForPm($serviceRequest);
+
+        $request->validate([
+            'type' => 'required|in:' . implode(',', array_keys(JobAuthorisation::TYPES)),
+            // Long enough to be a reason rather than a shrug — same bar as the
+            // admin form.
+            'reason' => 'required|string|min:15|max:1000',
+            'expires_at' => 'required|date|after:now',
+            'exposure_cap' => 'nullable|numeric|min:0',
+        ]);
+
+        try {
+            $authorisation = $authorisations->authorise(
+                $serviceRequest,
+                $request->type,
+                auth()->user(),
+                $request->reason,
+                \Carbon\Carbon::parse($request->expires_at),
+                $request->filled('exposure_cap') ? (float) $request->exposure_cap : null
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return back()->withErrors($e->errors());
+        }
+
+        $converted = $serviceRequest->fresh();
+        $message = sprintf(
+            '%s authorisation recorded. It lapses on %s unless renewed.',
+            $authorisation->label(),
+            $authorisation->expires_at->format('d M Y H:i')
+        );
+        if ($converted->job_reference && !$serviceRequest->job_reference) {
+            $message .= ' The request is now job ' . $converted->job_reference . '.';
+        }
+
+        return back()->with('success', $message);
+    }
+
+    public function revokeJobAuthorisation(Request $request, JobAuthorisation $jobAuthorisation, JobAuthorisationService $authorisations)
+    {
+        $this->authorizeForPm($jobAuthorisation->serviceRequest);
+
+        $request->validate([
+            'reason' => 'required|string|min:10|max:500',
+        ]);
+
+        if ($jobAuthorisation->revoked_at !== null) {
+            return back()->with('error', 'That authorisation has already been withdrawn.');
+        }
+
+        $authorisations->revoke($jobAuthorisation, auth()->user(), $request->reason);
+
+        return back()->with('success', 'Authorisation withdrawn. The job is gated again from now on.');
     }
 
     /**

@@ -116,12 +116,9 @@ class MpesaTransactionController extends Controller
             ]);
 
             $serviceRequest = $paymentRequest->serviceRequest;
-            if ($serviceRequest && in_array($serviceRequest->status, [
-                \App\Models\ServiceRequest::STATUS_AWAITING_PAYMENT,
-                \App\Models\ServiceRequest::STATUS_PAYMENT_PENDING_APPROVAL,
-                'pending',
-            ])) {
-                $serviceRequest->update(['status' => \App\Models\ServiceRequest::STATUS_READY_FOR_ASSIGNMENT]);
+            if ($serviceRequest) {
+                app(\App\Services\JobConversionService::class)
+                    ->tryConvert($serviceRequest, auth()->user(), 'mpesa_manual_reconciliation');
             }
 
             $mpesaTransaction->update([

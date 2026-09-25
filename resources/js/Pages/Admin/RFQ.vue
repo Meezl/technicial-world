@@ -680,6 +680,36 @@
                                         <span>Required Down Payment:</span>
                                         <span>KSH {{ formatCurrency(selectedRFQ?.quote_down_payment) }}</span>
                                     </div>
+                                    <div v-if="depositStanding" class="cost-line" style="color: #6B7280;">
+                                        <span>Received:</span>
+                                        <span>KSH {{ formatCurrency(depositStanding.paid) }}</span>
+                                    </div>
+                                </div>
+
+                                <!-- Why this request is still a REQ. The office
+                                     kept asking why an approved job never
+                                     reached the assignment board; the answer
+                                     was always this, and it was nowhere on the
+                                     page. -->
+                                <div v-if="awaitingDeposit" class="pr-info-strip pr-info-warning" style="margin-top: 10px;">
+                                    <i class="fas fa-lock"></i>
+                                    <span>
+                                        Held until the deposit is received. An admin or project manager can
+                                        authorise it through from the
+                                        <a :href="`/admin/jobs/${selectedRFQ.id}`">job page</a>.
+                                    </span>
+                                </div>
+                                <div v-else-if="authorisedWithoutDeposit" class="pr-info-strip pr-info-warning" style="margin-top: 10px;">
+                                    <i class="fas fa-unlock"></i>
+                                    <span>
+                                        <strong>Continuing without the deposit.</strong>
+                                        {{ depositStanding.authorisation?.type }} authorised by
+                                        {{ depositStanding.authorisation?.by || 'the office' }},
+                                        lapses {{ formatDate(depositStanding.authorisation?.expires_at) }}.
+                                        <em v-if="depositStanding.authorisation?.note" style="display:block; margin-top:4px;">
+                                            “{{ depositStanding.authorisation.note }}”
+                                        </em>
+                                    </span>
                                 </div>
 
                                 <div v-if="selectedRFQ?.quote_notes" class="quote-notes-display">
@@ -1500,6 +1530,24 @@ const props = defineProps({
     rfqs: { type: Object, default: () => ({ data: [], current_page: 1, last_page: 1, total: 0, from: 0, to: 0 }) },
     stats: { type: Object, default: () => ({ pending: 0, quoted: 0, approved: 0, rejected: 0, total: 0, totalValue: 0 }) },
     filters: { type: Object, default: () => ({ search: '', status: 'all', origin: 'all', sort: 'newest', per_page: 15 }) },
+    // What each row still owes before it can become a job, keyed by service
+    // request id — computed by JobConversionService, never re-derived here.
+    depositStanding: { type: Object, default: () => ({}) },
+})
+
+const depositStanding = computed(
+    () => (selectedRFQ.value ? props.depositStanding?.[selectedRFQ.value.id] || null : null),
+)
+
+/** Quoted or approved, money not in, and nobody has authorised it through. */
+const awaitingDeposit = computed(() => {
+    const standing = depositStanding.value
+    return !!standing && !standing.is_job && !standing.settled && !standing.authorised
+})
+
+const authorisedWithoutDeposit = computed(() => {
+    const standing = depositStanding.value
+    return !!standing && !standing.settled && standing.authorised
 })
 
 // Local filter state (bound to inputs)
@@ -3115,6 +3163,8 @@ defineOptions({ layout: null })
 .pr-info-strip i.fas { margin-top: 2px; flex-shrink: 0; }
 .pr-info-success { background: #ECFDF5; border-color: #A7F3D0; color: #065F46; }
 .pr-info-error { background: #FEF2F2; border-color: #FECACA; color: #991B1B; }
+.pr-info-warning { background: #FFFBEB; border-color: #FDE68A; color: #92400E; }
+.pr-info-warning a { color: inherit; font-weight: 600; text-decoration: underline; }
 
 /* Prior payment requests */
 .pr-prior-section {

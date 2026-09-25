@@ -147,6 +147,11 @@ class MigrationSafetyTest extends TestCase
             // — a second run matches nothing.
             '2026_09_23_000000_merge_painting_into_painting_and_decorating',
             '2026_09_23_000001_merge_legacy_specializations_into_canonical_categories',
+            // Back-fills converted_to_job_at, a column it creates in the same
+            // migration, on requests that are already past the REQ pipeline.
+            // Without it the deposit gate would read every live job as
+            // unconverted and try to convert it again.
+            '2026_09_25_000000_add_deposit_gate_to_job_conversion',
         ];
 
         $this->assertSame(

@@ -6,6 +6,7 @@ use App\Models\AuditLog;
 use App\Models\Payment;
 use App\Models\PaymentRequest;
 use App\Models\ServiceRequest;
+use App\Services\JobConversionService;
 use App\Models\MpesaTransaction;
 use App\Notifications\PaymentRejectedNotification;
 use App\Services\MpesaService;
@@ -183,14 +184,12 @@ class PaymentController extends Controller
             'paid_at'              => now(),
         ]);
 
-        // Transition the service request status to ready_for_assignment
+        // Turn the REQ into a job if this payment has cleared the deposit.
+        // The gate lives in one service now — see JobConversionService for why
+        // the seven copies of this transition could not be trusted.
         $serviceRequest = $paymentRequest->serviceRequest;
-        if ($serviceRequest && in_array($serviceRequest->status, [
-            ServiceRequest::STATUS_AWAITING_PAYMENT,
-            ServiceRequest::STATUS_PAYMENT_PENDING_APPROVAL,
-            'pending',
-        ])) {
-            $serviceRequest->update(['status' => ServiceRequest::STATUS_READY_FOR_ASSIGNMENT]);
+        if ($serviceRequest) {
+            app(JobConversionService::class)->tryConvert($serviceRequest, null, 'mpesa_callback');
         }
 
         Log::info('M-Pesa payment completed', [
@@ -272,14 +271,10 @@ class PaymentController extends Controller
                         MpesaTransaction::create($txnAttrs);
                     }
 
-                    // Advance the service request status
+                    // Advance the service request if the deposit is now covered.
                     $serviceRequest = $paymentRequest->serviceRequest;
-                    if ($serviceRequest && in_array($serviceRequest->status, [
-                        ServiceRequest::STATUS_AWAITING_PAYMENT,
-                        ServiceRequest::STATUS_PAYMENT_PENDING_APPROVAL,
-                        'pending',
-                    ])) {
-                        $serviceRequest->update(['status' => ServiceRequest::STATUS_READY_FOR_ASSIGNMENT]);
+                    if ($serviceRequest) {
+                        app(JobConversionService::class)->tryConvert($serviceRequest, null, 'mpesa_status_poll');
                     }
                 }
 
@@ -430,14 +425,10 @@ class PaymentController extends Controller
                 'notes'              => $request->input('notes') ?: 'Offline payment confirmed by admin',
             ]);
 
-            // Transition the service request status to ready_for_assignment
+            // Transition to a job if the deposit is now covered.
             $serviceRequest = $paymentRequest->serviceRequest;
-            if ($serviceRequest && in_array($serviceRequest->status, [
-                ServiceRequest::STATUS_AWAITING_PAYMENT,
-                ServiceRequest::STATUS_PAYMENT_PENDING_APPROVAL,
-                'pending',
-            ])) {
-                $serviceRequest->update(['status' => ServiceRequest::STATUS_READY_FOR_ASSIGNMENT]);
+            if ($serviceRequest) {
+                app(JobConversionService::class)->tryConvert($serviceRequest, auth()->user(), 'offline_payment');
             }
 
             return response()->json([
@@ -736,12 +727,8 @@ class PaymentController extends Controller
             ]);
 
             // Advance the service request so a technician can be assigned
-            if ($serviceRequest && in_array($serviceRequest->status, [
-                ServiceRequest::STATUS_AWAITING_PAYMENT,
-                ServiceRequest::STATUS_PAYMENT_PENDING_APPROVAL,
-                'pending',
-            ])) {
-                $serviceRequest->update(['status' => ServiceRequest::STATUS_READY_FOR_ASSIGNMENT]);
+            if ($serviceRequest) {
+                app(JobConversionService::class)->tryConvert($serviceRequest, null, 'mpesa_c2b');
             }
 
             $mpesaTxn->update([

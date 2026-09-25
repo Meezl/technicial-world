@@ -187,6 +187,12 @@ Route::middleware(['auth', 'role:project_manager'])->prefix('pm')->group(functio
     Route::post('/jobs/{serviceRequest}/reassign', [PMDashboardController::class, 'reassignJob'])->name('pm.jobs.reassign');
     Route::post('/jobs/{serviceRequest}/payment-request', [AdminDashboardController::class, 'requestPayment'])->name('pm.rfq.request-payment');
 
+    // Advance authorisation — letting a job continue to the assignment list
+    // without the client's deposit, on the PM's own authority and with an
+    // expiry. Scoped in the controller to the jobs this PM runs.
+    Route::post('/jobs/{serviceRequest}/authorisations', [PMDashboardController::class, 'storeJobAuthorisation'])->name('pm.jobs.authorisations.store');
+    Route::post('/job-authorisations/{jobAuthorisation}/revoke', [PMDashboardController::class, 'revokeJobAuthorisation'])->name('pm.jobs.authorisations.revoke');
+
     // Progress Validation
     Route::get('/progress-reports', [PMDashboardController::class, 'progressReports'])->name('pm.progress-reports');
     Route::post('/progress-reports/{progressReport}/validate', [PMDashboardController::class, 'validateProgress'])->name('pm.progress.validate');

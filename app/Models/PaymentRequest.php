@@ -16,6 +16,7 @@ class PaymentRequest extends Model
         'user_id',
         'requested_by',
         'percentage',
+        'is_deposit',
         'amount',
         'status',
         'payment_method',
@@ -32,6 +33,7 @@ class PaymentRequest extends Model
 
     protected $casts = [
         'percentage' => 'decimal:2',
+        'is_deposit' => 'boolean',
         'amount' => 'decimal:2',
         'paid_at' => 'datetime',
     ];
@@ -120,6 +122,18 @@ class PaymentRequest extends Model
     public function payment(): HasOne
     {
         return $this->hasOne(Payment::class);
+    }
+
+    /**
+     * The bill raised off the quotation's deposit line.
+     *
+     * A job has at most one live deposit request: a revision cancels the
+     * outstanding one and the new quotation raises a fresh one, so the scope
+     * is filtered further by status wherever "the current deposit" is meant.
+     */
+    public function scopeDeposit(\Illuminate\Database\Eloquent\Builder $query): \Illuminate\Database\Eloquent\Builder
+    {
+        return $query->where('is_deposit', true);
     }
 
     /**

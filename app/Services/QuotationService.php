@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Quotation;
 use App\Models\QuotationLineItem;
 use App\Models\ServiceRequest;
+use App\Services\JobConversionService;
 use App\Models\AuditLog;
 use Illuminate\Support\Facades\DB;
 
@@ -121,6 +122,12 @@ class QuotationService
                 'grand_total' => $quotation->grand_total,
                 'approved_by' => $approver?->email,
             ]);
+
+            // Same reasoning as the flat approval path: money already in
+            // converts the request now rather than waiting for a payment that
+            // has already happened.
+            app(JobConversionService::class)
+                ->tryConvert($quotation->serviceRequest->fresh(), $approver, 'client_quote_approval');
 
             return $quotation;
         });

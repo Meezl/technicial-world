@@ -174,6 +174,25 @@
                             <td>
                                 <div class="status-stack">
                                     <span :class="['status-badge', statusTone(job.status)]">{{ formatStatus(job.status) }}</span>
+                                    <!-- Naming the jobs running on our money
+                                         rather than the client's is the whole
+                                         point of recording an authorisation. -->
+                                    <span
+                                        v-if="authorisedWithoutDeposit(job)"
+                                        class="status-badge tone-amber"
+                                        :title="authorisationFor(job)?.note"
+                                    >
+                                        Authorised without deposit
+                                    </span>
+                                    <!-- The note is the record, so it is shown
+                                         rather than hidden behind a tooltip:
+                                         the reason somebody carried this job is
+                                         what the next person needs to read. -->
+                                    <p v-if="authorisationFor(job)" class="action-note">
+                                        {{ authorisationFor(job).by || 'The office' }},
+                                        lapses {{ formatDate(authorisationFor(job).expires_at) }} —
+                                        “{{ authorisationFor(job).note }}”
+                                    </p>
                                     <small>{{ urgencyLabel(job.urgency) }}</small>
                                 </div>
                             </td>
@@ -191,6 +210,18 @@
                                     <span class="action-note">{{ nextStep(job).note }}</span>
 
                                     <div class="action-row">
+                                        <!-- The deposit override. A PM may only
+                                             record this on a job that is theirs;
+                                             the endpoint enforces it. -->
+                                        <button
+                                            v-if="nextStep(job).action === 'authorise'"
+                                            class="btn btn-sm btn-warning"
+                                            @click="openAuthoriseModal(job)"
+                                        >
+                                            <i class="fas fa-unlock"></i>
+                                            Authorise without deposit
+                                        </button>
+
                                         <button
                                             v-if="nextStep(job).action === 'assign'"
                                             class="btn btn-sm btn-primary"
@@ -282,6 +313,15 @@
 
                     <div class="action-row">
                         <button
+                            v-if="nextStep(job).action === 'authorise'"
+                            class="btn btn-sm btn-warning"
+                            @click="openAuthoriseModal(job)"
+                        >
+                            <i class="fas fa-unlock"></i>
+                            Authorise without deposit
+                        </button>
+
+                        <button
                             v-if="nextStep(job).action === 'assign'"
                             class="btn btn-sm btn-primary"
                             @click="openAssignModal(job)"
@@ -346,6 +386,67 @@
                 />
             </div>
         </section>
+
+        <!-- Running a job on the firm's money rather than the client's. The
+             reason is mandatory and the expiry is not optional: an
+             authorisation without one is a decision nobody ever revisits. -->
+        <div v-if="showAuthoriseModal" class="modal-overlay">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div>
+                        <h3>Authorise without deposit</h3>
+                        <p class="modal-subtitle">{{ selectedJob?.job_reference || selectedJob?.request_id }} • {{ selectedJob?.user?.name }}</p>
+                    </div>
+                    <button class="modal-close" @click="showAuthoriseModal = false">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="action-note" v-if="selectedJob">{{ depositNote(selectedJob) }}</p>
+
+                    <div class="form-group">
+                        <label>What is being authorised</label>
+                        <select v-model="authoriseForm.type" required>
+                            <option v-for="(label, value) in authorisationTypes" :key="value" :value="value">
+                                {{ label }}
+                            </option>
+                        </select>
+                        <p class="action-note">{{ authorisationDescription }}</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Reason</label>
+                        <textarea
+                            v-model="authoriseForm.reason"
+                            rows="4"
+                            required
+                            minlength="15"
+                            placeholder="Why this job cannot wait for the client's money — specific enough to be read back in six weeks."
+                        ></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Lapses on</label>
+                        <input type="datetime-local" v-model="authoriseForm.expires_at" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Exposure cap (optional)</label>
+                        <input type="number" v-model="authoriseForm.exposure_cap" step="0.01" min="0" placeholder="KSH">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @click="showAuthoriseModal = false">Cancel</button>
+                    <button
+                        class="btn btn-warning"
+                        @click="submitAuthorisation"
+                        :disabled="!authoriseIsComplete || submitting"
+                        :title="authoriseIsComplete ? '' : 'A reason of at least 15 characters and an expiry are required.'"
+                    >
+                        <i class="fas fa-unlock"></i>
+                        {{ submitting ? 'Recording…' : 'Record authorisation' }}
+                    </button>
+                </div>
+            </div>
+        </div>
 
         <div v-if="showSuspendModal" class="modal-overlay">
             <div class="modal-content">
@@ -505,6 +606,12 @@ const props = defineProps({
     filters: { type: Object, default: () => ({}) },
     documentKinds: { type: Object, default: () => ({}) },
     technicianVisibleKinds: { type: Array, default: () => [] },
+    // What each request still behind the deposit gate is waiting for, keyed by
+    // service request id. Computed server-side from the same service that
+    // enforces the gate — the board must not re-derive the rule.
+    depositStanding: { type: Object, default: () => ({}) },
+    authorisationTypes: { type: Object, default: () => ({}) },
+    authorisationDescriptions: { type: Object, default: () => ({}) },
 })
 
 const summary = computed(() => props.statusSummary || {})
@@ -516,6 +623,7 @@ const showSuspendModal = ref(false)
 const showReassignModal = ref(false)
 const showAssignModal = ref(false)
 const showDocumentsModal = ref(false)
+const showAuthoriseModal = ref(false)
 // Track the open job by id, not by reference: the panel's uploads and
 // visibility toggles reload the page props, so we re-resolve the job from the
 // fresh list to keep its document set current while the modal stays open.
@@ -526,9 +634,48 @@ const documentsJob = computed(() =>
 const suspendReason = ref('')
 const reassignForm = ref({ technician_id: '', reason: '' })
 const assignForm = ref({ technician_id: '', agreed_compensation: 0, expected_start: '', expected_end: '' })
+const authoriseForm = ref({ type: 'pre_deposit', reason: '', expires_at: '', exposure_cap: '' })
 
 const canSuspend = (job) => ['in_progress', 'delayed'].includes(job.status)
 const canReassign = (job) => ['assigned', 'suspended', 'in_progress'].includes(job.status)
+
+const formatCurrency = (value) =>
+    Number(value || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const standingFor = (job) => props.depositStanding?.[job.id] || null
+
+/**
+ * A request held at the gate: quoted or approved, the money not in, and nobody
+ * has yet put their name to carrying it.
+ */
+const awaitingDeposit = (job) => {
+    const standing = standingFor(job)
+    return !!standing && !standing.is_job && !standing.settled && !standing.authorised
+}
+
+const authorisedWithoutDeposit = (job) => {
+    const standing = standingFor(job)
+    return !!standing && standing.authorised && !standing.settled
+}
+
+const authorisationFor = (job) => standingFor(job)?.authorisation || null
+
+const depositNote = (job) => {
+    const standing = standingFor(job)
+    if (!standing) return ''
+    if (Number(standing.required) > 0) {
+        return `Deposit KSH ${formatCurrency(standing.required)} — KSH ${formatCurrency(standing.paid)} received.`
+    }
+    return 'No payment received against this request yet.'
+}
+
+const authoriseIsComplete = computed(
+    () => authoriseForm.value.reason.trim().length >= 15 && !!authoriseForm.value.expires_at,
+)
+
+const authorisationDescription = computed(
+    () => props.authorisationDescriptions?.[authoriseForm.value.type] || '',
+)
 
 const heroTitle = computed(() => {
     if (Number(summary.value.delayed || 0) > 0) return 'A few jobs need intervention to stay on track.'
@@ -579,6 +726,31 @@ const openAssignModal = (job) => {
     selectedJob.value = job
     assignForm.value = { technician_id: '', agreed_compensation: 0, expected_start: '', expected_end: '' }
     showAssignModal.value = true
+}
+
+const openAuthoriseModal = (job) => {
+    selectedJob.value = job
+    authoriseForm.value = { type: 'pre_deposit', reason: '', expires_at: '', exposure_cap: '' }
+    showAuthoriseModal.value = true
+}
+
+const submitAuthorisation = () => {
+    if (!authoriseIsComplete.value || submitting.value) return
+    submitting.value = true
+    router.post(`/pm/jobs/${selectedJob.value.id}/authorisations`, {
+        type: authoriseForm.value.type,
+        reason: authoriseForm.value.reason,
+        expires_at: authoriseForm.value.expires_at,
+        exposure_cap: authoriseForm.value.exposure_cap || null,
+    }, {
+        onSuccess: () => {
+            showAuthoriseModal.value = false
+            submitting.value = false
+        },
+        onError: () => {
+            submitting.value = false
+        },
+    })
 }
 
 const openDocumentsModal = (job) => {
@@ -647,6 +819,14 @@ const statusTone = (status) => {
 }
 
 const nextStep = (job) => {
+    if (awaitingDeposit(job)) {
+        return {
+            title: 'Waiting on the deposit',
+            note: `${depositNote(job)} This request becomes a job once it clears — or when you authorise it through.`,
+            action: 'authorise',
+        }
+    }
+
     if (job.status === 'ready_for_assignment') {
         return {
             title: 'Assign technician',

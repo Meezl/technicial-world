@@ -17,12 +17,19 @@
             <section v-if="pendingPaymentRequest" class="request-payment-alert">
                 <div class="request-payment-alert-copy">
                     <span class="request-payment-alert-tag">
-                        <i class="fas fa-exclamation-circle"></i> Payment Required
+                        <i class="fas fa-exclamation-circle"></i>
+                        {{ pendingPaymentRequest.is_deposit ? 'Deposit Required' : 'Payment Required' }}
                     </span>
                     <strong>KSH {{ formatCurrency(pendingPaymentRequest.amount) }}</strong>
                     <span class="request-payment-alert-meta">
                         Reference {{ pendingPaymentRequest.payment_request_id }}
-                        <template v-if="pendingPaymentRequest.percentage"> · {{ pendingPaymentRequest.percentage }}% milestone</template>
+                        <template v-if="pendingPaymentRequest.percentage && !pendingPaymentRequest.is_deposit"> · {{ pendingPaymentRequest.percentage }}% milestone</template>
+                    </span>
+                    <!-- A deposit is not just another instalment: it is what
+                         moves the request off the quotation and into the
+                         schedule, and saying so is what gets it paid. -->
+                    <span v-if="pendingPaymentRequest.is_deposit" class="request-payment-alert-meta">
+                        Work is scheduled once this is received.
                     </span>
                 </div>
                 <button type="button" @click="jumpToPaymentForm" class="btn btn-primary request-payment-alert-cta">
@@ -264,7 +271,7 @@
                         <div v-if="pendingPaymentRequest" id="payment" ref="paymentSection" class="payment-request-section">
                             <div class="payment-request-header">
                                 <i class="fas fa-credit-card"></i>
-                                <h4>Payment Required</h4>
+                                <h4>{{ pendingPaymentRequest.is_deposit ? 'Deposit Required' : 'Payment Required' }}</h4>
                             </div>
                             <div class="payment-request-details">
                                 <div class="payment-info-row">
@@ -272,7 +279,7 @@
                                     <strong>{{ pendingPaymentRequest.payment_request_id }}</strong>
                                 </div>
                                 <div class="payment-info-row">
-                                    <span>Percentage:</span>
+                                    <span>{{ pendingPaymentRequest.is_deposit ? 'Share of Quotation:' : 'Percentage:' }}</span>
                                     <strong>{{ pendingPaymentRequest.percentage }}%</strong>
                                 </div>
                                 <div class="payment-info-row highlight">

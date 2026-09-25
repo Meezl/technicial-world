@@ -190,6 +190,27 @@
                             </div>
                         </div>
 
+                        <!-- Still a REQ. Shown above the assignment blockers
+                             because it is the earlier gate: a request that
+                             cannot become a job cannot be staffed either, and
+                             the office was reading the assignment message and
+                             looking for a technician problem that was not
+                             there. -->
+                        <div v-if="conversionBlocker && !gating.is_job" class="ja-banner ja-banner-blocked">
+                            <i class="fas fa-file-invoice-dollar"></i>
+                            <div class="ja-banner-body">
+                                <strong>Still a request — not yet a job</strong>
+                                <p>{{ conversionBlocker }}</p>
+                                <p class="ja-reason" v-if="Number(gating.deposit_required) > 0">
+                                    Deposit KSH {{ formatCurrency(gating.deposit_required) }} ·
+                                    received KSH {{ formatCurrency(gating.deposit_paid) }}.
+                                </p>
+                                <button type="button" class="ja-inline-btn" @click="openAuthorisationModal">
+                                    <i class="fas fa-key"></i> Authorise continuation to job
+                                </button>
+                            </div>
+                        </div>
+
                         <div v-if="assignmentBlocker" class="ja-banner ja-banner-blocked">
                             <i class="fas fa-lock"></i>
                             <div class="ja-banner-body">
@@ -2759,7 +2780,15 @@ const props = defineProps({
     },
     gating: {
         type: Object,
-        default: () => ({ assignment_blocker: null, commencement_blocker: null, live_authorisations: [] })
+        default: () => ({
+            assignment_blocker: null,
+            commencement_blocker: null,
+            live_authorisations: [],
+            conversion_blocker: null,
+            is_job: true,
+            deposit_required: 0,
+            deposit_paid: 0,
+        })
     },
     approvalEvidence: {
         type: Object,
@@ -3129,6 +3158,7 @@ const preFundingStatuses = ['awaiting_quote_approval', 'awaiting_payment', 'paym
 const assignmentBlocker = computed(() => props.gating?.assignment_blocker ?? null)
 const commencementBlocker = computed(() => props.gating?.commencement_blocker ?? null)
 const liveAuthorisations = computed(() => props.gating?.live_authorisations ?? [])
+const conversionBlocker = computed(() => props.gating?.conversion_blocker ?? null)
 
 const atAssignableStage = computed(() =>
     assignableStatuses.includes(props.job.status) || preFundingStatuses.includes(props.job.status)
