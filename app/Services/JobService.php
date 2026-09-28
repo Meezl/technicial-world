@@ -6,6 +6,7 @@ use App\Models\ServiceRequest;
 use App\Models\JobStateLog;
 use App\Models\AuditLog;
 use App\Models\User;
+use App\Services\ProgressService;
 use Illuminate\Support\Facades\DB;
 
 class JobService
@@ -182,6 +183,17 @@ class JobService
             if (!$alreadyCredited) {
                 $this->creditTechnicians($serviceRequest);
             }
+
+            // Anything settled but never sent on goes now.
+            //
+            // The client is about to be asked whether the work is right, and
+            // they cannot answer that against reports they have not been shown.
+            // Releasing is the office's deliberate act while a job runs — which
+            // is what stopped the fragmented one-email-per-report telling — but
+            // a job reaching its end with a batch still held is the one case
+            // where waiting for that act serves nobody. It is the last moment
+            // the reports can still be of use.
+            app(ProgressService::class)->releaseToClient($serviceRequest, null, $approver->id);
 
             return $this->transitionState(
                 $serviceRequest,

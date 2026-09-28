@@ -33,6 +33,22 @@ class LeadReportPipelineTest extends TestCase
         $this->app->terminate();
     }
 
+    /**
+     * The admin dashboard's alert list, built directly.
+     *
+     * The dashboard route itself cannot run under SQLite — its monthly trend
+     * query calls MONTH(), which is MySQL's — so the builder is exercised where
+     * it stands rather than through a page this suite cannot load.
+     */
+    private function healthAlerts(): array
+    {
+        $controller = app(\App\Http\Controllers\Admin\AdminDashboardController::class);
+        $method = new \ReflectionMethod($controller, 'paymentHealthAlerts');
+        $method->setAccessible(true);
+
+        return $method->invoke($controller);
+    }
+
     private function makeTechnician(): Technician
     {
         $user = User::factory()->create(['role' => User::ROLE_TECHNICIAN]);
@@ -252,7 +268,15 @@ class LeadReportPipelineTest extends TestCase
         });
     }
 
-    public function test_a_job_with_no_lead_releases_to_the_client_on_validation(): void
+    /**
+     * A single-technician job stacks like any other.
+     *
+     * It used to release on validation, on the reasoning that it had no batch
+     * step to gather reports into. What that produced was one email per
+     * validated report on exactly the jobs least able to justify it — the
+     * fragmented telling the batch step exists to prevent.
+     */
+    public function test_a_job_with_no_lead_holds_its_reports_until_the_office_releases_them(): void
     {
         Mail::fake();
 
@@ -260,22 +284,131 @@ class LeadReportPipelineTest extends TestCase
         $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
         $tech = $this->makeTechnician();
 
-        // No lead technician — a single-technician job has no batch step.
         $job = $this->makeJob($client, ['technician_id' => $tech->id]);
-
         $service = app(ProgressService::class);
-        $report = $service->submitReport($job, $tech->id, $tech->user->id, ['percent_complete' => 30]);
 
+        $first = $service->submitReport($job, $tech->id, $tech->user->id, ['percent_complete' => 30]);
         // Reaches the office immediately (no lead to post it).
-        $this->assertNotNull($report->submitted_to_office_at);
+        $this->assertNotNull($first->submitted_to_office_at);
 
-        // The office validates — which, with no lead, is the release.
-        $service->validate($report->fresh(), $admin->id, ['validated_percent' => 30], [], validatedAs: ProgressReport::AS_ADMIN);
+        $service->validate($first->fresh(), $admin->id, ['validated_percent' => 30], [], validatedAs: ProgressReport::AS_ADMIN);
+        $this->flushDeferredWork();
+
+        // Settled, paid, counted — and the client has not been written to.
+        $this->assertTrue($first->fresh()->is_validated);
+        $this->assertNull($first->fresh()->released_to_client_at);
+        Mail::assertNothingSent();
+
+        $second = $service->submitReport($job, $tech->id, $tech->user->id, ['percent_complete' => 60]);
+        $service->validate($second->fresh(), $admin->id, ['validated_percent' => 60], [], validatedAs: ProgressReport::AS_ADMIN);
+        $this->flushDeferredWork();
+
+        Mail::assertNothingSent();
+
+        // The office sends both on as one update.
+        $released = $service->releaseToClient($job->fresh(), null, $admin->id);
+        $this->flushDeferredWork();
+
+        $this->assertSame(2, $released);
+        $this->assertNotNull($first->fresh()->released_to_client_at);
+        $this->assertNotNull($second->fresh()->released_to_client_at);
+
+        Mail::assertSent(ProgressBatchReleased::class, 1);
+        Mail::assertSent(ProgressBatchReleased::class, fn (ProgressBatchReleased $m) => $m->hasTo('solo@example.test'));
+    }
+
+    public function test_the_office_can_release_a_single_technician_job_from_the_job_page(): void
+    {
+        Mail::fake();
+
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT, 'email' => 'solo@example.test']);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $tech = $this->makeTechnician();
+
+        $job = $this->makeJob($client, ['technician_id' => $tech->id]);
+        $service = app(ProgressService::class);
+
+        $report = $service->submitReport($job, $tech->id, $tech->user->id, ['percent_complete' => 40]);
+        $service->validate($report->fresh(), $admin->id, ['validated_percent' => 40], [], validatedAs: ProgressReport::AS_ADMIN);
+        $this->flushDeferredWork();
+
+        $this->assertNull($report->fresh()->released_to_client_at);
+
+        // No flushDeferredWork here: an HTTP request terminates itself, which
+        // is what sends the deferred email. Flushing again would send it twice
+        // and the count below is the assertion that matters.
+        $this->actingAs($admin)
+            ->post(route('admin.jobs.release-reports', $job))
+            ->assertRedirect();
+
+        $this->assertNotNull($report->fresh()->released_to_client_at);
+        Mail::assertSent(ProgressBatchReleased::class, 1);
+    }
+
+    /**
+     * A job must not reach the client's verification screen carrying reports
+     * they were never shown — they cannot say whether the work is right against
+     * evidence they do not have.
+     */
+    public function test_approving_completion_releases_anything_still_held(): void
+    {
+        Mail::fake();
+
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $tech = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $tech->id,
+            'status' => ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION,
+        ]);
+        $service = app(ProgressService::class);
+
+        $report = $service->submitReport($job, $tech->id, $tech->user->id, ['percent_complete' => 100]);
+        $service->validate($report->fresh(), $admin->id, ['validated_percent' => 100], [], validatedAs: ProgressReport::AS_ADMIN);
+        $this->flushDeferredWork();
+
+        $this->assertNull($report->fresh()->released_to_client_at, 'Held while the job is running.');
+
+        // Acting as the admin because transitionState() stamps the state log
+        // from auth() rather than the approver it was handed.
+        $this->actingAs($admin);
+        app(\App\Services\JobService::class)->approveCompletion($job->fresh(), $admin, 'Signed off.');
         $this->flushDeferredWork();
 
         $this->assertNotNull($report->fresh()->released_to_client_at);
         Mail::assertSent(ProgressBatchReleased::class, 1);
-        Mail::assertSent(ProgressBatchReleased::class, fn (ProgressBatchReleased $m) => $m->hasTo('solo@example.test'));
+    }
+
+    public function test_the_office_is_told_about_reports_it_has_not_released(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $tech = $this->makeTechnician();
+
+        $job = $this->makeJob($client, ['technician_id' => $tech->id]);
+        $service = app(ProgressService::class);
+
+        $report = $service->submitReport($job, $tech->id, $tech->user->id, ['percent_complete' => 40]);
+        $service->validate($report->fresh(), $admin->id, ['validated_percent' => 40], [], validatedAs: ProgressReport::AS_ADMIN);
+        $this->flushDeferredWork();
+
+        $waiting = collect($this->healthAlerts())
+            ->firstWhere('title', 'Progress reports waiting to be released');
+
+        $this->assertNotNull(
+            $waiting,
+            'A batch nobody releases is a client who hears nothing — the dashboard has to say so.'
+        );
+        $this->assertStringContainsString('1 validated report', $waiting['message']);
+
+        // And it clears once the batch has gone.
+        $service->releaseToClient($job->fresh(), null, $admin->id);
+        $this->flushDeferredWork();
+
+        $this->assertNull(
+            collect($this->healthAlerts())->firstWhere('title', 'Progress reports waiting to be released')
+        );
     }
 
     public function test_the_lead_dashboard_counts_reports_waiting_to_be_posted(): void

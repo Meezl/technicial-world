@@ -390,16 +390,22 @@ class ProgressService
                 'validated_percent' => $data['validated_percent'] ?? $report->percent_complete,
             ]);
 
-            // A lead-run job hears once, when the office releases the batch —
-            // that is what ends the one-email-per-technician fatigue. But a job
-            // with no lead has no batch step to gather reports into: there, the
-            // office validating the report IS the release, so it goes to the
-            // client straight away, exactly as it did before the pipeline. Only
-            // on a genuine office validation ($releaseBilling), never on a
-            // lead's on-site sign-off.
-            if ($releaseBilling && $serviceRequest->lead_technician_id === null) {
-                $this->releaseToClient($serviceRequest, null, $pmId);
-            }
+            // Nothing is released here, on any job.
+            //
+            // A job with no lead used to release on validation, on the reasoning
+            // that it had no batch step to gather reports into. What that
+            // produced was a client on a single-technician job receiving one
+            // email per validated report — the fragmented telling the batch step
+            // exists to prevent — while a client on a lead-run job next door got
+            // one considered update. The batching was never lead-specific; only
+            // this early exit was.
+            //
+            // Releasing is now always the office's deliberate act, on every job.
+            // Validating settles what counts operationally and pays the
+            // technician; releasing decides when the client has a coherent thing
+            // to read. They are different judgements and were only ever fused
+            // here because a single-technician job had nobody to make the first
+            // one on site.
 
             return $report->fresh(['photos']);
         });

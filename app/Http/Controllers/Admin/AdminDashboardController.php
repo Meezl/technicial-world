@@ -199,6 +199,32 @@ class AdminDashboardController extends Controller
             ];
         }
 
+        // Validated work the client has not been told about.
+        //
+        // Releasing is deliberate on every job now — validating settles what
+        // counts and pays the technician, releasing decides when the client has
+        // a coherent thing to read. The cost of that separation is that a batch
+        // can be forgotten, and a forgotten batch is a client who hears nothing
+        // while work goes on. This is the counterweight: reports that have been
+        // settled and not sent on are named here until somebody sends them.
+        $awaitingRelease = \App\Models\ProgressReport::releasableToClient()
+            ->whereHas('serviceRequest', fn ($q) => $q->whereNotIn('status', ServiceRequest::TERMINAL_STATUSES))
+            ->get(['id', 'service_request_id']);
+
+        if ($awaitingRelease->isNotEmpty()) {
+            $jobCount = $awaitingRelease->pluck('service_request_id')->unique()->count();
+            $reportCount = $awaitingRelease->count();
+
+            $alerts[] = [
+                'severity' => 'warning',
+                'title'    => 'Progress reports waiting to be released',
+                'message'  => $reportCount . ' validated report' . ($reportCount === 1 ? '' : 's') .
+                              ' across ' . $jobCount . ' job' . ($jobCount === 1 ? '' : 's') .
+                              ' have been settled but not sent to the client. Release each job\'s batch as one update.',
+                'action'   => ['label' => 'Open the jobs list', 'href' => '/admin/jobs'],
+            ];
+        }
+
         return $alerts;
     }
 
