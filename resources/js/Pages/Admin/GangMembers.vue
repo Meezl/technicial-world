@@ -109,6 +109,8 @@
                                 <th>Location</th>
                                 <th>Phone</th>
                                 <th>Jobs</th>
+                                <th>Status</th>
+                                <th></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -126,6 +128,39 @@
                                 <td>{{ member.location }}</td>
                                 <td>{{ member.user?.phone || '—' }}</td>
                                 <td>{{ member.jobs_count ?? 0 }}</td>
+                                <td>
+                                    <span :class="['gm-pill', member.is_active ? 'gm-pill-on' : 'gm-pill-off']">
+                                        {{ member.is_active ? 'Active' : 'Inactive' }}
+                                    </span>
+                                </td>
+                                <td class="gm-row-actions">
+                                    <button type="button" class="btn btn-sm btn-secondary" title="Edit details" @click="openEditor(member)">
+                                        <i class="fas fa-pen"></i>
+                                    </button>
+                                    <!-- Offered only to somebody who has never
+                                         been on a job. Once they have, their
+                                         name is on a gate list the client was
+                                         sent, and the record cannot go without
+                                         taking that with it. -->
+                                    <button
+                                        v-if="!member.total_assignments"
+                                        type="button"
+                                        class="btn btn-sm btn-danger"
+                                        title="Remove from the books"
+                                        @click="remove(member)"
+                                    >
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                    <button
+                                        v-else
+                                        type="button"
+                                        class="btn btn-sm btn-secondary"
+                                        :title="`${member.user?.name} has been on ${member.total_assignments} job${member.total_assignments === 1 ? '' : 's'} — mark them inactive instead of deleting`"
+                                        @click="openEditor(member)"
+                                    >
+                                        <i class="fas fa-lock"></i>
+                                    </button>
+                                </td>
                             </tr>
                         </tbody>
                     </table>
@@ -136,6 +171,72 @@
                     Nobody on the books yet. Add somebody above and they can be put on a job's crew.
                 </p>
             </section>
+            <div v-if="editing" class="gm-overlay" @click.self="editing = null">
+                <div class="gm-modal">
+                    <div class="gm-modal-head">
+                        <div>
+                            <span class="page-kicker">Edit</span>
+                            <h2>{{ editing.user?.name }}</h2>
+                            <p class="gm-help">{{ editing.technician_id }}</p>
+                        </div>
+                        <button type="button" class="gm-close" @click="editing = null">&times;</button>
+                    </div>
+
+                    <form class="gm-form" @submit.prevent="saveEdit">
+                        <div class="gm-field">
+                            <label>Full name</label>
+                            <input v-model="editForm.name" type="text" required maxlength="255">
+                        </div>
+
+                        <div class="gm-field">
+                            <label>ID number</label>
+                            <input v-model="editForm.national_id" type="text" required maxlength="32">
+                        </div>
+
+                        <div class="gm-field">
+                            <label>Phone <span class="gm-optional">(optional)</span></label>
+                            <input v-model="editForm.phone" type="text" maxlength="20">
+                        </div>
+
+                        <div class="gm-field">
+                            <label>Location</label>
+                            <input v-model="editForm.location" type="text" required maxlength="255">
+                        </div>
+
+                        <div class="gm-field gm-field-wide">
+                            <label>Replace passport photo <span class="gm-optional">(optional)</span></label>
+                            <input type="file" accept="image/*" @change="onEditPhoto">
+                            <small class="gm-help">Leave empty to keep the photo on file.</small>
+                        </div>
+
+                        <div class="gm-field gm-field-wide">
+                            <label>Notes <span class="gm-optional">(optional)</span></label>
+                            <textarea v-model="editForm.bio" rows="2" maxlength="1000"></textarea>
+                        </div>
+
+                        <!-- The way off the books for somebody who has worked:
+                             out of the crew picker, still on every gate list
+                             they were ever on. -->
+                        <div class="gm-field gm-field-wide">
+                            <label class="gm-check">
+                                <input type="checkbox" v-model="editForm.is_active">
+                                <span>On the books and available for crews</span>
+                            </label>
+                            <small class="gm-help">
+                                Unticked, they stay on every job they have already been part of but are no
+                                longer offered when building a crew.
+                            </small>
+                        </div>
+
+                        <div class="gm-actions">
+                            <button type="button" class="btn btn-secondary" @click="editing = null">Cancel</button>
+                            <button type="submit" class="btn btn-primary" :disabled="savingEdit || !editReady">
+                                {{ savingEdit ? 'Saving…' : 'Save changes' }}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
         </main>
     </div>
 </template>
@@ -181,6 +282,65 @@ const matching = computed(() => {
 
 const onPhoto = (event) => {
     photo.value = event.target.files?.[0] || null
+}
+
+// ---- editing ----
+const editing = ref(null)
+const savingEdit = ref(false)
+const editPhoto = ref(null)
+
+const editForm = reactive({
+    name: '',
+    national_id: '',
+    phone: '',
+    location: '',
+    bio: '',
+    is_active: true,
+})
+
+const editReady = computed(() =>
+    editForm.name.trim() && editForm.national_id.trim() && editForm.location.trim(),
+)
+
+const openEditor = (member) => {
+    editing.value = member
+    editPhoto.value = null
+    Object.assign(editForm, {
+        name: member.user?.name || '',
+        national_id: member.national_id || '',
+        phone: member.user?.phone || '',
+        location: member.location || '',
+        bio: member.bio || '',
+        is_active: Boolean(member.is_active),
+    })
+}
+
+const onEditPhoto = (event) => {
+    editPhoto.value = event.target.files?.[0] || null
+}
+
+const saveEdit = () => {
+    if (!editReady.value || savingEdit.value) return
+    savingEdit.value = true
+
+    router.post(`/admin/gang-members/${editing.value.id}`, {
+        ...editForm,
+        passport_photo: editPhoto.value,
+    }, {
+        forceFormData: true,
+        preserveScroll: true,
+        onSuccess: () => { editing.value = null },
+        onFinish: () => { savingEdit.value = false },
+    })
+}
+
+const remove = (member) => {
+    if (!confirm(
+        `Remove ${member.user?.name} from the books?\n\n`
+        + `They have never been on a job, so nothing else refers to them and this cannot be undone.`
+    )) return
+
+    router.delete(`/admin/gang-members/${member.id}`, { preserveScroll: true })
 }
 
 const submit = () => {
@@ -293,4 +453,51 @@ const submit = () => {
 .gm-avatar-empty { background: #f1f5f9; color: #94a3b8; }
 .gm-missing { color: #b45309; font-weight: 600; }
 .gm-empty { color: #64748b; font-size: 0.88rem; margin: 0; }
+
+.gm-row-actions { display: flex; gap: 0.35rem; }
+.gm-pill {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+.gm-pill-on { background: #ecfdf5; color: #065f46; }
+.gm-pill-off { background: #f1f5f9; color: #64748b; }
+.gm-check { display: flex; align-items: center; gap: 0.45rem; font-weight: 600; font-size: 0.82rem; color: #334155; }
+
+.gm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    z-index: 50;
+}
+.gm-modal {
+    background: #fff;
+    border-radius: 14px;
+    padding: 1.25rem;
+    width: min(680px, 100%);
+    max-height: 90vh;
+    overflow-y: auto;
+}
+.gm-modal-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 0.9rem;
+}
+.gm-modal-head h2 { margin: 0.15rem 0 0; font-size: 1.05rem; color: #0f172a; }
+.gm-close {
+    background: none;
+    border: 0;
+    font-size: 1.5rem;
+    line-height: 1;
+    color: #94a3b8;
+    cursor: pointer;
+}
 </style>

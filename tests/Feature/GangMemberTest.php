@@ -412,4 +412,150 @@ class GangMemberTest extends TestCase
         $this->assertContains($id, Technician::technicians()->pluck('id')->all());
         $this->assertNotContains($id, Technician::gangMembers()->pluck('id')->all());
     }
+
+    // ==================== keeping the books up to date ====================
+
+    public function test_details_can_be_corrected(): void
+    {
+        $member = $this->gangMember('Njehia Njehia');
+
+        $this->actingAs($this->admin())
+            ->post(route('admin.gang-members.update', $member), [
+                'name' => 'Njehia Njehia Kamau',
+                'national_id' => '2341231',
+                'phone' => '077878728',
+                'location' => 'Kiambu',
+                'is_active' => true,
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $member->refresh();
+
+        // The name lives on the account, which is where every roster and gate
+        // list reads it from; the rest lives on the record.
+        $this->assertSame('Njehia Njehia Kamau', $member->user->name);
+        $this->assertSame('077878728', $member->user->phone);
+        $this->assertSame('2341231', $member->national_id);
+        $this->assertSame('Kiambu', $member->location);
+    }
+
+    public function test_an_id_number_cannot_be_edited_away(): void
+    {
+        $member = $this->gangMember();
+
+        $this->actingAs($this->admin())
+            ->post(route('admin.gang-members.update', $member), [
+                'name' => 'Juma Otieno',
+                'national_id' => '',
+                'location' => 'Nairobi',
+            ])
+            ->assertSessionHasErrors('national_id');
+
+        $this->assertSame('31234567', $member->fresh()->national_id);
+    }
+
+    public function test_a_technician_cannot_be_edited_through_the_gang_screen(): void
+    {
+        $technician = $this->technician();
+
+        $this->actingAs($this->admin())
+            ->post(route('admin.gang-members.update', $technician), [
+                'name' => 'Renamed',
+                'national_id' => '9999',
+                'location' => 'Nairobi',
+            ])
+            ->assertNotFound();
+    }
+
+    public function test_somebody_who_has_never_worked_can_be_removed_outright(): void
+    {
+        $member = $this->gangMember();
+        $userId = $member->user_id;
+
+        $this->actingAs($this->admin())
+            ->delete(route('admin.gang-members.destroy', $member))
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $this->assertSame(0, Technician::whereKey($member->id)->count());
+        // The account existed only to hold their name.
+        $this->assertSame(0, User::whereKey($userId)->count());
+    }
+
+    public function test_somebody_who_has_been_on_a_job_is_not_deleted(): void
+    {
+        $job = $this->job();
+        $member = $this->gangMember();
+
+        JobAssignment::create([
+            'service_request_id' => $job->id,
+            'technician_id' => $member->id,
+            'assigned_by' => $this->admin()->id,
+            'role_on_job' => 'Carrying materials',
+            'status' => JobAssignment::STATUS_ACCEPTED,
+        ]);
+
+        $this->actingAs($this->admin())
+            ->delete(route('admin.gang-members.destroy', $member))
+            ->assertRedirect()
+            ->assertSessionHas('error');
+
+        // Their name is on a gate list the client was sent, and the foreign
+        // keys cascade — deleting the record would take that history with it.
+        $this->assertSame(1, Technician::whereKey($member->id)->count());
+        $this->assertSame(1, JobAssignment::where('technician_id', $member->id)->count());
+    }
+
+    public function test_marking_somebody_inactive_keeps_their_history_and_stops_new_work(): void
+    {
+        $job = $this->job();
+        $member = $this->gangMember();
+
+        JobAssignment::create([
+            'service_request_id' => $job->id,
+            'technician_id' => $member->id,
+            'assigned_by' => $this->admin()->id,
+            'role_on_job' => 'Carrying materials',
+            'status' => JobAssignment::STATUS_ACCEPTED,
+        ]);
+
+        $this->actingAs($this->admin())
+            ->post(route('admin.gang-members.update', $member), [
+                'name' => $member->user->name,
+                'national_id' => $member->national_id,
+                'location' => $member->location,
+                'is_active' => false,
+            ])
+            ->assertRedirect();
+
+        $this->assertFalse($member->fresh()->is_active);
+
+        // Still on the job they were already part of.
+        $names = collect($job->fresh()->attendanceRoster())->pluck('name');
+        $this->assertContains($member->user->name, $names);
+    }
+
+    public function test_the_list_says_who_can_be_deleted(): void
+    {
+        $job = $this->job();
+        $worked = $this->gangMember('Has Worked');
+        $fresh = $this->gangMember('Never Worked');
+
+        JobAssignment::create([
+            'service_request_id' => $job->id,
+            'technician_id' => $worked->id,
+            'assigned_by' => $this->admin()->id,
+            'role_on_job' => 'Carrying materials',
+            'status' => JobAssignment::STATUS_ACCEPTED,
+        ]);
+
+        $rows = collect($this->actingAs($this->admin())
+            ->get(route('admin.gang-members'))
+            ->assertOk()
+            ->viewData('page')['props']['gangMembers']);
+
+        $this->assertSame(1, $rows->firstWhere('user.name', 'Has Worked')['total_assignments']);
+        $this->assertSame(0, $rows->firstWhere('user.name', 'Never Worked')['total_assignments']);
+    }
 }

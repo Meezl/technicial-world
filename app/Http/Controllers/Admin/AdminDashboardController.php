@@ -795,6 +795,7 @@ class AdminDashboardController extends Controller
     {
         $gangMembers = Technician::gangMembers()
             ->with('user:id,name,phone')
+            ->withCount('jobAssignments as total_assignments')
             ->withCount(['jobAssignments as jobs_count' => fn ($q) => $q->whereIn('status', [
                 JobAssignment::STATUS_PENDING,
                 JobAssignment::STATUS_ACCEPTED,
@@ -885,6 +886,98 @@ class AdminDashboardController extends Controller
             $technician->user->name . ' added as a gang member (' . $technician->technician_id
             . '). They can be put on a job\'s crew with a description of what they will be doing on site.'
         );
+    }
+
+    /**
+     * Correct a gang member's details.
+     *
+     * The name and phone live on the account because that is where every
+     * roster, gate list and notice reads them from; the rest lives on the
+     * record itself. Both are written here so the office has one form rather
+     * than two screens and a rule about which holds what.
+     */
+    public function updateGangMember(Request $request, Technician $technician)
+    {
+        abort_unless($technician->isGangMember(), 404);
+
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'national_id' => 'required|string|max:32',
+            'phone' => 'nullable|string|max:20',
+            'location' => 'required|string|max:255',
+            'bio' => 'nullable|string|max:1000',
+            'is_active' => 'nullable|boolean',
+            'passport_photo' => 'nullable|image|mimes:jpg,jpeg,png,webp,heic,heif|max:8192',
+        ], [
+            'national_id.required' => 'An ID number is required — site security checks it at the gate.',
+        ]);
+
+        DB::transaction(function () use ($request, $technician) {
+            $technician->user?->update([
+                'name' => $request->name,
+                'phone' => $request->phone,
+            ]);
+
+            $updates = [
+                'national_id' => trim($request->national_id),
+                'location' => $request->location,
+                'bio' => $request->bio,
+                'is_active' => $request->boolean('is_active', true),
+            ];
+
+            if ($request->hasFile('passport_photo')) {
+                // Replace rather than accumulate — the old photo is of no use
+                // to anybody once a new one is on file.
+                if ($technician->profile_photo_path) {
+                    \Illuminate\Support\Facades\Storage::disk('public')->delete($technician->profile_photo_path);
+                }
+
+                $updates['profile_photo_path'] = $request->file('passport_photo')
+                    ->store('technician-photos/' . $technician->id, 'public');
+            }
+
+            $technician->update($updates);
+        });
+
+        return back()->with('success', $request->name . '\'s details updated.');
+    }
+
+    /**
+     * Take a gang member off the books for good.
+     *
+     * Only somebody who has never been on a job. Once they have, their name is
+     * on a gate list the client was sent and on assignments the office can
+     * still be asked about, and deleting the record would take those with it —
+     * the foreign keys cascade. Somebody who has worked is deactivated instead,
+     * which keeps the history and takes them out of the crew picker.
+     */
+    public function destroyGangMember(Technician $technician)
+    {
+        abort_unless($technician->isGangMember(), 404);
+
+        $name = $technician->user?->name ?? 'That person';
+
+        if ($technician->jobAssignments()->exists()) {
+            return back()->with('error', sprintf(
+                '%s has been on a job, so their record is part of gate lists the client was already sent. '
+                . 'Mark them inactive instead — that takes them out of the crew picker and leaves the history intact.',
+                $name
+            ));
+        }
+
+        DB::transaction(function () use ($technician) {
+            if ($technician->profile_photo_path) {
+                \Illuminate\Support\Facades\Storage::disk('public')->delete($technician->profile_photo_path);
+            }
+
+            $user = $technician->user;
+            $technician->delete();
+            // The account existed only to hold their name — there is nothing
+            // left for it to hold.
+            $user?->delete();
+        });
+
+        return back()->with('success', $name . ' removed from the books.');
     }
 
     public function storeTechnician(Request $request)

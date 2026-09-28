@@ -3345,7 +3345,12 @@ const availableForCrew = computed(() => {
         return a?.technician_id
     }).filter(Boolean))
 
-    return (props.technicians || []).filter(t => !onJob.has(t.id))
+    // A gang member taken off the books stays on every job they were already
+    // part of, and stops being offered for new ones. Technicians are left
+    // alone here: their availability is managed through their own screen.
+    return (props.technicians || []).filter(t =>
+        !onJob.has(t.id) && !(t.kind === 'gang_member' && t.is_active === false),
+    )
 })
 
 const crewFormReady = computed(() =>

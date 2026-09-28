@@ -245,6 +245,8 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     // People who work on site and are not tradesmen — see storeGangMember().
     Route::get('/gang-members', [AdminDashboardController::class, 'gangMembers'])->name('admin.gang-members');
     Route::post('/gang-members', [AdminDashboardController::class, 'storeGangMember'])->name('admin.gang-members.store');
+    Route::post('/gang-members/{technician}', [AdminDashboardController::class, 'updateGangMember'])->name('admin.gang-members.update');
+    Route::delete('/gang-members/{technician}', [AdminDashboardController::class, 'destroyGangMember'])->name('admin.gang-members.destroy');
     Route::put('/technicians/{technician}', [AdminDashboardController::class, 'updateTechnician'])->name('admin.technicians.update');
     Route::delete('/technicians/{technician}', [AdminDashboardController::class, 'destroyTechnician'])->name('admin.technicians.destroy');
     Route::post('/technicians/{technician}/approve', [AdminDashboardController::class, 'approveTechnician'])->name('admin.technicians.approve');
