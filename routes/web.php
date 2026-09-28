@@ -548,6 +548,8 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::put('/sub-tasks/{serviceSubTask}', [AdminDashboardController::class, 'updateSubTask'])->name('admin.sub-tasks.update');
     Route::delete('/sub-tasks/{serviceSubTask}', [AdminDashboardController::class, 'deleteSubTask'])->name('admin.sub-tasks.destroy');
     Route::post('/sub-tasks/{serviceSubTask}/assign', [AdminDashboardController::class, 'assignSubTaskTechnician'])->name('admin.sub-tasks.assign');
+    // Off the sub-task and off the gate list, with the work left behind.
+    Route::post('/sub-tasks/{serviceSubTask}/unassign', [AdminDashboardController::class, 'unassignSubTaskTechnician'])->name('admin.sub-tasks.unassign');
     // Adjust a sub-task technician's fee without reassigning them.
     Route::post('/sub-tasks/{serviceSubTask}/fee', [AdminDashboardController::class, 'updateSubTaskCompensation'])->name('admin.sub-tasks.fee');
 

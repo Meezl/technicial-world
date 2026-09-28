@@ -832,7 +832,7 @@ class ServiceRequest extends Model
     {
         $assignments = $this->relationLoaded('liveAssignments')
             ? $this->getRelation('liveAssignments')
-            : $this->liveAssignments()->with('technician.user')->get();
+            : $this->liveAssignments()->with(['technician.user', 'subTask:id,title'])->get();
 
         // One row per person, not per assignment.
         //
@@ -859,17 +859,38 @@ class ServiceRequest extends Model
                 // separately — see `entries` below.
                 $primary = $group->firstWhere('service_sub_task_id', null) ?? $first;
 
-                $entries = $group->map(fn ($assignment) => [
-                    'assignment_id' => $assignment->id,
-                    'role' => $this->rosterRoleLabel($assignment, $isLead),
-                    'attendance' => $assignment->attendanceLabel(),
-                    'is_sub_task' => $assignment->service_sub_task_id !== null,
-                    // Whoever carries the job cannot be removed as a crew
-                    // member: taking them off is a reassignment.
-                    'removable' => !$isLead
-                        && (int) $this->technician_id !== $technicianId
-                        && $assignment->service_sub_task_id === null,
-                ])->all();
+                $entries = $group->map(function ($assignment) use ($isLead, $technicianId) {
+                    // Taking somebody off the gate list is one of three
+                    // different acts, and the roster used to show a control for
+                    // only one of them — so a sub-task holder had no button and
+                    // no way to tell whether that meant "not allowed" or "not
+                    // here". Each row now says which act applies and why.
+                    $carriesJob = $isLead || (int) $this->technician_id === $technicianId;
+
+                    if ($assignment->service_sub_task_id !== null) {
+                        $removal = 'sub_task';
+                        $note = 'Takes them off this sub-task. The work stays, waiting for somebody else.';
+                    } elseif ($carriesJob) {
+                        $removal = null;
+                        $note = 'Whoever carries the job is changed by reassigning it, which records a reason and tells the client.';
+                    } else {
+                        $removal = 'crew';
+                        $note = 'Takes them off the crew and off the client\'s attendance notice.';
+                    }
+
+                    return [
+                        'assignment_id' => $assignment->id,
+                        'role' => $this->rosterRoleLabel($assignment, $isLead),
+                        'attendance' => $assignment->attendanceLabel(),
+                        'is_sub_task' => $assignment->service_sub_task_id !== null,
+                        'sub_task_id' => $assignment->service_sub_task_id,
+                        'sub_task_title' => $assignment->subTask?->title,
+                        'removal' => $removal,
+                        'removal_note' => $note,
+                        // Kept for anything still reading the old shape.
+                        'removable' => $removal !== null,
+                    ];
+                })->all();
 
                 return [
                     'ref' => $index + 1,

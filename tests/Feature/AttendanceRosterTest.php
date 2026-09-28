@@ -464,4 +464,163 @@ class AttendanceRosterTest extends TestCase
         $roster = $response->viewData('page')['props']['attendanceRoster'];
         $this->assertCount(1, $roster);
     }
+
+    // ==================== taking somebody off the list ====================
+
+    /**
+     * Every row offers a way off the list.
+     *
+     * A sub-task holder used to have no control at all, which read as the
+     * office not being allowed to correct a mistake rather than as the
+     * correction living somewhere else — and it lived nowhere.
+     */
+    public function test_each_row_says_what_taking_that_person_off_would_mean(): void
+    {
+        [$sr] = $this->makeJob(['has_sub_tasks' => true]);
+        $lead = $this->makeTechnician('Lead Person', '11111111');
+        $onTask = $this->makeTechnician('Task Holder', '22222222');
+        $crew = $this->makeTechnician('Crew Hand', '33333333');
+        $sr->update(['technician_id' => $lead->id, 'lead_technician_id' => $lead->id]);
+
+        $subTask = \App\Models\ServiceSubTask::create([
+            'service_request_id' => $sr->id,
+            'title' => 'Wiring',
+            'order' => 1,
+            'technician_id' => $onTask->id,
+            'agreed_compensation' => 8000,
+        ]);
+
+        $this->assign($sr, $lead);
+        $this->assign($sr, $onTask, ['service_sub_task_id' => $subTask->id]);
+        $this->assign($sr, $crew, ['role_on_job' => 'Labouring']);
+
+        $roster = collect($sr->fresh()->attendanceRoster());
+
+        // Whoever carries the job is changed by reassigning it, not from here.
+        $leadEntry = $roster->firstWhere('name', 'Lead Person')['entries'][0];
+        $this->assertNull($leadEntry['removal']);
+        $this->assertStringContainsString('reassigning', $leadEntry['removal_note']);
+
+        // A sub-task holder comes off the sub-task, and the work stays.
+        $taskEntry = $roster->firstWhere('name', 'Task Holder')['entries'][0];
+        $this->assertSame('sub_task', $taskEntry['removal']);
+        $this->assertSame($subTask->id, $taskEntry['sub_task_id']);
+        $this->assertSame('Wiring', $taskEntry['sub_task_title']);
+
+        // A crew hand simply comes off.
+        $crewEntry = $roster->firstWhere('name', 'Crew Hand')['entries'][0];
+        $this->assertSame('crew', $crewEntry['removal']);
+    }
+
+    public function test_taking_somebody_off_a_sub_task_leaves_the_work_behind(): void
+    {
+        [$sr, , $admin] = $this->makeJob(['has_sub_tasks' => true]);
+        $lead = $this->makeTechnician('Lead Person', '11111111');
+        $onTask = $this->makeTechnician('Task Holder', '22222222');
+        $sr->update(['technician_id' => $lead->id, 'lead_technician_id' => $lead->id]);
+
+        $subTask = \App\Models\ServiceSubTask::create([
+            'service_request_id' => $sr->id,
+            'title' => 'Wiring',
+            'order' => 1,
+            'technician_id' => $onTask->id,
+            'agreed_compensation' => 8000,
+        ]);
+        $assignment = $this->assign($sr, $onTask, ['service_sub_task_id' => $subTask->id]);
+        $this->assign($sr, $lead);
+
+        $this->actingAs($admin)
+            ->post(route('admin.sub-tasks.unassign', $subTask), ['reason' => 'Put on the wrong job.'])
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $subTask->refresh();
+
+        // The work survives, waiting for somebody else.
+        $this->assertNull($subTask->technician_id);
+        $this->assertSame(\App\Models\ServiceSubTask::STATUS_PENDING, $subTask->status);
+        // And their money is no longer committed against work they are not doing.
+        $this->assertEqualsWithDelta(0, (float) $subTask->agreed_compensation, 0.01);
+
+        $this->assertSame(JobAssignment::STATUS_REASSIGNED, $assignment->fresh()->status);
+        $this->assertSame('Put on the wrong job.', $assignment->fresh()->reassignment_reason);
+
+        // And they are off the gate list.
+        $names = collect($sr->fresh()->attendanceRoster())->pluck('name');
+        $this->assertNotContains('Task Holder', $names);
+        $this->assertContains('Lead Person', $names);
+    }
+
+    public function test_the_last_person_off_the_job_does_not_leave_it_pointing_at_them(): void
+    {
+        [$sr, , $admin] = $this->makeJob(['has_sub_tasks' => true]);
+        $only = $this->makeTechnician('Only Person', '44444444');
+
+        $subTask = \App\Models\ServiceSubTask::create([
+            'service_request_id' => $sr->id,
+            'title' => 'Wiring',
+            'order' => 1,
+            'technician_id' => $only->id,
+            'agreed_compensation' => 8000,
+        ]);
+        $this->assign($sr, $only, ['service_sub_task_id' => $subTask->id]);
+        $sr->update(['technician_id' => $only->id, 'lead_technician_id' => $only->id]);
+
+        $this->actingAs($admin)
+            ->post(route('admin.sub-tasks.unassign', $subTask))
+            ->assertRedirect();
+
+        $sr->refresh();
+
+        // Cleared rather than guessed at — the office decides who leads, and a
+        // silent promotion of the next name down is not that.
+        $this->assertNull($sr->technician_id);
+        $this->assertNull($sr->lead_technician_id);
+        $this->assertCount(0, $sr->attendanceRoster());
+    }
+
+    public function test_somebody_who_holds_a_sub_task_and_a_crew_place_keeps_the_other_one(): void
+    {
+        [$sr, , $admin] = $this->makeJob(['has_sub_tasks' => true]);
+        $lead = $this->makeTechnician('Lead Person', '11111111');
+        $both = $this->makeTechnician('Busy Person', '55555555');
+        $sr->update(['technician_id' => $lead->id, 'lead_technician_id' => $lead->id]);
+        $this->assign($sr, $lead);
+
+        $subTask = \App\Models\ServiceSubTask::create([
+            'service_request_id' => $sr->id,
+            'title' => 'Wiring',
+            'order' => 1,
+            'technician_id' => $both->id,
+            'agreed_compensation' => 8000,
+        ]);
+        $this->assign($sr, $both, ['service_sub_task_id' => $subTask->id]);
+        $this->assign($sr, $both, ['role_on_job' => 'Also labouring']);
+
+        $this->actingAs($admin)
+            ->post(route('admin.sub-tasks.unassign', $subTask))
+            ->assertRedirect();
+
+        // Off the sub-task, still on the crew — so still at the gate.
+        $row = collect($sr->fresh()->attendanceRoster())->firstWhere('name', 'Busy Person');
+        $this->assertNotNull($row);
+        $this->assertSame('Also labouring', $row['role']);
+        $this->assertCount(1, $row['entries']);
+    }
+
+    public function test_unassigning_an_empty_sub_task_says_so_rather_than_pretending(): void
+    {
+        [$sr, , $admin] = $this->makeJob(['has_sub_tasks' => true]);
+
+        $subTask = \App\Models\ServiceSubTask::create([
+            'service_request_id' => $sr->id,
+            'title' => 'Wiring',
+            'order' => 1,
+        ]);
+
+        $this->actingAs($admin)
+            ->post(route('admin.sub-tasks.unassign', $subTask))
+            ->assertRedirect()
+            ->assertSessionHas('error');
+    }
 }

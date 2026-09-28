@@ -4736,6 +4736,87 @@ class AdminDashboardController extends Controller
         return redirect()->route('admin.jobs.show', $serviceRequest)->with('success', 'Sub-task deleted successfully!');
     }
 
+    /**
+     * Take somebody off a sub-task, leaving the work behind.
+     *
+     * The roster had no way to do this. A sub-task holder simply had no remove
+     * control, which read as the office not being allowed to correct a mistake
+     * rather than as the correction living somewhere else — and the somewhere
+     * else did not exist either. Assignment could be changed only by assigning
+     * a replacement, so a man put on the wrong job stayed on the client's gate
+     * list until somebody was found to replace him.
+     *
+     * The sub-task survives, unassigned and waiting for whoever should have had
+     * it. Deleting the work because the wrong person was put on it would lose
+     * the scope, its fee and its place in the schedule.
+     */
+    public function unassignSubTaskTechnician(Request $request, ServiceSubTask $serviceSubTask)
+    {
+        $request->validate([
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        if (!$serviceSubTask->technician_id) {
+            return back()->with('error', 'Nobody is on that sub-task.');
+        }
+
+        $serviceRequest = $serviceSubTask->serviceRequest;
+        $technician = Technician::with('user')->find($serviceSubTask->technician_id);
+        $reason = $request->input('reason') ?: 'Taken off the sub-task from the attendance list.';
+
+        DB::transaction(function () use ($serviceSubTask, $reason) {
+            // The assignment closes the way a reassignment does, so the roster
+            // stops listing them and the history says why.
+            $this->findActiveSubTaskAssignment($serviceSubTask)?->update([
+                'status' => JobAssignment::STATUS_REASSIGNED,
+                'reassignment_reason' => $reason,
+                'actual_end' => now(),
+            ]);
+
+            // The fee goes with the person. Leaving it would keep their money
+            // committed against the labour budget on work they are not doing.
+            $serviceSubTask->update([
+                'technician_id' => null,
+                'status' => ServiceSubTask::STATUS_PENDING,
+                'assigned_at' => null,
+                'agreed_compensation' => 0,
+                'compensation_notes' => null,
+            ]);
+        });
+
+        // Whoever carries the job cannot be left pointing at somebody who is no
+        // longer on it. Cleared rather than guessed at — the office decides who
+        // leads, and a silent promotion of the next name down is not that.
+        $stillOnJob = $serviceRequest->liveAssignments()
+            ->where('technician_id', $technician?->id)
+            ->exists();
+
+        if ($technician && !$stillOnJob) {
+            $clear = [];
+            if ((int) $serviceRequest->technician_id === (int) $technician->id) {
+                $clear['technician_id'] = null;
+            }
+            if ((int) $serviceRequest->lead_technician_id === (int) $technician->id) {
+                $clear['lead_technician_id'] = null;
+            }
+            if ($clear) {
+                $serviceRequest->update($clear);
+            }
+        }
+
+        AuditLog::log(AuditLog::ACTION_ASSIGNMENT, $serviceSubTask, null, [
+            'unassigned_technician_id' => $technician?->id,
+            'reason' => $reason,
+            'by' => auth()->id(),
+        ]);
+
+        return back()->with('success', sprintf(
+            '%s taken off "%s". The sub-task is waiting for somebody else, and the client should be sent an updated attendance notice.',
+            $technician?->user?->name ?? 'Technician',
+            $serviceSubTask->title
+        ));
+    }
+
     public function assignSubTaskTechnician(Request $request, ServiceSubTask $serviceSubTask)
     {
         $request->validate([

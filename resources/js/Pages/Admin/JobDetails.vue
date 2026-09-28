@@ -564,18 +564,28 @@
                                                 >
                                                     <i class="fas fa-pen"></i>
                                                 </button>
-                                                <!-- Not offered for whoever carries the job: taking
-                                                     them off is a reassignment, which has its own
-                                                     flow, notification and reason. Nor for a
-                                                     sub-task assignment, which is unassigned from
-                                                     the sub-task itself. -->
+                                                <!-- Every row offers a way off the list. What that
+                                                     means differs — crew, sub-task holder or whoever
+                                                     carries the job — so the control says which, and
+                                                     the one that cannot be done here says where it
+                                                     is done instead. An absent button read as "not
+                                                     allowed" when it meant "not here". -->
                                                 <button
-                                                    v-if="entry.removable"
+                                                    v-if="entry.removal"
                                                     class="btn btn-sm btn-danger"
-                                                    @click="removeCrewMember(member, entry.assignment_id)"
-                                                    title="Remove from crew"
+                                                    @click="removeFromRoster(member, entry)"
+                                                    :title="entry.removal_note"
                                                 >
                                                     <i class="fas fa-user-minus"></i>
+                                                </button>
+                                                <button
+                                                    v-else
+                                                    type="button"
+                                                    class="btn btn-sm btn-secondary"
+                                                    :title="entry.removal_note"
+                                                    @click="job.has_sub_tasks ? openLeadAssignModal() : openSingleAssignModal()"
+                                                >
+                                                    <i class="fas fa-right-left"></i>
                                                 </button>
                                             </div>
                                         </td>
@@ -3397,10 +3407,31 @@ const addToCrew = () => {
     })
 }
 
-const removeCrewMember = (member, assignmentId = member.assignment_id) => {
+/**
+ * Take one person off one thing.
+ *
+ * A row can cover several assignments, and what "remove" means depends on which
+ * one: a crew place is simply ended, a sub-task place hands the work back
+ * unassigned, and whoever carries the job is changed by reassigning it. The
+ * confirm says which of those is about to happen, because they are not
+ * recoverable in the same way.
+ */
+const removeFromRoster = (member, entry) => {
+    if (entry.removal === 'sub_task') {
+        const task = entry.sub_task_title ? `“${entry.sub_task_title}”` : 'this sub-task'
+        if (!confirm(
+            `Take ${member.name} off ${task}?\n\n`
+            + `The sub-task stays on the job, unassigned and waiting for somebody else, and its `
+            + `agreed fee is cleared. The client should be sent an updated attendance notice.`
+        )) return
+
+        router.post(`/admin/sub-tasks/${entry.sub_task_id}/unassign`, {}, { preserveScroll: true })
+        return
+    }
+
     if (!confirm(`Remove ${member.name} from the crew? The client should be sent an updated notice.`)) return
 
-    router.post(`/admin/job-assignments/${assignmentId}/remove-from-crew`, {}, {
+    router.post(`/admin/job-assignments/${entry.assignment_id}/remove-from-crew`, {}, {
         preserveScroll: true,
     })
 }
