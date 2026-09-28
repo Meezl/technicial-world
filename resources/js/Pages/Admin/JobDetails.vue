@@ -765,6 +765,19 @@
                                             <i class="fas fa-user-plus"></i>
                                             {{ subTask.technician ? 'Reassign' : 'Assign' }}
                                         </button>
+                                        <!-- Taking somebody off without putting
+                                             anybody else on. Reassign could only
+                                             ever swap one man for another, so a
+                                             task given to the wrong person stayed
+                                             his until a replacement was found. -->
+                                        <button
+                                            v-if="subTask.technician && subTask.status !== 'completed'"
+                                            @click="unassignSubTask(subTask)"
+                                            class="btn btn-danger btn-xs"
+                                            title="Take them off this task and leave the work unassigned"
+                                        >
+                                            <i class="fas fa-user-minus"></i> Unassign
+                                        </button>
                                     </div>
                                 </div>
 
@@ -4227,6 +4240,24 @@ const seedAssignmentForm = ({ amount = '', notes = '' } = {}) => {
 const resetAssignmentForm = () => {
     assignmentForm.agreed_compensation = ''
     assignmentForm.compensation_notes = ''
+}
+
+/**
+ * Take somebody off a task without replacing them.
+ *
+ * The work stays on the job, unassigned and waiting, and their fee is cleared —
+ * leaving it would keep money committed against work they are not doing.
+ */
+const unassignSubTask = (subTask) => {
+    const who = subTask.technician?.user?.name || 'this technician'
+    if (!confirm(
+        `Take ${who} off “${subTask.title}”?\n\n`
+        + `The task stays on the job, unassigned and waiting for somebody else, and its agreed fee `
+        + `is cleared. They come off the client's attendance notice unless they are on the job for `
+        + `something else as well.`
+    )) return
+
+    router.post(`/admin/sub-tasks/${subTask.id}/unassign`, {}, { preserveScroll: true })
 }
 
 const showAssignModalFor = (subTask) => {

@@ -4542,6 +4542,61 @@ class AdminDashboardController extends Controller
      * which has its own flow, its own notification and its own reason.
      */
     /**
+     * Somebody moving from the crew to a task takes their place with them.
+     *
+     * A bare crew place and a task are two assignments, and the committed
+     * labour figure sums both — so giving a task to a man already on the crew
+     * for a fee counted his money twice, once on each row, for one job's work.
+     * The old place closes and whatever it carried that the task does not — the
+     * role the client's gate list reads, the dates he is on site — moves across
+     * rather than being lost with it.
+     *
+     * The lead's own assignment is left alone. Carrying the job and holding a
+     * task are genuinely two things, and both are paid.
+     */
+    private function absorbBareCrewPlace(
+        ServiceRequest $serviceRequest,
+        Technician $technician,
+        ?JobAssignment $subTaskAssignment
+    ): void {
+        if (!$subTaskAssignment) {
+            return;
+        }
+
+        $carriesJob = (int) $serviceRequest->technician_id === (int) $technician->id
+            || (int) $serviceRequest->lead_technician_id === (int) $technician->id;
+
+        if ($carriesJob) {
+            return;
+        }
+
+        $crewPlaces = $serviceRequest->jobAssignments()
+            ->whereNull('service_sub_task_id')
+            ->where('technician_id', $technician->id)
+            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
+            ->get();
+
+        foreach ($crewPlaces as $place) {
+            $carriedOver = array_filter([
+                'role_on_job' => $subTaskAssignment->role_on_job ?: $place->role_on_job,
+                'expected_start' => $subTaskAssignment->expected_start ?: $place->expected_start,
+                'expected_end' => $subTaskAssignment->expected_end ?: $place->expected_end,
+                'attendance_dates' => $subTaskAssignment->attendance_dates ?: $place->attendance_dates,
+            ], fn ($value) => $value !== null);
+
+            if ($carriedOver) {
+                $subTaskAssignment->update($carriedOver);
+            }
+
+            $place->update([
+                'status' => JobAssignment::STATUS_REASSIGNED,
+                'reassignment_reason' => 'Moved from the crew onto a task on this job.',
+                'actual_end' => now(),
+            ]);
+        }
+    }
+
+    /**
      * Put a technician on the crew by giving them one of the job's tasks.
      *
      * The same assignment carries both: the sub-task they answer for, and the
@@ -5052,12 +5107,14 @@ class AdminDashboardController extends Controller
             'compensation_notes' => $request->compensation_notes,
         ]);
 
-        $this->syncSubTaskAssignment(
+        $assignment = $this->syncSubTaskAssignment(
             $serviceSubTask,
             $technician,
             (float) $request->agreed_compensation,
             $request->compensation_notes
         );
+
+        $this->absorbBareCrewPlace($serviceRequest, $technician, $assignment);
 
         // Determine if this is the first assigned technician (becomes lead)
         $isFirstAssignment = !$serviceRequest->lead_technician_id;

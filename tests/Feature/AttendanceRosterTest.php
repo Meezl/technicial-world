@@ -743,4 +743,101 @@ class AttendanceRosterTest extends TestCase
 
         $this->assertSame(\App\Models\ServiceSubTask::STATUS_PENDING, $subTask->fresh()->status);
     }
+
+    /**
+     * The trap behind "unassigned, yet committed".
+     *
+     * A bare crew place and a task are two assignments, and the committed
+     * labour figure sums both. Promoting a man already on the crew for a fee
+     * counted his money twice — once on each row — for one job's work.
+     */
+    public function test_moving_a_crew_member_onto_a_task_does_not_pay_them_twice(): void
+    {
+        [$sr, , $admin] = $this->makeJob(['has_sub_tasks' => true]);
+        \App\Models\ServiceRequestBudget::create([
+            'service_request_id' => $sr->id,
+            'labor_budget' => 100000,
+            'materials_budget' => 0,
+            'other_budget' => 0,
+        ]);
+
+        $lead = $this->makeTechnician('Peter Mutua', '30280963');
+        $sr->update(['technician_id' => $lead->id, 'lead_technician_id' => $lead->id]);
+        $this->assign($sr, $lead, ['agreed_compensation' => 1500]);
+
+        $wycliffe = $this->makeTechnician('Wycliffe Mackynon', '22805544');
+        $subTask = \App\Models\ServiceSubTask::create([
+            'service_request_id' => $sr->id,
+            'title' => 'Carpentry & Woodwork',
+            'order' => 2,
+        ]);
+
+        // On the crew for a fee, with a role that reads like the task but is
+        // not linked to it — the shape the board was showing.
+        $this->actingAs($admin)->post(route('admin.jobs.crew.add', $sr), [
+            'technician_id' => $wycliffe->id,
+            'role_on_job' => 'Carpentry & Woodwork',
+            'agreed_compensation' => 1300,
+            'expected_start' => '2026-09-28',
+            'expected_end' => '2026-09-28',
+        ])->assertRedirect();
+
+        // Now actually put him on the task.
+        $this->actingAs($admin)->post(route('admin.sub-tasks.assign', $subTask), [
+            'technician_id' => $wycliffe->id,
+            'agreed_compensation' => 1300,
+        ])->assertRedirect();
+
+        $committed = collect($this->actingAs($admin)
+            ->get(route('admin.jobs.show', $sr))
+            ->viewData('page')['props']['budgetSummary']['labor']);
+
+        // 1,500 for the lead and 1,300 for Wycliffe — not 1,300 twice.
+        $this->assertEqualsWithDelta(2800, $committed['committed'], 0.01);
+        $this->assertEqualsWithDelta(
+            1300,
+            collect($committed['breakdown'])->firstWhere('name', 'Wycliffe Mackynon')['amount'],
+            0.01
+        );
+
+        // One row on the gate list, keeping the dates the crew place carried.
+        $row = collect($sr->fresh()->attendanceRoster())->firstWhere('name', 'Wycliffe Mackynon');
+        $this->assertCount(1, $row['entries']);
+        $this->assertSame('28.09.2026', $row['attendance']);
+        $this->assertSame('Carpentry & Woodwork', $row['role']);
+    }
+
+    public function test_the_lead_keeps_their_own_assignment_when_given_a_task(): void
+    {
+        [$sr, , $admin] = $this->makeJob(['has_sub_tasks' => true]);
+        \App\Models\ServiceRequestBudget::create([
+            'service_request_id' => $sr->id,
+            'labor_budget' => 100000,
+            'materials_budget' => 0,
+            'other_budget' => 0,
+        ]);
+
+        $lead = $this->makeTechnician('Peter Mutua', '30280963');
+        $sr->update(['technician_id' => $lead->id, 'lead_technician_id' => $lead->id]);
+        $this->assign($sr, $lead, ['agreed_compensation' => 1500]);
+
+        $subTask = \App\Models\ServiceSubTask::create([
+            'service_request_id' => $sr->id,
+            'title' => 'Electrical works',
+            'order' => 1,
+        ]);
+
+        $this->actingAs($admin)->post(route('admin.sub-tasks.assign', $subTask), [
+            'technician_id' => $lead->id,
+            'agreed_compensation' => 800,
+        ])->assertRedirect();
+
+        // Carrying the job and holding a task are two things, and both are paid.
+        $committed = $this->actingAs($admin)
+            ->get(route('admin.jobs.show', $sr))
+            ->viewData('page')['props']['budgetSummary']['labor']['committed'];
+
+        $this->assertEqualsWithDelta(2300, $committed, 0.01);
+        $this->assertCount(2, collect($sr->fresh()->attendanceRoster())->firstWhere('name', 'Peter Mutua')['entries']);
+    }
 }
