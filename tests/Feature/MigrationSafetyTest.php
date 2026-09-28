@@ -152,6 +152,10 @@ class MigrationSafetyTest extends TestCase
             // Without it the deposit gate would read every live job as
             // unconverted and try to convert it again.
             '2026_09_25_000000_add_deposit_gate_to_job_conversion',
+            // Back-fills lead_reviewed_at and ops_verified_at, both created in
+            // the same migration, so reports already settled or already sent
+            // are not held behind a sign-off nobody was asked for.
+            '2026_09_28_000000_add_ops_verification_to_progress_reports',
         ];
 
         $this->assertSame(

@@ -34,6 +34,19 @@ class LeadReportPipelineTest extends TestCase
     }
 
     /**
+     * What the lead's approve endpoint records: the billing marker the office
+     * clears on validation, and the permanent note that somebody other than the
+     * author looked at the work.
+     */
+    private function ratifyByLead(ProgressReport $report): void
+    {
+        $report->forceFill([
+            'approved_by_lead_at' => now(),
+            'lead_reviewed_at' => now(),
+        ])->save();
+    }
+
+    /**
      * The admin dashboard's alert list, built directly.
      *
      * The dashboard route itself cannot run under SQLite — its monthly trend
@@ -243,8 +256,8 @@ class LeadReportPipelineTest extends TestCase
         $reportB = $service->submitReport($job, $crewB->id, $crewB->user->id, [
             'percent_complete' => 60, 'service_sub_task_id' => $taskB->id,
         ]);
-        $reportA->forceFill(['approved_by_lead_at' => now()])->save();
-        $reportB->forceFill(['approved_by_lead_at' => now()])->save();
+        $this->ratifyByLead($reportA);
+        $this->ratifyByLead($reportB);
 
         $posted = $service->postBatchToOffice($job->fresh(), $lead->user);
         $this->assertSame(2, $posted);
@@ -305,6 +318,12 @@ class LeadReportPipelineTest extends TestCase
 
         Mail::assertNothingSent();
 
+        // Nobody reviewed these but the man who wrote them, so the office has
+        // to put its own name to them before the client is shown anything.
+        $adminUser = User::find($admin->id);
+        $service->verifyForRelease($first->fresh(), $adminUser);
+        $service->verifyForRelease($second->fresh(), $adminUser);
+
         // The office sends both on as one update.
         $released = $service->releaseToClient($job->fresh(), null, $admin->id);
         $this->flushDeferredWork();
@@ -333,6 +352,22 @@ class LeadReportPipelineTest extends TestCase
         $this->flushDeferredWork();
 
         $this->assertNull($report->fresh()->released_to_client_at);
+
+        // Releasing is refused while the report carries no review but its
+        // author's — and says so rather than failing quietly.
+        $this->actingAs($admin)
+            ->post(route('admin.jobs.release-reports', $job))
+            ->assertRedirect()
+            ->assertSessionHas('error');
+        $this->assertNull($report->fresh()->released_to_client_at);
+
+        $this->actingAs($admin)
+            ->post(route('admin.progress.verify', $report))
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $this->assertNotNull($report->fresh()->ops_verified_at);
+        $this->assertSame($admin->id, $report->fresh()->ops_verified_by);
 
         // No flushDeferredWork here: an HTTP request terminates itself, which
         // is what sends the deferred email. Flushing again would send it twice
@@ -403,6 +438,7 @@ class LeadReportPipelineTest extends TestCase
         $this->assertStringContainsString('1 validated report', $waiting['message']);
 
         // And it clears once the batch has gone.
+        $service->verifyForRelease($report->fresh(), User::find($admin->id));
         $service->releaseToClient($job->fresh(), null, $admin->id);
         $this->flushDeferredWork();
 
@@ -470,7 +506,7 @@ class LeadReportPipelineTest extends TestCase
         $report = $service->submitReport($job, $crew->id, $crew->user->id, [
             'percent_complete' => 45, 'service_sub_task_id' => $subTask->id,
         ]);
-        $report->forceFill(['approved_by_lead_at' => now()])->save();
+        $this->ratifyByLead($report);
         $service->postBatchToOffice($job->fresh(), $lead->user);
         $service->validate($report->fresh(), $pm->id, ['validated_percent' => 45], [], validatedAs: ProgressReport::AS_PROJECT_MANAGER);
 
@@ -509,5 +545,193 @@ class LeadReportPipelineTest extends TestCase
         $this->actingAs($admin)
             ->post(route('admin.jobs.release-reports', $job))
             ->assertSessionHas('error');
+    }
+
+    // ==================== the office's own sign-off ====================
+
+    /**
+     * A crew report on a lead-run job has been past two people before a client
+     * sees it. A single-technician report has been past one — its author. The
+     * sign-off is that missing second pair of eyes, and it is deliberately not
+     * the same act as validating: validating settles the percentage and pays
+     * the technician, this stands behind the work.
+     */
+    public function test_a_report_no_lead_reviewed_cannot_reach_the_client_unsigned(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $tech = $this->makeTechnician();
+
+        $job = $this->makeJob($client, ['technician_id' => $tech->id]);
+        $service = app(ProgressService::class);
+
+        $report = $service->submitReport($job, $tech->id, $tech->user->id, ['percent_complete' => 40]);
+        $service->validate($report->fresh(), $admin->id, ['validated_percent' => 40], [], validatedAs: ProgressReport::AS_ADMIN);
+
+        $this->assertTrue($report->fresh()->needsOpsVerification());
+
+        try {
+            $service->releaseToClient($job->fresh(), null, $admin->id);
+            $this->fail('A batch nobody has reviewed must not reach the client.');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            $this->assertStringContainsString('not been reviewed by a lead', collect($e->errors())->flatten()->first());
+        }
+
+        $this->assertNull($report->fresh()->released_to_client_at);
+    }
+
+    public function test_the_whole_batch_waits_rather_than_going_out_in_halves(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+        $task = $this->makeSubTask($job, $crew, 'Wiring');
+        $service = app(ProgressService::class);
+
+        // One report the lead ratified, one the lead wrote themselves.
+        $crewReport = $service->submitReport($job, $crew->id, $crew->user->id, [
+            'percent_complete' => 40, 'service_sub_task_id' => $task->id,
+        ]);
+        $this->ratifyByLead($crewReport);
+        $leadReport = $service->submitReport($job, $lead->id, $lead->user->id, ['percent_complete' => 50]);
+
+        $service->postBatchToOffice($job->fresh(), $lead->user);
+        foreach ([$crewReport, $leadReport] as $report) {
+            $service->validate($report->fresh(), $admin->id, ['validated_percent' => 40], [], validatedAs: ProgressReport::AS_ADMIN);
+        }
+
+        // Sending the reviewed half and holding the rest would hand the client
+        // two updates for one stretch of work — the fragmentation the batch
+        // step exists to prevent.
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        $service->releaseToClient($job->fresh(), null, $admin->id);
+    }
+
+    public function test_a_report_cannot_be_signed_off_before_it_is_validated(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $tech = $this->makeTechnician();
+
+        $job = $this->makeJob($client, ['technician_id' => $tech->id]);
+        $report = app(ProgressService::class)->submitReport($job, $tech->id, $tech->user->id, ['percent_complete' => 40]);
+
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        app(ProgressService::class)->verifyForRelease($report, $admin);
+    }
+
+    public function test_the_sign_off_records_who_gave_it(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN, 'name' => 'Jane Muthoni']);
+        $tech = $this->makeTechnician();
+
+        $job = $this->makeJob($client, ['technician_id' => $tech->id]);
+        $service = app(ProgressService::class);
+
+        $report = $service->submitReport($job, $tech->id, $tech->user->id, ['percent_complete' => 40]);
+        $service->validate($report->fresh(), $admin->id, ['validated_percent' => 40], [], validatedAs: ProgressReport::AS_ADMIN);
+        $service->verifyForRelease($report->fresh(), $admin, 'Photos check out against the scope.');
+
+        $report = $report->fresh();
+        $this->assertSame($admin->id, $report->ops_verified_by);
+        $this->assertNotNull($report->ops_verified_at);
+        $this->assertFalse($report->needsOpsVerification());
+
+        $audit = \App\Models\AuditLog::where('auditable_type', ProgressReport::class)
+            ->where('auditable_id', $report->id)
+            ->get()
+            ->firstWhere(fn ($row) => isset($row->new_values['ops_verified_by']));
+
+        $this->assertNotNull($audit);
+        $this->assertSame('Photos check out against the scope.', $audit->new_values['note']);
+    }
+
+    public function test_a_pm_can_sign_off_their_own_job_and_nobody_elses(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $pm = User::factory()->create(['role' => User::ROLE_PROJECT_MANAGER]);
+        $intruder = User::factory()->create(['role' => User::ROLE_PROJECT_MANAGER]);
+        $tech = $this->makeTechnician();
+
+        $job = $this->makeJob($client, ['technician_id' => $tech->id, 'assigned_pm_id' => $pm->id]);
+        $service = app(ProgressService::class);
+
+        $report = $service->submitReport($job, $tech->id, $tech->user->id, ['percent_complete' => 40]);
+        $service->validate($report->fresh(), $admin->id, ['validated_percent' => 40], [], validatedAs: ProgressReport::AS_ADMIN);
+
+        $this->actingAs($intruder)
+            ->post(route('pm.progress.verify', $report))
+            ->assertForbidden();
+        $this->assertNull($report->fresh()->ops_verified_at);
+
+        $this->actingAs($pm)
+            ->post(route('pm.progress.verify', $report))
+            ->assertRedirect();
+        $this->assertSame($pm->id, $report->fresh()->ops_verified_by);
+    }
+
+    public function test_the_admin_queue_shows_what_is_waiting_and_what_is_blocked(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $tech = $this->makeTechnician();
+
+        $job = $this->makeJob($client, ['technician_id' => $tech->id]);
+        $service = app(ProgressService::class);
+
+        $report = $service->submitReport($job, $tech->id, $tech->user->id, ['percent_complete' => 40]);
+        $service->validate($report->fresh(), $admin->id, ['validated_percent' => 40], [], validatedAs: ProgressReport::AS_ADMIN);
+
+        $props = $this->actingAs($admin)->get(route('admin.progress-reports'))
+            ->assertOk()
+            ->viewData('page')['props'];
+
+        $this->assertSame(1, $props['summary']['awaiting_sign_off']);
+        $this->assertSame(0, $props['summary']['awaiting_release']);
+
+        $row = collect($props['releasableByJob'])->firstWhere('id', $job->id);
+        $this->assertNotNull($row, 'The queue has to name the job that is holding work.');
+        $this->assertSame(1, $row['needs_sign_off']);
+
+        // Once signed off it moves from blocked to ready.
+        $service->verifyForRelease($report->fresh(), $admin);
+
+        $props = $this->actingAs($admin)->get(route('admin.progress-reports'))
+            ->viewData('page')['props'];
+
+        $this->assertSame(0, $props['summary']['awaiting_sign_off']);
+        $this->assertSame(1, $props['summary']['awaiting_release']);
+        $this->assertSame(0, collect($props['releasableByJob'])->firstWhere('id', $job->id)['needs_sign_off']);
+    }
+
+    public function test_a_report_the_office_wrote_itself_needs_no_sign_off(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $tech = $this->makeTechnician();
+
+        $job = $this->makeJob($client, ['technician_id' => $tech->id]);
+
+        $this->actingAs($admin);
+        $report = app(ProgressService::class)->createOnBehalf(
+            $job,
+            $admin->id,
+            ['percent_complete' => 45, 'technician_id' => $tech->id],
+            [],
+            ProgressReport::AS_ADMIN
+        );
+
+        // The office writing it is the office looking at it. Asking them to
+        // sign off their own words would be ceremony, not a check.
+        $this->assertFalse($report->fresh()->needsOpsVerification());
     }
 }

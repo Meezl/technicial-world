@@ -462,6 +462,28 @@ class PMDashboardController extends Controller
      * counterpart of the admin action. One report and one email to the client,
      * in place of a separate notification per technician.
      */
+    /** The PM's half of the office sign-off — see the admin method for why. */
+    public function verifyProgressReport(Request $request, ProgressReport $progressReport)
+    {
+        $this->authorizeForPm($progressReport->serviceRequest);
+
+        $data = $request->validate([
+            'note' => 'nullable|string|max:500',
+        ]);
+
+        try {
+            $this->progressService->verifyForRelease(
+                $progressReport,
+                auth()->user(),
+                $data['note'] ?? null
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return redirect()->back()->with('error', collect($e->errors())->flatten()->implode(' '));
+        }
+
+        return redirect()->back()->with('success', 'Report signed off. It can now go to the client with the next release.');
+    }
+
     public function releaseReportsToClient(Request $request, ServiceRequest $serviceRequest)
     {
         $this->authorizeForPm($serviceRequest);
@@ -470,11 +492,15 @@ class PMDashboardController extends Controller
             'office_batch_id' => 'nullable|uuid',
         ]);
 
-        $released = $this->progressService->releaseToClient(
-            $serviceRequest,
-            $data['office_batch_id'] ?? null,
-            auth()->id()
-        );
+        try {
+            $released = $this->progressService->releaseToClient(
+                $serviceRequest,
+                $data['office_batch_id'] ?? null,
+                auth()->id()
+            );
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return redirect()->back()->with('error', collect($e->errors())->flatten()->implode(' '));
+        }
 
         if ($released === 0) {
             return redirect()->back()->with('error',

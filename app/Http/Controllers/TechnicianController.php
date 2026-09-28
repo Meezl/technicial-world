@@ -1399,6 +1399,12 @@ class TechnicianController extends Controller
 
         $progressReport->forceFill([
             'approved_by_lead_at' => now(),
+            // Permanent, unlike approved_by_lead_at, which the office clears on
+            // validation because it doubles as the billing marker. This is the
+            // record that somebody other than the author looked at the work —
+            // the thing that decides whether the office must be a second pair
+            // of eyes before the client sees it.
+            'lead_reviewed_at' => $progressReport->lead_reviewed_at ?? now(),
             'lead_approval_note' => $data['approval_note'] ?? null,
         ])->save();
 

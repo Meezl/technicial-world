@@ -482,17 +482,116 @@ class AdminDashboardController extends Controller
      * place of a separate notification per technician. A batch id narrows it to
      * a single lead's push; without one it sweeps everything settled and unsent.
      */
+    /**
+     * Every progress report waiting on the office, across every job.
+     *
+     * A PM has had this list since the pipeline shipped; an admin had to open
+     * each job in turn and could only find work by knowing it was there. That
+     * was survivable while a validated report went to the client by itself. It
+     * is not now that releasing is deliberate: a queue nobody can see is a
+     * client who hears nothing.
+     */
+    public function progressReports(Request $request)
+    {
+        $summaryQuery = ProgressReport::query();
+
+        $summary = [
+            'pending' => (clone $summaryQuery)->needsOfficeAction()->count(),
+            'awaiting_sign_off' => (clone $summaryQuery)->awaitingOpsVerification()->count(),
+            'awaiting_release' => (clone $summaryQuery)->clearedForRelease()->count(),
+        ];
+
+        $reports = ProgressReport::query()
+            ->with([
+                'serviceRequest:id,request_id,job_reference,lead_technician_id',
+                'technician.user:id,name',
+                'submitter:id,name',
+                'validator:id,name',
+                'opsVerifier:id,name',
+                'subTask:id,title',
+                'photos',
+            ])
+            ->when($request->boolean('pending_only', true), fn ($q) => $q->needsOfficeAction())
+            ->when($request->input('job'), fn ($q, $job) => $q->whereHas(
+                'serviceRequest',
+                fn ($sr) => $sr->where('request_id', 'like', "%{$job}%")
+                    ->orWhere('job_reference', 'like', "%{$job}%")
+            ))
+            ->orderBy('report_date', 'desc')
+            ->paginate(12)
+            ->withQueryString();
+
+        // Jobs the office has settled but not sent on, split by what is holding
+        // each one: its own sign-off, or simply nobody having pressed release.
+        $byJob = ProgressReport::query()
+            ->releasableToClient()
+            ->whereHas('serviceRequest', fn ($q) => $q->whereNotIn('status', ServiceRequest::TERMINAL_STATUSES))
+            ->with('serviceRequest:id,request_id,job_reference')
+            ->get()
+            ->groupBy('service_request_id')
+            ->map(fn ($group) => [
+                'id' => $group->first()->service_request_id,
+                'request_id' => $group->first()->serviceRequest->request_id,
+                'job_reference' => $group->first()->serviceRequest->job_reference,
+                'count' => $group->count(),
+                'needs_sign_off' => $group->filter->needsOpsVerification()->count(),
+            ])
+            ->values();
+
+        return Inertia::render('Admin/ProgressReports', [
+            'reports' => $reports,
+            'summary' => $summary,
+            'releasableByJob' => $byJob,
+            'filters' => [
+                'pending_only' => $request->boolean('pending_only', true),
+                'job' => $request->input('job', ''),
+            ],
+        ]);
+    }
+
+    /**
+     * The office puts its name to a report no lead reviewed.
+     *
+     * A crew report on a lead-run job has been past two people before a client
+     * sees it. A single-technician report has been past one — its author. This
+     * is the second pair of eyes that job never had, and the client's copy
+     * rests on it.
+     */
+    public function verifyProgressReport(Request $request, ProgressReport $progressReport)
+    {
+        $data = $request->validate([
+            'note' => 'nullable|string|max:500',
+        ]);
+
+        try {
+            app(ProgressService::class)->verifyForRelease(
+                $progressReport,
+                auth()->user(),
+                $data['note'] ?? null
+            );
+        } catch (ValidationException $e) {
+            return back()->with('error', collect($e->errors())->flatten()->implode(' '));
+        }
+
+        return back()->with('success', 'Report signed off. It can now go to the client with the next release.');
+    }
+
     public function releaseReportsToClient(Request $request, ServiceRequest $serviceRequest)
     {
         $data = $request->validate([
             'office_batch_id' => 'nullable|uuid',
         ]);
 
-        $released = app(ProgressService::class)->releaseToClient(
-            $serviceRequest,
-            $data['office_batch_id'] ?? null,
-            auth()->id()
-        );
+        try {
+            $released = app(ProgressService::class)->releaseToClient(
+                $serviceRequest,
+                $data['office_batch_id'] ?? null,
+                auth()->id()
+            );
+        } catch (ValidationException $e) {
+            // Held for want of the office's own sign-off on work no lead saw.
+            return back()->with('error', collect($e->errors())->flatten()->implode(' '));
+        }
 
         if ($released === 0) {
             return back()->with('error',

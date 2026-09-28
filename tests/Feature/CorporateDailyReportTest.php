@@ -100,6 +100,9 @@ class CorporateDailyReportTest extends TestCase
             'report_date' => now()->toDateString(),
             'percent_complete' => $percent,
             'validated_percent' => $percent,
+            // Written by the office, so it carries its own authority and
+            // needs no second pair of eyes — see lacksPriorReview().
+            'is_pm_authored' => true,
             'is_validated' => true,
             'client_visible_notes' => $notes ?? 'First fix complete on both units.',
             'released_to_client_at' => now(),
@@ -150,6 +153,9 @@ class CorporateDailyReportTest extends TestCase
             'report_date' => now()->toDateString(),
             'percent_complete' => 40,
             'validated_percent' => 40,
+            // Written by the office, so it carries its own authority and
+            // needs no second pair of eyes — see lacksPriorReview().
+            'is_pm_authored' => true,
             'is_validated' => true,
         ]);
 
@@ -176,7 +182,8 @@ class CorporateDailyReportTest extends TestCase
             'service_request_id' => $retail->id,
             'submitted_by' => $this->admin->id,
             'report_date' => now()->toDateString(),
-            'percent_complete' => 50, 'validated_percent' => 50, 'is_validated' => true,
+            'percent_complete' => 50, 'validated_percent' => 50,
+            'is_pm_authored' => true, 'is_validated' => true,
         ]);
 
         $this->actingAs($this->admin);

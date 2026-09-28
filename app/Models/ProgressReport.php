@@ -35,6 +35,9 @@ class ProgressReport extends Model
         'authored_as',
         'validated_as',
         'approved_by_lead_at',
+        'lead_reviewed_at',
+        'ops_verified_at',
+        'ops_verified_by',
         'submitted_to_office_at',
         'office_batch_id',
         'released_to_client_at',
@@ -76,6 +79,8 @@ class ProgressReport extends Model
         'percent_complete' => 'integer',
         'validated_percent' => 'integer',
         'approved_by_lead_at' => 'datetime',
+        'lead_reviewed_at' => 'datetime',
+        'ops_verified_at' => 'datetime',
         'submitted_to_office_at' => 'datetime',
         'released_to_client_at' => 'datetime',
         'rejected_at' => 'datetime',
@@ -120,6 +125,64 @@ class ProgressReport extends Model
     {
         return $query->where('is_validated', true)
             ->whereNull('released_to_client_at');
+    }
+
+    /**
+     * Nobody has checked this but the person who wrote it.
+     *
+     * On a lead-run job a crew report passes the lead before the office sees
+     * it, and two people have looked at the work by the time a client does. A
+     * single-technician job has no such step — and neither does a lead's own
+     * report, which they ratify themselves. Those are the ones the office has
+     * to be the second pair of eyes on.
+     */
+    public function lacksPriorReview(): bool
+    {
+        // A report the office wrote itself has been through office hands by
+        // definition — it is created validated, on its own authority. Asking
+        // the office to sign off its own writing is ceremony, not a check.
+        if ($this->is_pm_authored) {
+            return false;
+        }
+
+        return $this->lead_reviewed_at === null;
+    }
+
+    /** Has the office put its name to a report no lead saw? */
+    public function isOpsVerified(): bool
+    {
+        return $this->ops_verified_at !== null;
+    }
+
+    /** Must the office sign this off before the client can be sent it? */
+    public function needsOpsVerification(): bool
+    {
+        return $this->lacksPriorReview() && !$this->isOpsVerified();
+    }
+
+    /**
+     * Settled, unsent, and still waiting on the office's own sign-off.
+     *
+     * The query form of needsOpsVerification(), for the queue and for the guard
+     * that holds a batch back.
+     */
+    public function scopeAwaitingOpsVerification($query)
+    {
+        return $query->releasableToClient()
+            ->where('is_pm_authored', false)
+            ->whereNull('lead_reviewed_at')
+            ->whereNull('ops_verified_at');
+    }
+
+    /** Cleared to go: either a lead saw it, or the office has signed it off. */
+    public function scopeClearedForRelease($query)
+    {
+        return $query->releasableToClient()
+            ->where(function ($q) {
+                $q->whereNotNull('lead_reviewed_at')
+                    ->orWhereNotNull('ops_verified_at')
+                    ->orWhere('is_pm_authored', true);
+            });
     }
 
     public function isRejected(): bool
@@ -206,6 +269,12 @@ class ProgressReport extends Model
     public function submitter(): BelongsTo
     {
         return $this->belongsTo(User::class, 'submitted_by');
+    }
+
+    /** Whoever in the office put their name to work no lead reviewed. */
+    public function opsVerifier(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'ops_verified_by');
     }
 
     public function validator(): BelongsTo

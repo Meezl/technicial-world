@@ -193,7 +193,23 @@ class JobService
             // a job reaching its end with a batch still held is the one case
             // where waiting for that act serves nobody. It is the last moment
             // the reports can still be of use.
-            app(ProgressService::class)->releaseToClient($serviceRequest, null, $approver->id);
+            $progress = app(ProgressService::class);
+
+            // Approving a job's completion is this person saying the work is
+            // right, under their own name. That is the same judgement the
+            // sign-off asks for on a report no lead reviewed, so it is recorded
+            // as theirs rather than demanded again a second time — and a
+            // release that refused here would block the job from completing at
+            // all over paperwork the approver has just done.
+            foreach ($progress->awaitingOpsVerification($serviceRequest) as $report) {
+                $progress->verifyForRelease(
+                    $report,
+                    $approver,
+                    'Signed off with the approval of this job\'s completion.'
+                );
+            }
+
+            $progress->releaseToClient($serviceRequest, null, $approver->id);
 
             return $this->transitionState(
                 $serviceRequest,

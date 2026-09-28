@@ -196,6 +196,9 @@ Route::middleware(['auth', 'role:project_manager'])->prefix('pm')->group(functio
     // Progress Validation
     Route::get('/progress-reports', [PMDashboardController::class, 'progressReports'])->name('pm.progress-reports');
     Route::post('/progress-reports/{progressReport}/validate', [PMDashboardController::class, 'validateProgress'])->name('pm.progress.validate');
+    // The office's own sign-off on work no lead reviewed — see
+    // ProgressService::verifyForRelease().
+    Route::post('/progress-reports/{progressReport}/verify', [PMDashboardController::class, 'verifyProgressReport'])->name('pm.progress.verify');
     Route::post('/progress-reports/{progressReport}/return', [PMDashboardController::class, 'returnProgressReport'])->name('pm.progress.return');
     // The office releases a settled batch to the client — one collective report,
     // one email. A PM is office too, so they can release the jobs they run.
@@ -286,6 +289,11 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::post('/jobs/{serviceRequest}/authorisations', [AdminDashboardController::class, 'storeJobAuthorisation'])->name('admin.jobs.authorisations.store');
     Route::post('/job-authorisations/{jobAuthorisation}/revoke', [AdminDashboardController::class, 'revokeJobAuthorisation'])->name('admin.jobs.authorisations.revoke');
     Route::post('/progress-reports/{progressReport}/validate', [AdminDashboardController::class, 'validateProgress'])->name('admin.progress.validate');
+    // The office's own sign-off on work no lead reviewed.
+    Route::post('/progress-reports/{progressReport}/verify', [AdminDashboardController::class, 'verifyProgressReport'])->name('admin.progress.verify');
+    // Every report waiting on the office, across all jobs — the queue an admin
+    // did not have.
+    Route::get('/progress-reports', [AdminDashboardController::class, 'progressReports'])->name('admin.progress-reports');
     // Release a settled batch to the client — one collective report, one email.
     Route::post('/jobs/{serviceRequest}/release-reports', [AdminDashboardController::class, 'releaseReportsToClient'])->name('admin.jobs.release-reports');
     // Back to the lead to edit or answer, rather than a flat refusal.

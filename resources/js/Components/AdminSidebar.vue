@@ -30,6 +30,7 @@ const baseItems = [
     { key: 'technicians', href: '/admin/technicians', icon: 'fas fa-hard-hat', label: 'Technicians', caption: 'Field teams and reports' },
     { key: 'users', href: '/admin/users', icon: 'fas fa-users', label: 'Users', caption: 'Accounts and roles' },
     { key: 'jobs', href: '/admin/jobs', icon: 'fas fa-tasks', label: 'Jobs', caption: 'Live execution status' },
+    { key: 'progress-reports', href: '/admin/progress-reports', icon: 'fas fa-clipboard-check', label: 'Progress Reports', caption: 'Validate, sign off and release' },
     { key: 'tools', href: '/admin/tools', icon: 'fas fa-tools', label: 'Tools', caption: 'Inventory and assets' },
     { key: 'service-categories', href: '/admin/service-categories', icon: 'fas fa-layer-group', label: 'Service Categories', caption: 'Trades and specialities' },
     { key: 'tickets', href: '/admin/tickets', icon: 'fas fa-life-ring', label: 'Tickets', caption: 'Support and emergency requests' },

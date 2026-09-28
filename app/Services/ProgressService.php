@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class ProgressService
 {
@@ -161,9 +162,84 @@ class ProgressService
      * office acts on a single lead's push; without one it sweeps everything on
      * the job the office has settled and not yet sent on.
      */
+    /**
+     * Reports on this job that nobody but their author has looked at.
+     *
+     * A crew report on a lead-run job has been past the lead before the office
+     * sees it. A single-technician report has been past nobody, and neither has
+     * a lead's own. Those need the office's own sign-off before a client is
+     * shown them — see ProgressReport::needsOpsVerification().
+     */
+    public function awaitingOpsVerification(ServiceRequest $serviceRequest, ?string $batchId = null)
+    {
+        return $serviceRequest->progressReports()
+            ->awaitingOpsVerification()
+            ->when($batchId, fn ($q) => $q->where('office_batch_id', $batchId))
+            ->get();
+    }
+
+    /**
+     * The office puts its name to a report no lead reviewed.
+     *
+     * Deliberately separate from validating. Validating settles what counts
+     * operationally and pays the technician — it is a judgement about the
+     * percentage. This is a judgement about the work itself, standing in for
+     * the on-site review a single-technician job never had, and it is what the
+     * client's copy rests on.
+     *
+     * @throws ValidationException
+     */
+    public function verifyForRelease(ProgressReport $report, User $verifier, ?string $note = null): ProgressReport
+    {
+        if (!$report->is_validated) {
+            throw ValidationException::withMessages([
+                'report' => 'Validate the report before signing it off — the sign-off stands behind the figures, so the figures come first.',
+            ]);
+        }
+
+        if ($report->isOpsVerified()) {
+            return $report;
+        }
+
+        $report->forceFill([
+            'ops_verified_at' => now(),
+            'ops_verified_by' => $verifier->id,
+        ])->save();
+
+        AuditLog::log(AuditLog::ACTION_APPROVAL, $report, null, [
+            'ops_verified_by' => $verifier->id,
+            'note' => $note,
+            'stands_in_for' => 'no lead reviewed this report',
+        ]);
+
+        return $report->fresh();
+    }
+
+    /**
+     * @throws ValidationException when the batch still needs the office's own
+     *                             sign-off on work no lead reviewed.
+     */
     public function releaseToClient(ServiceRequest $serviceRequest, ?string $batchId, int $pmId): int
     {
         return DB::transaction(function () use ($serviceRequest, $batchId, $pmId) {
+            // Held as a whole rather than sent in part. Letting the reviewed
+            // half go and keeping the rest would hand the client two updates
+            // for one stretch of work, which is the fragmentation the batch
+            // step exists to prevent.
+            $unverified = $this->awaitingOpsVerification($serviceRequest, $batchId);
+            if ($unverified->isNotEmpty()) {
+                throw ValidationException::withMessages([
+                    'reports' => sprintf(
+                        '%d report%s on this job %s not been reviewed by a lead, so the office has to sign %s off before the client sees %s.',
+                        $unverified->count(),
+                        $unverified->count() === 1 ? '' : 's',
+                        $unverified->count() === 1 ? 'has' : 'have',
+                        $unverified->count() === 1 ? 'it' : 'them',
+                        $unverified->count() === 1 ? 'it' : 'them',
+                    ),
+                ]);
+            }
+
             $query = $serviceRequest->progressReports()->releasableToClient();
 
             if ($batchId) {
