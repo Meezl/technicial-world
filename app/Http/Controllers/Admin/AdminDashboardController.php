@@ -1697,6 +1697,17 @@ class AdminDashboardController extends Controller
         $laborOutstanding = max(0, $laborCommitted - $laborSpent);
         $laborBreakdown = $this->buildLabourBreakdown($sr);
 
+        // How much of the committed labour is promised to people who hold no
+        // task. Surfaced because the question it answers — "why is money
+        // committed when every task says Unassigned?" — is otherwise only
+        // answerable by reading two panels against each other and knowing that
+        // a crew place can carry a fee.
+        $committedWithoutTask = (float) $sr->jobAssignments()
+            ->whereNull('service_sub_task_id')
+            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
+            ->whereNotIn('technician_id', array_filter([$sr->technician_id, $sr->lead_technician_id]))
+            ->sum('agreed_compensation');
+
         $materialsSpent = $materialsSpentPayments + $materialsSpentExpenditures;
         $otherSpent = $otherSpentPayments + $otherSpentExpenditures;
         $totalSpent = $laborSpent + $materialsSpent + $otherSpent;
@@ -1712,6 +1723,7 @@ class AdminDashboardController extends Controller
                 // the total, rather than reassembled in the browser — see
                 // buildLabourBreakdown().
                 'breakdown'   => $laborBreakdown,
+                'committed_without_task' => round($committedWithoutTask, 2),
             ],
             'materials' => [
                 'budgeted'  => (float) $sr->budget->materials_budget,
@@ -1798,7 +1810,16 @@ class AdminDashboardController extends Controller
                 // as an error somebody then goes looking for.
                 $role = 'Crew member — paid through the lead';
             } else {
-                $role = $assignment->role_on_job ?: 'Crew member';
+                // Prefixed, and not left as the bare role. A crew place reading
+                // "Carpentry & Woodwork" is indistinguishable from a task row
+                // reading "Sub-task: Carpentry & Woodwork", which is how a
+                // board showing two unassigned tasks and KSH 4,300 committed
+                // reads as money against work nobody is on. The money is real
+                // and the tasks are genuinely unassigned; only the label made
+                // those look like the same statement.
+                $role = $assignment->role_on_job
+                    ? 'Crew, no task — ' . $assignment->role_on_job
+                    : 'Crew, no task';
             }
 
             $add($assignment->technician, $role, $assignment->agreed_compensation);

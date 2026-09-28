@@ -308,4 +308,65 @@ class LabourBreakdownReconciliationTest extends TestCase
             0.01
         );
     }
+
+    /**
+     * "Every task says Unassigned — so why is money committed?"
+     *
+     * Because a crew place carries a fee without carrying a task. Both readings
+     * are true; the board made them look contradictory by labelling a crew
+     * place with the bare role, so "Carpentry & Woodwork" read exactly like the
+     * sub-task of the same name.
+     */
+    public function test_a_crew_place_is_not_dressed_up_as_a_task(): void
+    {
+        $sr = $this->makeJob(['has_sub_tasks' => true]);
+        $lead = $this->makeTechnician('Peter Mutua');
+        $this->assign($sr, $lead, ['agreed_compensation' => 1500]);
+        $sr->update(['technician_id' => $lead->id, 'lead_technician_id' => $lead->id]);
+
+        // On the crew, for a fee, with a role that reads like a task.
+        $this->assign($sr, $this->makeTechnician('Wycliffe Mackynon'), [
+            'agreed_compensation' => 1300,
+            'role_on_job' => 'Carpentry & Woodwork',
+        ]);
+
+        // An unassigned sub-task of the same name sitting beside it.
+        ServiceSubTask::create([
+            'service_request_id' => $sr->id,
+            'title' => 'Carpentry & Woodwork',
+            'order' => 1,
+        ]);
+
+        [$summary, $breakdown] = $this->summaryFor($sr);
+
+        $row = collect($breakdown)->firstWhere('name', 'Wycliffe Mackynon');
+        $this->assertSame('Crew, no task — Carpentry & Woodwork', $row['role']);
+
+        // And the card carries the figure that answers the question outright.
+        $this->assertEqualsWithDelta(1300, $summary['labor']['committed_without_task'], 0.01);
+        $this->assertEqualsWithDelta(2800, $summary['labor']['committed'], 0.01);
+    }
+
+    public function test_money_on_tasks_is_not_counted_as_crew_money(): void
+    {
+        $sr = $this->makeJob(['has_sub_tasks' => true]);
+        $lead = $this->makeTechnician('Peter Mutua');
+        $this->assign($sr, $lead, ['agreed_compensation' => 1500]);
+        $sr->update(['technician_id' => $lead->id, 'lead_technician_id' => $lead->id]);
+
+        ServiceSubTask::create([
+            'service_request_id' => $sr->id,
+            'title' => 'Carpentry & Woodwork',
+            'order' => 1,
+            'technician_id' => $this->makeTechnician('Wycliffe Mackynon')->id,
+            'agreed_compensation' => 1300,
+        ]);
+
+        [$summary] = $this->summaryFor($sr);
+
+        // Held work, so nothing is committed to anybody without a task — the
+        // note stays off the card entirely.
+        $this->assertEqualsWithDelta(0, $summary['labor']['committed_without_task'], 0.01);
+        $this->assertEqualsWithDelta(2800, $summary['labor']['committed'], 0.01);
+    }
 }

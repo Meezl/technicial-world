@@ -1432,6 +1432,20 @@
                                 </li>
                             </ul>
 
+                            <!-- Answers the question the board otherwise
+                                 provokes: every task says Unassigned, so why is
+                                 money committed? Because a crew place carries a
+                                 fee without carrying a task. Both readings are
+                                 true; only their sitting on separate panels
+                                 made them look contradictory. -->
+                            <p v-if="Number(budgetSummary?.labor?.committed_without_task) > 0" class="labour-breakdown-note">
+                                <i class="fas fa-circle-info"></i>
+                                KSH {{ formatCurrency(budgetSummary.labor.committed_without_task) }} of this is
+                                committed to people on the crew who hold no task of their own — so it is real
+                                money owed even while every sub-task reads Unassigned. Give somebody a task and
+                                their crew place folds into it rather than being counted twice.
+                            </p>
+
                             <!-- This table and the Committed figure above are
                                  built from different queries. When they stop
                                  agreeing, a commitment is missing from one of
@@ -5490,6 +5504,19 @@ defineOptions({
     color: #065f46;
     font-weight: 700;
     font-size: 0.78rem;
+}
+
+.labour-breakdown-note {
+    margin: 0.7rem 0 0;
+    padding: 0.55rem 0.7rem;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    color: #475569;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.45rem;
 }
 
 .labour-breakdown-gap {
