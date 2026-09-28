@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\JobPhoto;
+use App\Support\StoredImage;
 use App\Models\ServiceRequest;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -48,7 +49,8 @@ class JobPhotoController extends Controller
         $clientVisible = $this->defaultVisibilityFor($user);
 
         foreach ($request->file('photos', []) as $file) {
-            $path = $file->store('job-photos/' . $serviceRequest->id, 'public');
+            // Converted if a browser could not draw it — see StoredImage.
+            $path = StoredImage::put($file, 'job-photos/' . $serviceRequest->id);
 
             $serviceRequest->photos()->create([
                 'service_request_id' => $serviceRequest->id,

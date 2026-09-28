@@ -7,6 +7,7 @@ use App\Mail\LeadReportsPosted;
 use App\Models\ProgressReport;
 use App\Models\ProgressReportNoteVersion;
 use App\Models\JobPhoto;
+use App\Support\StoredImage;
 use App\Models\ServiceRequest;
 use App\Models\ServiceSubTask;
 use App\Models\TechnicianPayment;
@@ -496,7 +497,7 @@ class ProgressService
         int $userId,
         ?string $caption = null
     ): JobPhoto {
-        $path = $file->store('progress-photos/' . $report->service_request_id, 'public');
+        $path = StoredImage::put($file, 'progress-photos/' . $report->service_request_id);
 
         return $report->photos()->create([
             // Denormalised so job-wide queries and the permission check don't

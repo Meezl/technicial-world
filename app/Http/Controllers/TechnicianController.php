@@ -16,6 +16,7 @@ use App\Services\ReportingService;
 use Carbon\Carbon;
 
 use App\Support\UploadRuntime;
+use App\Support\StoredImage;
 
 class TechnicianController extends Controller
 {
@@ -829,7 +830,7 @@ class TechnicianController extends Controller
                 \Illuminate\Support\Facades\Storage::disk('public')->delete($technician->profile_photo_path);
             }
             $technician->update([
-                'profile_photo_path' => $request->file('profile_photo')->store('technician-photos/' . $technician->id, 'public'),
+                'profile_photo_path' => StoredImage::put($request->file('profile_photo'), 'technician-photos/' . $technician->id),
             ]);
         }
 

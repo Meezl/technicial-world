@@ -26,6 +26,11 @@ FROM dunglas/frankenphp:1-php8.3 AS runner
 RUN install-php-extensions \
     bcmath \
     gd \
+    # iPhones shoot HEIC and the upload rules accept it, but no browser except
+    # Safari can draw one. Imagick — built against libheif — is what lets the
+    # app re-encode those to JPEG on the way in. Without it the app still
+    # accepts and stores them, it just cannot make them viewable.
+    imagick \
     intl \
     opcache \
     pcntl \

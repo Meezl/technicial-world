@@ -27,6 +27,7 @@ use App\Models\PaymentMilestone;
 use App\Models\PaymentMilestoneAllocation;
 use App\Models\ProgressReport;
 use App\Rules\IsTechnician;
+use App\Support\StoredImage;
 use App\Models\TechnicianPayment;
 use App\Models\TechnicianPaymentEntry;
 use App\Models\Expenditure;
@@ -857,7 +858,7 @@ class AdminDashboardController extends Controller
             ]);
 
             $photoPath = $request->hasFile('passport_photo')
-                ? $request->file('passport_photo')->store('technician-photos', 'public')
+                ? StoredImage::put($request->file('passport_photo'), 'technician-photos')
                 : null;
 
             return Technician::createWithReference([
@@ -932,8 +933,10 @@ class AdminDashboardController extends Controller
                     \Illuminate\Support\Facades\Storage::disk('public')->delete($technician->profile_photo_path);
                 }
 
-                $updates['profile_photo_path'] = $request->file('passport_photo')
-                    ->store('technician-photos/' . $technician->id, 'public');
+                $updates['profile_photo_path'] = StoredImage::put(
+                    $request->file('passport_photo'),
+                    'technician-photos/' . $technician->id
+                );
             }
 
             $technician->update($updates);
