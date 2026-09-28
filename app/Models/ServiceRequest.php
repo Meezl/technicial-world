@@ -183,6 +183,14 @@ class ServiceRequest extends Model
     const SUBMISSION_MODE_ADMIN_PROXY = 'admin_proxy';
 
     // RFQ Status constants
+    /**
+     * What the roster calls whoever is answerable for the whole job, when they
+     * have no more specific role recorded. A constant because the roster now
+     * has to recognise it as well as write it — a lead who also carries a named
+     * scope must not be listed as the lead twice.
+     */
+    const ROSTER_LEAD_ROLE = 'Lead Technician — answerable for the whole assignment';
+
     const RFQ_STATUS_PENDING = 'pending';
     const RFQ_STATUS_QUOTED = 'quoted';
     const RFQ_STATUS_APPROVED = 'approved';
@@ -808,36 +816,126 @@ class ServiceRequest extends Model
             ? $this->getRelation('liveAssignments')
             : $this->liveAssignments()->with('technician.user')->get();
 
+        // One row per person, not per assignment.
+        //
+        // A lead who also carries a sub-task holds two live assignments — the
+        // primary one that makes them answerable for the job, and the sub-task
+        // one that gives them their own scope — and listing both put the same
+        // man on the client's notice twice, once with dates and once reading
+        // "To be confirmed". The second row was not a second visitor. It is the
+        // gate list, the client's page and the notice email that this feeds, so
+        // a duplicate there is somebody being told two people are coming.
         return $assignments
             ->filter(fn ($assignment) => $assignment->technician && $assignment->technician->user)
-            ->sortByDesc(fn ($assignment) => $this->isLeadTechnician($assignment->technician_id) ? 1 : 0)
+            ->groupBy('technician_id')
+            ->sortByDesc(fn ($group, $technicianId) => $this->isLeadTechnician((int) $technicianId) ? 1 : 0)
             ->values()
-            ->map(function ($assignment, $index) {
-                $isLead = $this->isLeadTechnician($assignment->technician_id);
+            ->map(function ($group, $index) {
+                $group = $group->sortBy('id')->values();
+                $first = $group->first();
+                $technicianId = (int) $first->technician_id;
+                $isLead = $this->isLeadTechnician($technicianId);
+
+                // The assignment the row's edit control acts on when there is
+                // only one. Where somebody holds several, each is offered
+                // separately — see `entries` below.
+                $primary = $group->firstWhere('service_sub_task_id', null) ?? $first;
+
+                $entries = $group->map(fn ($assignment) => [
+                    'assignment_id' => $assignment->id,
+                    'role' => $this->rosterRoleLabel($assignment, $isLead),
+                    'attendance' => $assignment->attendanceLabel(),
+                    'is_sub_task' => $assignment->service_sub_task_id !== null,
+                    // Whoever carries the job cannot be removed as a crew
+                    // member: taking them off is a reassignment.
+                    'removable' => !$isLead
+                        && (int) $this->technician_id !== $technicianId
+                        && $assignment->service_sub_task_id === null,
+                ])->all();
 
                 return [
                     'ref' => $index + 1,
-                    'assignment_id' => $assignment->id,
-                    'name' => $assignment->technician->user->name,
-                    'national_id' => $assignment->technician->national_id,
+                    'assignment_id' => $primary->id,
+                    'name' => $first->technician->user->name,
+                    'national_id' => $first->technician->national_id,
                     // A passport photo, so whoever is on the gate can match a
                     // face to the name rather than only a number on a card.
-                    'photo_url' => $assignment->technician->profile_photo_path
-                        ? '/storage/' . $assignment->technician->profile_photo_path
+                    'photo_url' => $first->technician->profile_photo_path
+                        ? '/storage/' . $first->technician->profile_photo_path
                         : null,
-                    // Falls back to a plain description rather than blank: a
-                    // roster row with no role tells the client nothing about
-                    // why that person is at their gate.
-                    'role' => $assignment->role_on_job
-                        ?: ($isLead ? 'Lead Technician — answerable for the whole assignment' : 'Technician'),
-                    'attendance' => $assignment->attendanceLabel(),
+                    'role' => $this->rosterRoleSummary($group, $isLead),
+                    'attendance' => $this->rosterAttendanceSummary($group),
                     'is_lead' => $isLead,
-                    // Whoever carries the job cannot be removed as a crew
-                    // member: taking them off is a reassignment.
-                    'is_primary' => (int) $this->technician_id === (int) $assignment->technician_id,
+                    'is_primary' => (int) $this->technician_id === $technicianId,
+                    // Every assignment behind this row, so the office can still
+                    // edit each one. Merging the display must not merge away
+                    // the ability to correct a single sub-task's dates.
+                    'entries' => $entries,
                 ];
             })
             ->all();
+    }
+
+    /**
+     * What one assignment says this person is doing.
+     *
+     * Falls back to a plain description rather than blank: a roster row with no
+     * role tells the client nothing about why that person is at their gate.
+     */
+    private function rosterRoleLabel(JobAssignment $assignment, bool $isLead): string
+    {
+        return $assignment->role_on_job
+            ?: ($isLead ? self::ROSTER_LEAD_ROLE : 'Technician');
+    }
+
+    /**
+     * Every role one person carries on this job, in one line.
+     *
+     * The lead's answerability comes first for the same reason the lead is the
+     * first row: it is the client's first question. A lead who also carries a
+     * named scope reads as both, because they are.
+     */
+    private function rosterRoleSummary($assignments, bool $isLead): string
+    {
+        $roles = collect($assignments)
+            ->map(fn ($assignment) => $this->rosterRoleLabel($assignment, $isLead))
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($isLead) {
+            $roles = $roles->reject(fn ($role) => $role === self::ROSTER_LEAD_ROLE)
+                ->prepend(self::ROSTER_LEAD_ROLE);
+        }
+
+        return $roles->implode(' · ');
+    }
+
+    /**
+     * When one person is on site, across everything they hold.
+     *
+     * Each assignment is formatted by the same method that formatted it when it
+     * had a row to itself, then the labels are joined earliest first. Nothing is
+     * collapsed into an invented window: somebody on discrete days for one
+     * sub-task and a run of days for another is on site for both, and saying so
+     * is the point of the column. "To be confirmed" is dropped once any real
+     * dating exists — it was never a date, and it is what made the duplicate
+     * row look like a second, undated visit.
+     */
+    private function rosterAttendanceSummary($assignments): string
+    {
+        $labels = collect($assignments)
+            ->map(fn ($assignment) => [
+                'label' => $assignment->attendanceLabel(),
+                'earliest' => $assignment->earliestAttendanceDate(),
+            ])
+            ->filter(fn ($entry) => $entry['earliest'] !== null)
+            ->sortBy('earliest')
+            ->pluck('label')
+            ->unique()
+            ->values();
+
+        return $labels->isEmpty() ? 'To be confirmed' : $labels->implode(', ');
     }
 
     /**

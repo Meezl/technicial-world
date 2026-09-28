@@ -331,4 +331,137 @@ class AttendanceRosterTest extends TestCase
                 ->where('attendanceRoster.0.role', 'Roof Installation Gang Member')
                 ->where('attendanceRoster.0.national_id', '37853277'));
     }
+
+    // ==================== one row per person ====================
+
+    /**
+     * A lead who also carries a sub-task holds two live assignments. They are
+     * still one man arriving at one gate, and the roster feeds the gate list.
+     */
+    public function test_a_lead_who_also_carries_a_sub_task_is_listed_once(): void
+    {
+        [$sr] = $this->makeJob(['has_sub_tasks' => true]);
+        $lead = $this->makeTechnician('Peter Mucheru Ngotho', '25029217');
+        $sr->update(['technician_id' => $lead->id, 'lead_technician_id' => $lead->id]);
+
+        $subTask = \App\Models\ServiceSubTask::create([
+            'service_request_id' => $sr->id,
+            'title' => 'Joinery Fittings',
+            'order' => 1,
+            'technician_id' => $lead->id,
+            'agreed_compensation' => 15000,
+        ]);
+
+        // The primary assignment: answerable for the job, no dates of its own.
+        $this->assign($sr, $lead, ['expected_start' => null, 'expected_end' => null]);
+        // And the sub-task assignment, with the dates he is actually on site.
+        $this->assign($sr, $lead, [
+            'service_sub_task_id' => $subTask->id,
+            'role_on_job' => 'Joinery Fittings - Desk Installation & Cabinet Modification',
+            'expected_start' => '2026-09-25',
+            'expected_end' => '2026-09-28',
+        ]);
+
+        $roster = $sr->fresh()->attendanceRoster();
+
+        $this->assertCount(1, $roster, 'One man, one row — he is not two visitors.');
+
+        $row = $roster[0];
+        $this->assertSame('Peter Mucheru Ngotho', $row['name']);
+        $this->assertTrue($row['is_lead']);
+
+        // Both roles, answerability first.
+        $this->assertStringStartsWith(ServiceRequest::ROSTER_LEAD_ROLE, $row['role']);
+        $this->assertStringContainsString('Joinery Fittings - Desk Installation', $row['role']);
+
+        // The dates he is actually on site, not the undated half of the pair.
+        $this->assertSame('25.09.2026 - 28.09.2026', $row['attendance']);
+        $this->assertStringNotContainsString('To be confirmed', $row['attendance']);
+
+        // Both assignments stay individually editable.
+        $this->assertCount(2, $row['entries']);
+    }
+
+    public function test_the_lead_role_is_not_repeated_when_it_is_their_only_role(): void
+    {
+        [$sr] = $this->makeJob();
+        $lead = $this->makeTechnician('Alice Wanjiru', '11223344');
+        $sr->update(['technician_id' => $lead->id, 'lead_technician_id' => $lead->id]);
+        $this->assign($sr, $lead);
+
+        $roster = $sr->fresh()->attendanceRoster();
+
+        $this->assertCount(1, $roster);
+        $this->assertSame(ServiceRequest::ROSTER_LEAD_ROLE, $roster[0]['role']);
+        $this->assertCount(1, $roster[0]['entries']);
+    }
+
+    public function test_a_crew_member_on_two_scopes_is_one_row_with_both_date_runs(): void
+    {
+        [$sr] = $this->makeJob(['has_sub_tasks' => true]);
+        $lead = $this->makeTechnician('Lead Person', '99887766');
+        $hand = $this->makeTechnician('Felix Nyaga Njeru', '10460531');
+        $sr->update(['technician_id' => $lead->id, 'lead_technician_id' => $lead->id]);
+        $this->assign($sr, $lead);
+
+        $this->assign($sr, $hand, [
+            'role_on_job' => 'Data & Structured Cabling',
+            'expected_start' => null,
+            'expected_end' => null,
+            'attendance_dates' => ['2026-10-03'],
+        ]);
+        $this->assign($sr, $hand, [
+            'role_on_job' => 'Electrical Services - Support',
+            'expected_start' => '2026-09-27',
+            'expected_end' => '2026-09-28',
+        ]);
+
+        $roster = $sr->fresh()->attendanceRoster();
+        $felix = collect($roster)->firstWhere('name', 'Felix Nyaga Njeru');
+
+        $this->assertNotNull($felix);
+        $this->assertSame('Data & Structured Cabling · Electrical Services - Support', $felix['role']);
+        // Earliest first, and neither run is invented away into a single span.
+        $this->assertSame('27.09.2026 - 28.09.2026, 03.10.2026', $felix['attendance']);
+    }
+
+    public function test_the_lead_is_still_the_first_row(): void
+    {
+        [$sr] = $this->makeJob();
+        $crew = $this->makeTechnician('Daniel Mutinda', '27388042');
+        $lead = $this->makeTechnician('Lead Person', '99887766');
+
+        $this->assign($sr, $crew, ['role_on_job' => 'Electrical Installations Lead']);
+        $this->assign($sr, $lead);
+        $sr->update(['technician_id' => $lead->id, 'lead_technician_id' => $lead->id]);
+
+        $roster = $sr->fresh()->attendanceRoster();
+
+        $this->assertSame('Lead Person', $roster[0]['name']);
+        $this->assertSame(1, $roster[0]['ref']);
+        $this->assertSame(2, $roster[1]['ref']);
+    }
+
+    public function test_the_client_is_not_shown_the_same_person_twice(): void
+    {
+        [$sr, $client] = $this->makeJob(['has_sub_tasks' => true]);
+        $lead = $this->makeTechnician('Peter Mucheru Ngotho', '25029217');
+        $sr->update(['technician_id' => $lead->id, 'lead_technician_id' => $lead->id]);
+
+        $subTask = \App\Models\ServiceSubTask::create([
+            'service_request_id' => $sr->id,
+            'title' => 'Joinery Fittings',
+            'order' => 1,
+            'technician_id' => $lead->id,
+            'agreed_compensation' => 15000,
+        ]);
+        $this->assign($sr, $lead, ['expected_start' => null, 'expected_end' => null]);
+        $this->assign($sr, $lead, ['service_sub_task_id' => $subTask->id]);
+
+        $response = $this->actingAs($client)->get(route('client.request-status', $sr));
+        $response->assertOk();
+
+        $roster = $response->viewData('page')['props']['attendanceRoster'];
+        $this->assertCount(1, $roster);
+    }
 }

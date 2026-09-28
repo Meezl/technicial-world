@@ -1370,6 +1370,7 @@ class AdminDashboardController extends Controller
         $laborAllocation = $this->getLaborAllocationSummary($sr);
         $laborCommitted = (float) $laborAllocation['allocated'];
         $laborOutstanding = max(0, $laborCommitted - $laborSpent);
+        $laborBreakdown = $this->buildLabourBreakdown($sr);
 
         $materialsSpent = $materialsSpentPayments + $materialsSpentExpenditures;
         $otherSpent = $otherSpentPayments + $otherSpentExpenditures;
@@ -1382,6 +1383,10 @@ class AdminDashboardController extends Controller
                 'actual'      => $laborSpent,
                 'outstanding' => $laborOutstanding,
                 'remaining'   => (float) $sr->budget->labor_budget - $laborCommitted,
+                // Who the committed figure is committed to. Built here, beside
+                // the total, rather than reassembled in the browser — see
+                // buildLabourBreakdown().
+                'breakdown'   => $laborBreakdown,
             ],
             'materials' => [
                 'budgeted'  => (float) $sr->budget->materials_budget,
@@ -1399,6 +1404,158 @@ class AdminDashboardController extends Controller
                 'remaining' => (float) $sr->budget->total_budget - $totalSpent,
             ],
         ];
+    }
+
+    /**
+     * What the committed labour figure is made of, one row per technician.
+     *
+     * This used to be reassembled in the browser from the job's relations while
+     * the total beside it was summed here, and the two drifted: the frontend
+     * read only the FIRST direct assignment, which is right only while a job
+     * has one. Crew members are direct assignments too — they carry no sub-task
+     * — so a job with a lead and two crew has three, and the oldest won. On a
+     * job whose crew were added before the lead, the table showed a crew member
+     * on zero and dropped the lead's fee entirely, while the total above
+     * carried it. The page disagreed with itself by exactly the lead's fee and
+     * nothing said so.
+     *
+     * Reading the same two queries getLaborAllocationSummary() sums is what
+     * makes the rows and the total incapable of disagreeing. The test asserts
+     * they add up; this comment is why it matters.
+     *
+     * Paid is counted per technician, never per assignment: TechnicianPayment
+     * rows carry no sub-task, so attributing a technician's total to any one of
+     * their assignments would double-count whoever holds two.
+     */
+    protected function buildLabourBreakdown(ServiceRequest $serviceRequest): array
+    {
+        $rows = [];
+
+        $add = function (?Technician $technician, string $role, $amount) use (&$rows) {
+            if (!$technician) {
+                return;
+            }
+
+            $id = (int) $technician->id;
+            $rows[$id] ??= [
+                'technician_id' => $id,
+                'name' => $technician->user->name ?? 'Technician',
+                'roles' => [],
+                'amount' => 0.0,
+            ];
+
+            $rows[$id]['amount'] += (float) $amount;
+            if ($role !== '' && !in_array($role, $rows[$id]['roles'], true)) {
+                $rows[$id]['roles'][] = $role;
+            }
+        };
+
+        // Direct assignments — the lead's fee and every crew member's. Same
+        // filter as getLaborAllocationSummary's direct half.
+        $direct = $serviceRequest->jobAssignments()
+            ->whereNull('service_sub_task_id')
+            ->whereIn('status', [
+                JobAssignment::STATUS_PENDING,
+                JobAssignment::STATUS_ACCEPTED,
+                JobAssignment::STATUS_COMPLETED,
+            ])
+            ->with('technician.user:id,name')
+            ->orderBy('id')
+            ->get();
+
+        foreach ($direct as $assignment) {
+            $isLead = $serviceRequest->isLeadTechnician((int) $assignment->technician_id);
+
+            if ($isLead) {
+                $role = $serviceRequest->has_sub_tasks ? 'Lead' : 'Technician';
+            } elseif ((float) $assignment->agreed_compensation <= 0 && $assignment->paid_through_lead) {
+                // Not a missing fee. Saying so is what stops the row reading
+                // as an error somebody then goes looking for.
+                $role = 'Crew member — paid through the lead';
+            } else {
+                $role = $assignment->role_on_job ?: 'Crew member';
+            }
+
+            $add($assignment->technician, $role, $assignment->agreed_compensation);
+        }
+
+        // Sub-task fees, read off the sub-task exactly as the total reads them.
+        $subTasks = $serviceRequest->subTasks()
+            ->whereNotNull('technician_id')
+            ->with('technician.user:id,name')
+            ->orderBy('order')
+            ->get();
+
+        foreach ($subTasks as $subTask) {
+            $add(
+                $subTask->technician,
+                'Sub-task: ' . ($subTask->title ?: '#' . $subTask->order),
+                $subTask->agreed_compensation
+            );
+        }
+
+        if (empty($rows)) {
+            return [];
+        }
+
+        $paid = $this->labourPaidPerTechnician($serviceRequest, array_keys($rows));
+
+        return collect($rows)
+            ->map(function (array $row) use ($paid) {
+                $row['amount'] = round($row['amount'], 2);
+                $row['paid'] = round((float) ($paid[$row['technician_id']] ?? 0), 2);
+                $row['outstanding'] = round(max(0, $row['amount'] - $row['paid']), 2);
+                $row['role'] = implode(' · ', $row['roles']);
+
+                return $row;
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Labour actually paid out, per technician.
+     *
+     * Deliberately the same two sources buildBudgetSummary() sums for the card's
+     * Spent figure — direct payments plus sheet entries — so the per-technician
+     * column and the job total cannot tell different stories.
+     *
+     * @param  array<int, int>  $technicianIds
+     * @return array<int, float>
+     */
+    protected function labourPaidPerTechnician(ServiceRequest $serviceRequest, array $technicianIds): array
+    {
+        if (empty($technicianIds)) {
+            return [];
+        }
+
+        $paid = array_fill_keys($technicianIds, 0.0);
+
+        $directPayments = TechnicianPayment::where('service_request_id', $serviceRequest->id)
+            ->whereIn('technician_id', $technicianIds)
+            ->where('category', 'labor')
+            ->where('status', 'completed')
+            ->get(['technician_id', 'amount']);
+
+        foreach ($directPayments as $payment) {
+            $paid[(int) $payment->technician_id] += (float) $payment->amount;
+        }
+
+        $entries = TechnicianPaymentEntry::where('service_request_id', $serviceRequest->id)
+            ->whereIn('technician_id', $technicianIds)
+            ->whereIn('status', [
+                TechnicianPaymentEntry::STATUS_APPROVED,
+                TechnicianPaymentEntry::STATUS_PAID,
+            ])
+            ->get(['technician_id', 'status', 'current_period_payable', 'paid_amount']);
+
+        foreach ($entries as $entry) {
+            $paid[(int) $entry->technician_id] += $entry->status === TechnicianPaymentEntry::STATUS_PAID
+                ? (float) ($entry->paid_amount ?? $entry->current_period_payable)
+                : (float) $entry->current_period_payable;
+        }
+
+        return $paid;
     }
 
     protected function findActivePrimaryAssignment(ServiceRequest $serviceRequest, ?int $technicianId = null): ?JobAssignment

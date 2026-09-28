@@ -539,23 +539,45 @@
                                             <span v-if="member.national_id">{{ member.national_id }}</span>
                                             <span v-else class="roster-missing">Not on file</span>
                                         </td>
-                                        <td>{{ member.role }}</td>
-                                        <td>{{ member.attendance }}</td>
+                                        <!-- Somebody who is both the lead and carries a
+                                             sub-task holds two assignments and is one person.
+                                             The three cells below loop the same list, so the
+                                             roles, their dates and their controls stay on the
+                                             same line as each other. A single assignment — the
+                                             ordinary case — renders exactly one line. -->
+                                        <td>
+                                            <div v-for="entry in member.entries" :key="`role-${entry.assignment_id}`" class="roster-line">
+                                                {{ entry.role }}
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div v-for="entry in member.entries" :key="`dates-${entry.assignment_id}`" class="roster-line">
+                                                {{ entry.attendance }}
+                                            </div>
+                                        </td>
                                         <td class="roster-actions">
-                                            <button class="btn btn-sm btn-secondary" @click="openRosterEditor(member)" title="Edit role and dates">
-                                                <i class="fas fa-pen"></i>
-                                            </button>
-                                            <!-- Not offered for whoever carries the job: taking
-                                                 them off is a reassignment, which has its own
-                                                 flow, notification and reason. -->
-                                            <button
-                                                v-if="!member.is_lead && !member.is_primary"
-                                                class="btn btn-sm btn-danger"
-                                                @click="removeCrewMember(member)"
-                                                title="Remove from crew"
-                                            >
-                                                <i class="fas fa-user-minus"></i>
-                                            </button>
+                                            <div v-for="entry in member.entries" :key="`act-${entry.assignment_id}`" class="roster-line roster-line-actions">
+                                                <button
+                                                    class="btn btn-sm btn-secondary"
+                                                    @click="openRosterEditor(member, entry.assignment_id)"
+                                                    :title="member.entries.length > 1 ? `Edit ${entry.role}` : 'Edit role and dates'"
+                                                >
+                                                    <i class="fas fa-pen"></i>
+                                                </button>
+                                                <!-- Not offered for whoever carries the job: taking
+                                                     them off is a reassignment, which has its own
+                                                     flow, notification and reason. Nor for a
+                                                     sub-task assignment, which is unassigned from
+                                                     the sub-task itself. -->
+                                                <button
+                                                    v-if="entry.removable"
+                                                    class="btn btn-sm btn-danger"
+                                                    @click="removeCrewMember(member, entry.assignment_id)"
+                                                    title="Remove from crew"
+                                                >
+                                                    <i class="fas fa-user-minus"></i>
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                 </tbody>
@@ -1386,6 +1408,19 @@
                                     </div>
                                 </li>
                             </ul>
+
+                            <!-- This table and the Committed figure above are
+                                 built from different queries. When they stop
+                                 agreeing, a commitment is missing from one of
+                                 them and nothing else on the page would say so. -->
+                            <p v-if="labourBreakdownGap" class="labour-breakdown-gap">
+                                <i class="fas fa-triangle-exclamation"></i>
+                                This does not reconcile with the committed figure above
+                                (KSH {{ formatCurrency(budgetSummary?.labor?.committed) }}) —
+                                KSH {{ formatCurrency(Math.abs(labourBreakdownGap)) }}
+                                is {{ labourBreakdownGap > 0 ? 'committed but not listed here' : 'listed here but not committed' }}.
+                                Check for an assignment that has been left on the job.
+                            </p>
                         </div>
 
                         <div v-if="displayQuoteAmount || displayFinalAmount" class="pricing-strip">
@@ -2027,7 +2062,7 @@
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
                     <h3>{{ rosterEditing.name }}</h3>
-                    <button @click="rosterEditing = null" class="close-btn">&times;</button>
+                    <button @click="closeRosterEditor" class="close-btn">&times;</button>
                 </div>
                 <div class="modal-body">
                     <div class="form-group">
@@ -2094,7 +2129,7 @@
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button @click="rosterEditing = null" class="btn btn-secondary">Cancel</button>
+                    <button @click="closeRosterEditor" class="btn btn-secondary">Cancel</button>
                     <button @click="saveRosterEntry" class="btn btn-primary" :disabled="savingRoster">
                         {{ savingRoster ? 'Saving…' : 'Save' }}
                     </button>
@@ -2971,66 +3006,35 @@ function paidToTechnician(technicianId) {
     return direct + fromSheets
 }
 
-// Aggregate per technician so Paid isn't double-counted when a tech
-// holds multiple assignments on the same job (e.g. lead + one sub-task,
-// or two sub-tasks). TechnicianPayment rows don't track sub_task_id, so
-// paidToTechnician(id) returns the TOTAL paid to that tech on this SR —
-// attributing that total to any single assignment row would double-count.
-// Aggregating groups all their assignments into one row: agreed = sum
-// of all their fees, paid = total, outstanding = agreed − paid. Roles
-// merged into a readable list.
-const labourFeeBreakdown = computed(() => {
-    const perTech = new Map()
-
-    const push = (technician, role, amount) => {
-        if (!technician || !amount) return
-        const id = Number(technician.id)
-        if (!perTech.has(id)) {
-            perTech.set(id, {
-                key: 'tech-' + id,
-                techId: id,
-                name: technician.user?.name || 'Technician',
-                roles: [],
-                amount: 0,
-            })
-        }
-        const row = perTech.get(id)
-        row.amount += Number(amount) || 0
-        if (role && !row.roles.includes(role)) row.roles.push(role)
-    }
-
-    // Direct (non-sub-task) assignments — usually the lead's fee.
-    const primary = props.job.job_assignments?.find?.((a) => !a.service_sub_task_id
-        && ['pending', 'accepted', 'completed'].includes(a.status))
-    if (primary) {
-        push(primary.technician, props.job.has_sub_tasks ? 'Lead' : 'Technician', primary.agreed_compensation)
-    } else if (props.job.technician && Number(currentSingleAssignment.value?.agreed_compensation || 0) > 0) {
-        // Fallback path — single-tech job that came through currentSingleAssignment.
-        push(props.job.technician, 'Technician', currentSingleAssignment.value.agreed_compensation)
-    }
-
-    // Sub-tasks with a technician + fee.
-    for (const st of props.job.sub_tasks || []) {
-        if (st.technician && Number(st.agreed_compensation) > 0) {
-            push(st.technician, 'Sub-task: ' + (st.title || `#${st.order}`), st.agreed_compensation)
-        }
-    }
-
-    // Finalise: attach paid + outstanding + a human role summary.
-    return Array.from(perTech.values()).map((row) => {
-        const paid = paidToTechnician(row.techId)
-        return {
-            ...row,
-            role: row.roles.join(' · '),
-            paid,
-            outstanding: Math.max(0, row.amount - paid),
-        }
-    })
-})
+// The committed-labour rows, as the server built them beside the total they
+// add up to. This was assembled here from the job's relations and drifted from
+// that total by a whole technician's fee — see buildLabourBreakdown() for what
+// went wrong and why it now lives on one side of the wire only.
+const labourFeeBreakdown = computed(() =>
+    (props.budgetSummary?.labor?.breakdown || []).map((row) => ({
+        ...row,
+        key: 'tech-' + row.technician_id,
+    })),
+)
 
 const labourCommittedTotal = computed(() =>
     labourFeeBreakdown.value.reduce((sum, r) => sum + (Number(r.amount) || 0), 0)
 )
+/**
+ * The gap between this table and the Committed figure on the card above.
+ *
+ * They are built from different queries — the card sums on the server, this
+ * table assembles from the job's relations — and when they drifted apart the
+ * only symptom was a number quietly missing from one of them. Nobody spots
+ * that by reading two figures in different panels, so the page now says it.
+ */
+const labourBreakdownGap = computed(() => {
+    const committed = Number(props.budgetSummary?.labor?.committed)
+    if (!Number.isFinite(committed)) return 0
+    const gap = committed - labourCommittedTotal.value
+    return Math.abs(gap) < 0.01 ? 0 : gap
+})
+
 const labourPaidTotal = computed(() =>
     labourFeeBreakdown.value.reduce((sum, r) => sum + (Number(r.paid) || 0), 0)
 )
@@ -3375,10 +3379,10 @@ const addToCrew = () => {
     })
 }
 
-const removeCrewMember = (member) => {
+const removeCrewMember = (member, assignmentId = member.assignment_id) => {
     if (!confirm(`Remove ${member.name} from the crew? The client should be sent an updated notice.`)) return
 
-    router.post(`/admin/job-assignments/${member.assignment_id}/remove-from-crew`, {}, {
+    router.post(`/admin/job-assignments/${assignmentId}/remove-from-crew`, {}, {
         preserveScroll: true,
     })
 }
@@ -3427,9 +3431,21 @@ const toDateInput = (value) => {
     return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`
 }
 
-const openRosterEditor = (member) => {
-    const assignment = assignmentFor(member.assignment_id)
+// Which of the row's assignments the editor is acting on. A row can cover
+// several — the lead who also carries a sub-task — and editing one must not
+// silently write the other's dates.
+const rosterEditingAssignmentId = ref(null)
 
+const closeRosterEditor = () => {
+    rosterEditing.value = null
+    rosterEditingAssignmentId.value = null
+}
+
+const openRosterEditor = (member, assignmentId = null) => {
+    const targetId = assignmentId ?? member.assignment_id
+    const assignment = assignmentFor(targetId)
+
+    rosterEditingAssignmentId.value = targetId
     rosterEditing.value = member
     Object.assign(rosterForm, {
         national_id: member.national_id || '',
@@ -3447,14 +3463,15 @@ const saveRosterEntry = () => {
     if (!rosterEditing.value || savingRoster.value) return
     savingRoster.value = true
 
-    const assignment = assignmentFor(rosterEditing.value.assignment_id)
+    const editingId = rosterEditingAssignmentId.value ?? rosterEditing.value.assignment_id
+    const assignment = assignmentFor(editingId)
     const technicianId = assignment?.technician_id
 
     // The ID lives on the technician and the rest on the assignment, so this
     // is two writes. Chained rather than parallel: the second reload would
     // otherwise land on props the first had already replaced.
     const saveAssignment = () => router.post(
-        `/admin/job-assignments/${rosterEditing.value.assignment_id}/roster`,
+        `/admin/job-assignments/${editingId}/roster`,
         {
             role_on_job: rosterForm.role_on_job || null,
             expected_start: rosterForm.expected_start || null,
@@ -3463,7 +3480,7 @@ const saveRosterEntry = () => {
         },
         {
             preserveScroll: true,
-            onSuccess: () => { rosterEditing.value = null },
+            onSuccess: () => { closeRosterEditor() },
             onFinish: () => { savingRoster.value = false },
         }
     )
@@ -5335,6 +5352,32 @@ defineOptions({
     color: #065f46;
     font-weight: 700;
     font-size: 0.78rem;
+}
+
+.labour-breakdown-gap {
+    margin: 0.7rem 0 0;
+    padding: 0.55rem 0.7rem;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    color: #92400e;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.45rem;
+}
+
+/* One line per assignment inside a roster row. A person with a single
+   assignment gets a single line and looks exactly as it always did. */
+.roster-line + .roster-line {
+    margin-top: 0.4rem;
+    padding-top: 0.4rem;
+    border-top: 1px dashed #e2e8f0;
+}
+.roster-line-actions {
+    display: flex;
+    gap: 0.35rem;
+    align-items: center;
 }
 
 /* Labour committed breakdown panel — sits under the finance grid,

@@ -118,6 +118,27 @@ class JobAssignment extends Model
         return $start . ' - ' . $this->expected_end->format('d.m.Y');
     }
 
+    /**
+     * The first day this person is expected on site under this assignment, or
+     * null when nothing has been dated yet.
+     *
+     * Only used to order a roster row that covers several assignments, so the
+     * dates read earliest first rather than in whatever order the rows were
+     * created.
+     */
+    public function earliestAttendanceDate(): ?\Carbon\Carbon
+    {
+        $dates = collect($this->attendance_dates ?? [])
+            ->filter()
+            ->map(fn ($date) => \Carbon\Carbon::parse($date));
+
+        if ($dates->isNotEmpty()) {
+            return $dates->min();
+        }
+
+        return $this->expected_start;
+    }
+
     public function subTask(): BelongsTo
     {
         return $this->belongsTo(ServiceSubTask::class, 'service_sub_task_id');
