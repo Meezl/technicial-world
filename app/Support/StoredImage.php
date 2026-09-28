@@ -64,6 +64,52 @@ class StoredImage
             || str_contains($mime, 'heif');
     }
 
+    /**
+     * The most a single conversion may cost.
+     *
+     * ImageMagick allocates outside PHP's memory_limit, so `memory_limit` does
+     * not bound it and never did — which is how converting a batch took the
+     * whole container down rather than failing one photograph. These are its
+     * own limits, and past them it spills its pixel cache to disk and runs
+     * slowly instead of being killed.
+     *
+     * A 12-megapixel iPhone photograph is roughly 36 MB of raw pixels, so 128 MB
+     * decodes one comfortably while leaving room for the web server, the queue
+     * worker and a second upload arriving at the same moment. Past the budget
+     * ImageMagick does not fail — it spills its pixel cache to disk and takes
+     * longer, which is the trade worth making on a small instance.
+     */
+    private const MEMORY_BUDGET_BYTES = 128 * 1024 * 1024;
+    private const DISK_BUDGET_BYTES = 1024 * 1024 * 1024;
+
+    /** Beyond this, do not attempt it at all. */
+    public const MAX_SOURCE_BYTES = 40 * 1024 * 1024;
+
+    /**
+     * Hold ImageMagick to a budget.
+     *
+     * Called before every decode. One thread as well as one budget: extra
+     * threads multiply the memory in flight and buy nothing on a single
+     * photograph.
+     */
+    public static function constrainImagick(): void
+    {
+        if (!class_exists(\Imagick::class)) {
+            return;
+        }
+
+        try {
+            \Imagick::setResourceLimit(\Imagick::RESOURCETYPE_MEMORY, self::MEMORY_BUDGET_BYTES);
+            \Imagick::setResourceLimit(\Imagick::RESOURCETYPE_MAP, self::MEMORY_BUDGET_BYTES);
+            \Imagick::setResourceLimit(\Imagick::RESOURCETYPE_DISK, self::DISK_BUDGET_BYTES);
+            \Imagick::setResourceLimit(\Imagick::RESOURCETYPE_THREAD, 1);
+        } catch (\Throwable $e) {
+            // An older build may not know a constant. Running without the limit
+            // is what we did before; it is not worth refusing the conversion.
+            Log::debug('Could not set an ImageMagick resource limit', ['error' => $e->getMessage()]);
+        }
+    }
+
     /** Can anything on this machine read a HEIC? */
     public static function canConvert(): bool
     {
@@ -92,6 +138,21 @@ class StoredImage
             return null;
         }
 
+        // Something far outside what a camera produces. Attempting it risks the
+        // process for a file that is not the photograph anybody is waiting for.
+        if ($file->getSize() > self::MAX_SOURCE_BYTES) {
+            Log::warning('HEIC too large to convert; storing the original', [
+                'original' => $file->getClientOriginalName(),
+                'bytes' => $file->getSize(),
+            ]);
+
+            return null;
+        }
+
+        self::constrainImagick();
+
+        $image = null;
+
         try {
             $image = new \Imagick($file->getRealPath());
             $image->setImageFormat('jpeg');
@@ -105,10 +166,11 @@ class StoredImage
             $image->stripImage();
 
             $name = Str::random(40) . '.jpg';
-            $written = $image->writeImage($file->getRealPath());
-            $image->clear();
 
-            if (!$written) {
+            // Written straight to the file rather than through getImageBlob(),
+            // which would hold a second complete copy of the picture in memory
+            // for no reason.
+            if (!$image->writeImage($file->getRealPath())) {
                 return null;
             }
 
@@ -120,6 +182,11 @@ class StoredImage
             ]);
 
             return null;
+        } finally {
+            // In a finally because the failure paths are exactly the ones that
+            // leak, and a leak per upload is what turns a bad photograph into a
+            // dead container.
+            $image?->clear();
         }
     }
 }

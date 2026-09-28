@@ -22,7 +22,9 @@ use Illuminate\Support\Facades\Storage;
  */
 class ConvertStoredHeicPhotos extends Command
 {
-    protected $signature = 'photos:convert-heic {--dry-run : List what would be converted and change nothing}';
+    protected $signature = 'photos:convert-heic
+        {--dry-run : List what would be converted and change nothing}
+        {--limit=25 : How many photographs to convert in this run}';
 
     protected $description = 'Re-encode stored HEIC photographs as JPEG so browsers can display them';
 
@@ -36,26 +38,42 @@ class ConvertStoredHeicPhotos extends Command
         }
 
         $dryRun = $this->option('dry-run');
+        $limit = max(1, (int) $this->option('limit'));
         $converted = 0;
         $failed = 0;
+        $remaining = 0;
+
+        // Held to a budget, and to one thread. ImageMagick allocates outside
+        // PHP's memory_limit, so nothing bounded it before and a long run took
+        // the container with it rather than failing a photograph.
+        StoredImage::constrainImagick();
 
         foreach ($this->targets() as [$label, $model, $column]) {
-            $rows = $model::query()
-                ->where($column, 'like', '%.heic')
-                ->orWhere($column, 'like', '%.heif')
-                ->get();
+            $pending = $model::query()
+                ->where(fn ($q) => $q->where($column, 'like', '%.heic')->orWhere($column, 'like', '%.heif'));
 
-            if ($rows->isEmpty()) {
+            $total = (clone $pending)->count();
+            if ($total === 0) {
                 continue;
             }
 
-            $this->info(sprintf('%s: %d to convert', $label, $rows->count()));
+            $budget = max(0, $limit - $converted - $failed);
+            if ($budget === 0) {
+                $remaining += $total;
+                continue;
+            }
+
+            $rows = $pending->orderBy('id')->limit($budget)->get();
+            $remaining += $total - $rows->count();
+
+            $this->info(sprintf('%s: %d of %d this run', $label, $rows->count(), $total));
 
             foreach ($rows as $row) {
                 $path = $row->{$column};
 
                 if ($dryRun) {
                     $this->line('  would convert ' . $path);
+                    $converted++;
                     continue;
                 }
 
@@ -70,6 +88,11 @@ class ConvertStoredHeicPhotos extends Command
                 $row->forceFill([$column => $newPath])->save();
                 $this->line('  ' . $path . ' -> ' . $newPath);
                 $converted++;
+
+                // One picture's worth of memory freed before the next is
+                // decoded, rather than at the end of a run that may not get
+                // there.
+                gc_collect_cycles();
             }
         }
 
@@ -77,6 +100,13 @@ class ConvertStoredHeicPhotos extends Command
         $this->info($dryRun
             ? 'Dry run finished — nothing was changed.'
             : sprintf('%d converted, %d left as they were.', $converted, $failed));
+
+        if ($remaining > 0) {
+            $this->comment(sprintf(
+                '%d still to do. Run it again — it works through them a batch at a time on purpose.',
+                $remaining
+            ));
+        }
 
         return self::SUCCESS;
     }
@@ -106,7 +136,20 @@ class ConvertStoredHeicPhotos extends Command
             return null;
         }
 
+        if ($disk->size($path) > StoredImage::MAX_SOURCE_BYTES) {
+            $this->warn('  too large to convert safely: ' . $path);
+
+            return null;
+        }
+
+        $image = null;
+
         try {
+            $newPath = preg_replace('/\.(heic|heif)$/i', '.jpg', $path);
+            if ($newPath === $path) {
+                $newPath = $path . '.jpg';
+            }
+
             $image = new \Imagick($disk->path($path));
             $image->setImageFormat('jpeg');
             $image->setImageCompressionQuality(85);
@@ -115,19 +158,18 @@ class ConvertStoredHeicPhotos extends Command
             $image->autoOrient();
             $image->stripImage();
 
-            $newPath = preg_replace('/\.(heic|heif)$/i', '.jpg', $path);
-            if ($newPath === $path) {
-                $newPath = $path . '.jpg';
-            }
-
-            $disk->put($newPath, $image->getImageBlob());
-            $image->clear();
+            // Straight to its destination. getImageBlob() would hold a second
+            // complete copy of the picture in PHP memory beside the one
+            // ImageMagick already has.
+            $image->writeImage($disk->path($newPath));
 
             return $newPath;
         } catch (\Throwable $e) {
             $this->warn('  ' . $e->getMessage());
 
             return null;
+        } finally {
+            $image?->clear();
         }
     }
 }

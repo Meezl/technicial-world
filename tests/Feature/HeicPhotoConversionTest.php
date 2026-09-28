@@ -160,4 +160,37 @@ class HeicPhotoConversionTest extends TestCase
 
         $this->assertSame('job-photos/1/original.heic', $photo->fresh()->file_path);
     }
+
+    // ==================== not taking the box down with it ====================
+
+    public function test_a_file_too_large_to_decode_safely_is_stored_untouched(): void
+    {
+        Storage::fake('public');
+
+        // Far outside what a camera produces. Attempting it risks the process
+        // for a file nobody is waiting on.
+        $huge = UploadedFile::fake()->create(
+            'IMG_4021.heic',
+            (StoredImage::MAX_SOURCE_BYTES / 1024) + 1024,
+            'image/heic'
+        );
+
+        $path = StoredImage::put($huge, 'job-photos/1');
+
+        $this->assertStringEndsWith('.heic', $path);
+        Storage::disk('public')->assertExists($path);
+    }
+
+    public function test_the_backfill_works_in_batches_rather_than_all_at_once(): void
+    {
+        // Converting every photograph in one process is what took the instance
+        // down: ImageMagick allocates outside PHP's memory_limit, so nothing
+        // bounded a long run. The command now does a batch and says what is
+        // left.
+        $definition = $this->app->make(\App\Console\Commands\ConvertStoredHeicPhotos::class)
+            ->getDefinition();
+
+        $this->assertTrue($definition->hasOption('limit'));
+        $this->assertSame('25', $definition->getOption('limit')->getDefault());
+    }
 }
