@@ -26,6 +26,7 @@ use App\Models\Payment;
 use App\Models\PaymentMilestone;
 use App\Models\PaymentMilestoneAllocation;
 use App\Models\ProgressReport;
+use App\Jobs\ConvertPhotoToJpeg;
 use App\Rules\IsTechnician;
 use App\Support\StoredImage;
 use App\Models\TechnicianPayment;
@@ -941,6 +942,10 @@ class AdminDashboardController extends Controller
 
             $technician->update($updates);
         });
+
+        // Re-encoded afterwards rather than on this request. A no-op unless the
+        // photograph was one a browser could not draw.
+        ConvertPhotoToJpeg::dispatchIfNeeded($technician->fresh(), 'profile_photo_path');
 
         return back()->with('success', $request->name . '\'s details updated.');
     }
@@ -4766,6 +4771,7 @@ class AdminDashboardController extends Controller
 
         if ($updates) {
             $technician->update($updates);
+            ConvertPhotoToJpeg::dispatchIfNeeded($technician->fresh(), 'profile_photo_path');
         }
 
         return back()->with('success', 'Technician details updated.');

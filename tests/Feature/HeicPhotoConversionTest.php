@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\ConvertPhotoToJpeg;
 use App\Models\JobPhoto;
 use App\Models\ServiceCategory;
 use App\Models\ServiceRequest;
@@ -9,6 +10,7 @@ use App\Models\User;
 use App\Support\StoredImage;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -80,7 +82,7 @@ class HeicPhotoConversionTest extends TestCase
 
     // ==================== storing them ====================
 
-    public function test_a_heic_upload_is_never_lost_whatever_the_server_can_decode(): void
+    public function test_an_upload_is_stored_as_it_arrives_and_never_decoded_on_the_request(): void
     {
         Storage::fake('public');
 
@@ -89,21 +91,17 @@ class HeicPhotoConversionTest extends TestCase
             'job-photos/1'
         );
 
-        // Converted where a decoder exists, stored as it arrived where none
-        // does — but stored either way. The upload is the thing that must not
-        // be lost.
+        // Whoever sent the photograph does not pay for the re-encode: the
+        // request stores it and returns. Conversion happens afterwards, on the
+        // queue.
         Storage::disk('public')->assertExists($path);
-
-        if (StoredImage::canConvert()) {
-            $this->assertStringEndsWith('.jpg', $path);
-        } else {
-            $this->assertStringEndsWith('.heic', $path);
-        }
+        $this->assertStringEndsWith('.heic', $path);
     }
 
-    public function test_the_job_photo_endpoint_stores_an_iphone_upload(): void
+    public function test_the_job_photo_endpoint_records_the_upload_and_queues_the_work(): void
     {
         Storage::fake('public');
+        Queue::fake();
 
         $job = $this->job();
         $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
@@ -120,9 +118,31 @@ class HeicPhotoConversionTest extends TestCase
         Storage::disk('public')->assertExists($photo->file_path);
         $this->assertSame('Riser before work', $photo->caption);
 
+        // Queued only where there is a decoder to run it — otherwise the job
+        // would sit there failing over a thing the server cannot do.
         if (StoredImage::canConvert()) {
-            $this->assertStringEndsWith('.jpg', $photo->file_path);
+            Queue::assertPushed(ConvertPhotoToJpeg::class);
+        } else {
+            Queue::assertNothingPushed();
         }
+    }
+
+    public function test_a_jpeg_upload_never_touches_the_queue(): void
+    {
+        Storage::fake('public');
+        Queue::fake();
+
+        $job = $this->job();
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+
+        $this->actingAs($admin)
+            ->post(route('jobs.photos.store', $job), [
+                'photos' => [UploadedFile::fake()->image('site.jpg')],
+            ])
+            ->assertRedirect();
+
+        // Most uploads are already viewable. They should cost nothing at all.
+        Queue::assertNothingPushed();
     }
 
     // ==================== the ones already on disk ====================

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\JobPhoto;
+use App\Jobs\ConvertPhotoToJpeg;
 use App\Support\StoredImage;
 use App\Models\ServiceRequest;
 use App\Models\User;
@@ -49,10 +50,9 @@ class JobPhotoController extends Controller
         $clientVisible = $this->defaultVisibilityFor($user);
 
         foreach ($request->file('photos', []) as $file) {
-            // Converted if a browser could not draw it — see StoredImage.
             $path = StoredImage::put($file, 'job-photos/' . $serviceRequest->id);
 
-            $serviceRequest->photos()->create([
+            $photo = $serviceRequest->photos()->create([
                 'service_request_id' => $serviceRequest->id,
                 'file_path'          => $path,
                 'caption'            => $request->input('caption'),
@@ -63,6 +63,11 @@ class JobPhotoController extends Controller
                 'size_bytes'         => $file->getSize(),
                 'client_visible'     => $clientVisible,
             ]);
+
+            // An iPhone photograph is re-encoded afterwards, on the queue, so
+            // whoever sent it is not kept waiting for a decode — see
+            // ConvertPhotoToJpeg. A no-op for everything else.
+            ConvertPhotoToJpeg::dispatchIfNeeded($photo);
         }
 
         $count = count($request->file('photos', []));

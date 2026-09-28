@@ -4,7 +4,6 @@ namespace App\Support;
 
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 
 /**
  * Store an uploaded photograph in a format a browser will actually draw.
@@ -37,20 +36,12 @@ class StoredImage
      */
     public static function put(UploadedFile $file, string $directory, string $disk = 'public'): string
     {
-        if (!self::needsConversion($file)) {
-            return $file->store($directory, $disk);
-        }
-
-        $converted = self::toJpeg($file);
-
-        if ($converted === null) {
-            // No decoder here. The upload is kept as it arrived — losing a
-            // technician's photograph because the server cannot re-encode it
-            // would be a far worse failure than one that will not render.
-            return $file->store($directory, $disk);
-        }
-
-        return $file->storeAs($directory, $converted, $disk);
+        // Always just stored. Nothing is decoded on the request that carries
+        // the upload: a decode is seconds of a web worker, and several
+        // photographs arriving from a site together would each hold one. The
+        // re-encode happens afterwards on the queue — see ConvertPhotoToJpeg,
+        // which the caller dispatches once the record exists to repoint.
+        return $file->store($directory, $disk);
     }
 
     /** Is this an upload a browser would refuse to draw? */
@@ -127,66 +118,4 @@ class StoredImage
         }
     }
 
-    /**
-     * Rewrite the upload in place as a JPEG.
-     *
-     * @return string|null The new filename, or null if it could not be read.
-     */
-    private static function toJpeg(UploadedFile $file): ?string
-    {
-        if (!self::canConvert()) {
-            return null;
-        }
-
-        // Something far outside what a camera produces. Attempting it risks the
-        // process for a file that is not the photograph anybody is waiting for.
-        if ($file->getSize() > self::MAX_SOURCE_BYTES) {
-            Log::warning('HEIC too large to convert; storing the original', [
-                'original' => $file->getClientOriginalName(),
-                'bytes' => $file->getSize(),
-            ]);
-
-            return null;
-        }
-
-        self::constrainImagick();
-
-        $image = null;
-
-        try {
-            $image = new \Imagick($file->getRealPath());
-            $image->setImageFormat('jpeg');
-            // Good enough that nobody can tell on a site photograph, small
-            // enough that a gallery of them still loads on site signal.
-            $image->setImageCompressionQuality(85);
-            // An iPhone writes the orientation as metadata rather than rotating
-            // the pixels, and dropping the metadata without applying it first
-            // is how a photograph ends up sideways.
-            $image->autoOrient();
-            $image->stripImage();
-
-            $name = Str::random(40) . '.jpg';
-
-            // Written straight to the file rather than through getImageBlob(),
-            // which would hold a second complete copy of the picture in memory
-            // for no reason.
-            if (!$image->writeImage($file->getRealPath())) {
-                return null;
-            }
-
-            return $name;
-        } catch (\Throwable $e) {
-            Log::warning('HEIC conversion failed; storing the original', [
-                'original' => $file->getClientOriginalName(),
-                'error' => $e->getMessage(),
-            ]);
-
-            return null;
-        } finally {
-            // In a finally because the failure paths are exactly the ones that
-            // leak, and a leak per upload is what turns a bad photograph into a
-            // dead container.
-            $image?->clear();
-        }
-    }
 }

@@ -7,6 +7,7 @@ use App\Mail\LeadReportsPosted;
 use App\Models\ProgressReport;
 use App\Models\ProgressReportNoteVersion;
 use App\Models\JobPhoto;
+use App\Jobs\ConvertPhotoToJpeg;
 use App\Support\StoredImage;
 use App\Models\ServiceRequest;
 use App\Models\ServiceSubTask;
@@ -499,7 +500,7 @@ class ProgressService
     ): JobPhoto {
         $path = StoredImage::put($file, 'progress-photos/' . $report->service_request_id);
 
-        return $report->photos()->create([
+        $photo = $report->photos()->create([
             // Denormalised so job-wide queries and the permission check don't
             // have to walk back through the report.
             'service_request_id' => $report->service_request_id,
@@ -514,6 +515,13 @@ class ProgressService
             // not on upload — the PM decides what counts.
             'client_visible'     => true,
         ]);
+
+        // Re-encoded afterwards on the queue rather than on the request that
+        // carried it — a technician on site signal should not wait for a decode
+        // they cannot see. A no-op for anything a browser can already draw.
+        ConvertPhotoToJpeg::dispatchIfNeeded($photo);
+
+        return $photo;
     }
 
     /**
