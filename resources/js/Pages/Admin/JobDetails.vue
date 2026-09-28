@@ -757,8 +757,16 @@
                                         >
                                             <i class="fas fa-pen"></i> Edit fee
                                         </button>
+                                        <!-- Gated by the same service the assign
+                                             endpoint enforces with, not by
+                                             re-reading rfq_status here. This
+                                             button used to do the latter and so
+                                             vanished on jobs the backend would
+                                             happily have staffed — a card
+                                             reading "Unassigned" with no way to
+                                             assign and nothing saying why. -->
                                         <button
-                                            v-if="subTask.status !== 'completed' && (!job.rfq_status || job.rfq_status === 'approved')"
+                                            v-if="subTask.status !== 'completed' && canAssignTechnician"
                                             @click="showAssignModalFor(subTask)"
                                             class="btn btn-primary btn-xs"
                                         >
@@ -780,6 +788,18 @@
                                         </button>
                                     </div>
                                 </div>
+
+                                <!-- When it cannot be assigned, say so on the
+                                     card. An absent button is a question; this
+                                     is the answer, in the words the endpoint
+                                     would have refused with. -->
+                                <p
+                                    v-if="subTask.status !== 'completed' && !canAssignTechnician"
+                                    class="subtask-blocked"
+                                >
+                                    <i class="fas fa-lock"></i>
+                                    {{ subTaskAssignBlocker }}
+                                </p>
 
                                 <!-- Inline fee edit — the counterpart of the
                                      lead's Edit fee, so a sub-task fee no longer
@@ -3243,6 +3263,15 @@ const atAssignableStage = computed(() =>
 
 const canAssignTechnician = computed(() => atAssignableStage.value && !assignmentBlocker.value)
 
+/** Why a task cannot be handed out yet, in the endpoint's own words. */
+const subTaskAssignBlocker = computed(() => {
+    if (assignmentBlocker.value) return assignmentBlocker.value
+    if (!atAssignableStage.value) {
+        return `This job is at "${formatStatus(props.job.status)}", which is not a stage work can be handed out at.`
+    }
+    return 'This task cannot be assigned yet.'
+})
+
 const canReassignTechnician = computed(() =>
     canAssignTechnician.value && !['completed', 'cancelled'].includes(props.job.status)
 )
@@ -5665,6 +5694,19 @@ defineOptions({
     background: #f8fafc;
     border: 1px solid #e2e8f0;
     margin-bottom: 0.7rem;
+}
+
+.subtask-blocked {
+    margin: 0.5rem 0 0;
+    padding: 0.45rem 0.6rem;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    color: #92400e;
+    font-size: 0.78rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
 }
 
 .subtask-tech-actions {
