@@ -53,6 +53,16 @@ class ServiceSubTask extends Model
                 $subTask->completed_at = $subTask->completed_at ?? now();
             }
 
+            // "Assigned" to nobody is not a state this should be able to
+            // reach, and it is what the board showed: a task badged Assigned
+            // sitting above the word Unassigned. Whatever emptied the
+            // technician — an older unassign path, a technician row removed —
+            // the status has to follow, or the office reads a job as staffed
+            // that nobody is on.
+            if (!$subTask->technician_id && $subTask->status === self::STATUS_ASSIGNED) {
+                $subTask->status = self::STATUS_PENDING;
+            }
+
             // A task belongs to a tradesman.
             //
             // A gang member is on site under somebody else's scope, with a

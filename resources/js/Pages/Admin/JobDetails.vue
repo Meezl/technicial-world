@@ -2017,6 +2017,26 @@
                         <input v-model="crewForm.national_id" type="text" class="form-control" placeholder="e.g. 37853277">
                     </div>
 
+                    <!-- A technician can be put on the crew and given one of
+                         the job's tasks in the same move. Doing it on two
+                         screens is how a job ends up with an unassigned
+                         "Carpentry" sub-task and somebody on its gate list
+                         doing carpentry. Not offered to a gang member, who
+                         carries no task, nor when every task is already held. -->
+                    <div v-if="crewAssignableSubTasks.length && !crewIsGangMember" class="form-group">
+                        <label>Task on this job <span class="roster-optional">(optional)</span></label>
+                        <select v-model="crewForm.service_sub_task_id" class="form-control" @change="onCrewSubTaskPicked">
+                            <option value="">No task — crew only</option>
+                            <option v-for="task in crewAssignableSubTasks" :key="task.id" :value="task.id">
+                                #{{ task.order }} {{ task.title }}
+                            </option>
+                        </select>
+                        <small class="roster-help">
+                            Given a task, they answer for it and their fee is allocated against the
+                            labour budget. Left as crew only, they carry no scope of their own.
+                        </small>
+                    </div>
+
                     <div class="form-group">
                         <label>Role on this job *</label>
                         <input v-model="crewForm.role_on_job" type="text" class="form-control"
@@ -3300,6 +3320,7 @@ const crewSearch = ref('')
 
 const crewForm = reactive({
     technician_id: '',
+    service_sub_task_id: '',
     role_on_job: '',
     national_id: '',
     agreed_compensation: null,
@@ -3362,6 +3383,7 @@ const openCrewModal = () => {
     roleTouched.value = false
     Object.assign(crewForm, {
         technician_id: '',
+        service_sub_task_id: '',
         role_on_job: '',
         national_id: '',
         agreed_compensation: null,
@@ -3397,10 +3419,31 @@ const submitCrewMember = () => {
 
 const crewIsGangMember = computed(() => selectedCrewTechnician.value?.kind === 'gang_member')
 
+/** The job's tasks that nobody holds yet. */
+const crewAssignableSubTasks = computed(() =>
+    (props.job.sub_tasks || []).filter(t => !t.technician_id),
+)
+
+/**
+ * Picking a task fills in the role, because on this job they are the same
+ * sentence — and an empty role field beside a chosen task is a question the
+ * office should not have to answer twice. Anything they have typed themselves
+ * is left alone.
+ */
+const onCrewSubTaskPicked = () => {
+    if (roleTouched.value) return
+
+    const task = crewAssignableSubTasks.value
+        .find(t => String(t.id) === String(crewForm.service_sub_task_id))
+
+    crewForm.role_on_job = task ? task.title : ''
+}
+
 const addToCrew = () => {
     router.post(`/admin/jobs/${props.job.id}/crew`, {
         technician_id: crewForm.technician_id,
         role_on_job: crewForm.role_on_job,
+        service_sub_task_id: crewForm.service_sub_task_id || null,
         agreed_compensation: crewIsGangMember.value ? null : (crewForm.agreed_compensation || null),
         expected_start: crewForm.expected_start || null,
         expected_end: crewForm.expected_end || null,

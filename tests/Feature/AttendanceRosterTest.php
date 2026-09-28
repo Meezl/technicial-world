@@ -623,4 +623,124 @@ class AttendanceRosterTest extends TestCase
             ->assertRedirect()
             ->assertSessionHas('error');
     }
+
+    // ============ joining the crew by taking one of the job's tasks ============
+
+    public function test_a_technician_can_join_the_crew_on_a_task_in_one_move(): void
+    {
+        [$sr, , $admin] = $this->makeJob(['has_sub_tasks' => true]);
+        \App\Models\ServiceRequestBudget::create([
+            'service_request_id' => $sr->id,
+            'labor_budget' => 100000,
+            'materials_budget' => 0,
+            'other_budget' => 0,
+        ]);
+
+        $tech = $this->makeTechnician('Wycliffe Mackynon', '22805544');
+        $subTask = \App\Models\ServiceSubTask::create([
+            'service_request_id' => $sr->id,
+            'title' => 'Carpentry & Woodwork',
+            'order' => 2,
+        ]);
+
+        $this->actingAs($admin)
+            ->post(route('admin.jobs.crew.add', $sr), [
+                'technician_id' => $tech->id,
+                'service_sub_task_id' => $subTask->id,
+                'role_on_job' => 'Carpentry & Woodwork',
+                'agreed_compensation' => 12000,
+                'expected_start' => '2026-09-28',
+                'expected_end' => '2026-09-28',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $subTask->refresh();
+        $this->assertSame($tech->id, $subTask->technician_id);
+        $this->assertSame(\App\Models\ServiceSubTask::STATUS_ASSIGNED, $subTask->status);
+        $this->assertEqualsWithDelta(12000, (float) $subTask->agreed_compensation, 0.01);
+
+        // One assignment carrying both, not a crew row beside a sub-task row
+        // for the same man on the same work.
+        $assignments = JobAssignment::where('service_request_id', $sr->id)
+            ->where('technician_id', $tech->id)
+            ->get();
+        $this->assertCount(1, $assignments);
+        $this->assertSame($subTask->id, $assignments->first()->service_sub_task_id);
+
+        // And the gate list has the role and the dates, which a sub-task
+        // assignment made the usual way carries neither of.
+        $row = collect($sr->fresh()->attendanceRoster())->firstWhere('name', 'Wycliffe Mackynon');
+        $this->assertSame('Carpentry & Woodwork', $row['role']);
+        $this->assertSame('28.09.2026', $row['attendance']);
+    }
+
+    public function test_a_task_somebody_already_holds_is_not_handed_out_twice(): void
+    {
+        [$sr, , $admin] = $this->makeJob(['has_sub_tasks' => true]);
+        $held = $this->makeTechnician('First Holder', '11111111');
+        $other = $this->makeTechnician('Second Comer', '22222222');
+
+        $subTask = \App\Models\ServiceSubTask::create([
+            'service_request_id' => $sr->id,
+            'title' => 'Carpentry & Woodwork',
+            'order' => 1,
+            'technician_id' => $held->id,
+        ]);
+
+        $this->actingAs($admin)
+            ->post(route('admin.jobs.crew.add', $sr), [
+                'technician_id' => $other->id,
+                'service_sub_task_id' => $subTask->id,
+                'role_on_job' => 'Carpentry',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('error');
+
+        $this->assertSame($held->id, $subTask->fresh()->technician_id);
+    }
+
+    public function test_a_task_from_another_job_is_refused(): void
+    {
+        [$sr, , $admin] = $this->makeJob(['has_sub_tasks' => true]);
+        [$other] = $this->makeJob(['has_sub_tasks' => true]);
+        $tech = $this->makeTechnician('Wycliffe Mackynon', '22805544');
+
+        $foreign = \App\Models\ServiceSubTask::create([
+            'service_request_id' => $other->id,
+            'title' => 'Somebody else\'s work',
+            'order' => 1,
+        ]);
+
+        $this->actingAs($admin)
+            ->post(route('admin.jobs.crew.add', $sr), [
+                'technician_id' => $tech->id,
+                'service_sub_task_id' => $foreign->id,
+                'role_on_job' => 'Carpentry',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('error');
+
+        $this->assertNull($foreign->fresh()->technician_id);
+    }
+
+    public function test_a_task_badged_assigned_cannot_be_left_with_nobody_on_it(): void
+    {
+        [$sr] = $this->makeJob(['has_sub_tasks' => true]);
+        $tech = $this->makeTechnician('Holder', '11111111');
+
+        $subTask = \App\Models\ServiceSubTask::create([
+            'service_request_id' => $sr->id,
+            'title' => 'Electrical works',
+            'order' => 1,
+            'technician_id' => $tech->id,
+            'status' => \App\Models\ServiceSubTask::STATUS_ASSIGNED,
+        ]);
+
+        // Whatever empties the technician, the status has to follow — the board
+        // was showing "Assigned" directly above the word "Unassigned".
+        $subTask->update(['technician_id' => null]);
+
+        $this->assertSame(\App\Models\ServiceSubTask::STATUS_PENDING, $subTask->fresh()->status);
+    }
 }

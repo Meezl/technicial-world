@@ -4432,6 +4432,11 @@ class AdminDashboardController extends Controller
         $request->validate([
             'technician_id' => 'required|exists:technicians,id',
             'role_on_job' => 'required|string|max:255',
+            // Somebody can be put on the crew and given a task in one move.
+            // Two screens for one decision is how a man ends up on the gate
+            // list doing "Carpentry & Woodwork" while the Carpentry sub-task
+            // beside it still reads Unassigned.
+            'service_sub_task_id' => 'nullable|integer|exists:service_sub_tasks,id',
             // Optional on purpose: a right-hand man is frequently paid through
             // the technician who brought them, and forcing a figure here would
             // invent a separate payable that nobody owes.
@@ -4478,6 +4483,22 @@ class AdminDashboardController extends Controller
             ->values()
             ->all();
 
+        // Given a task, they join as its holder rather than as a bare pair of
+        // hands — one assignment carrying both, not a crew row beside a
+        // sub-task row for the same person on the same work.
+        if ($request->filled('service_sub_task_id')) {
+            return $this->addCrewMemberToSubTask(
+                $serviceRequest,
+                $technician,
+                (int) $request->input('service_sub_task_id'),
+                $request->role_on_job,
+                $compensation,
+                $request->input('expected_start'),
+                $request->input('expected_end'),
+                $dates
+            );
+        }
+
         JobAssignment::create([
             'service_request_id' => $serviceRequest->id,
             // Deliberately null: this person carries no separate scope.
@@ -4520,6 +4541,89 @@ class AdminDashboardController extends Controller
      * Refuses on the primary and the lead: removing them is a reassignment,
      * which has its own flow, its own notification and its own reason.
      */
+    /**
+     * Put a technician on the crew by giving them one of the job's tasks.
+     *
+     * The same assignment carries both: the sub-task they answer for, and the
+     * role and dates the client's gate list reads. Doing it as two rows would
+     * put the same man on the roster twice for one piece of work, and doing it
+     * on two screens is why a job can carry an unassigned "Carpentry" sub-task
+     * while somebody stands on its gate list doing carpentry.
+     */
+    private function addCrewMemberToSubTask(
+        ServiceRequest $serviceRequest,
+        Technician $technician,
+        int $subTaskId,
+        string $roleOnJob,
+        float $compensation,
+        ?string $expectedStart,
+        ?string $expectedEnd,
+        array $dates
+    ) {
+        $subTask = ServiceSubTask::where('service_request_id', $serviceRequest->id)->find($subTaskId);
+
+        if (!$subTask) {
+            return back()->with('error', 'That task does not belong to this job.');
+        }
+
+        if ($technician->isGangMember()) {
+            return back()->with('error',
+                $technician->user?->name . ' is a gang member and cannot be given a task. '
+                . 'Add them to the crew with a description of what they will be doing instead.');
+        }
+
+        if ($subTask->technician_id) {
+            return back()->with('error', sprintf(
+                '"%s" is already held by %s. Take them off it first.',
+                $subTask->title,
+                $subTask->technician?->user?->name ?? 'somebody else'
+            ));
+        }
+
+        // A task's fee is allocated against the labour budget, unlike a crew
+        // place, which is usually paid through the lead.
+        if ($compensation > 0) {
+            $this->ensureLaborBudgetCapacity($serviceRequest, $compensation, excludeSubTaskId: $subTask->id);
+            $this->ensureTechnicianMilestoneCoverage($serviceRequest, (int) $technician->id, $compensation);
+        }
+
+        DB::transaction(function () use ($subTask, $technician, $compensation, $roleOnJob, $expectedStart, $expectedEnd, $dates) {
+            $subTask->update([
+                'technician_id' => $technician->id,
+                'status' => ServiceSubTask::STATUS_ASSIGNED,
+                'assigned_at' => now(),
+                'agreed_compensation' => $compensation,
+            ]);
+
+            $assignment = $this->syncSubTaskAssignment($subTask, $technician, $compensation, null);
+
+            // The roster reads these off the assignment, and a sub-task
+            // assignment made the usual way has none of them — which is why a
+            // task holder's row said "To be confirmed" until somebody edited it.
+            $assignment->update([
+                'role_on_job' => $roleOnJob,
+                'expected_start' => $expectedStart,
+                'expected_end' => $expectedEnd,
+                'attendance_dates' => $dates ?: null,
+            ]);
+        });
+
+        AuditLog::log(AuditLog::ACTION_ASSIGNMENT, $serviceRequest, null, [
+            'crew_member_added' => $technician->user?->name,
+            'technician_id' => $technician->id,
+            'service_sub_task_id' => $subTask->id,
+            'sub_task' => $subTask->title,
+            'agreed_compensation' => $compensation,
+            'added_by' => auth()->id(),
+        ]);
+
+        return back()->with('success', sprintf(
+            '%s added to the crew on "%s".',
+            $technician->user?->name ?? 'Technician',
+            $subTask->title
+        ));
+    }
+
     public function removeCrewMember(Request $request, JobAssignment $jobAssignment)
     {
         $request->validate([

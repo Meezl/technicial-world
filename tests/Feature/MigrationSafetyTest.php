@@ -156,6 +156,10 @@ class MigrationSafetyTest extends TestCase
             // the same migration, so reports already settled or already sent
             // are not held behind a sign-off nobody was asked for.
             '2026_09_28_000000_add_ops_verification_to_progress_reports',
+            // Corrects sub-tasks badged "assigned" with no technician on them —
+            // a contradiction the model now prevents. Touches only the status
+            // of rows that already have no technician.
+            '2026_09_28_000002_repair_unassigned_sub_task_statuses',
         ];
 
         $this->assertSame(
