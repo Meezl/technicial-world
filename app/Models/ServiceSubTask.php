@@ -52,6 +52,25 @@ class ServiceSubTask extends Model
                 $subTask->progress_percentage = 100;
                 $subTask->completed_at = $subTask->completed_at ?? now();
             }
+
+            // A task belongs to a tradesman.
+            //
+            // A gang member is on site under somebody else's scope, with a
+            // description of what they will be doing and no work of their own
+            // to report against or be paid for. Handing them a sub-task would
+            // give them a percentage to move, a fee to draw and a place in the
+            // payment sheet — three things they do not have. Enforced here
+            // rather than only at the forms because a sub-task is written from
+            // several places and they all pass through this.
+            if ($subTask->technician_id) {
+                $technician = Technician::find($subTask->technician_id);
+                if ($technician?->isGangMember()) {
+                    throw new \LogicException(
+                        'A sub-task cannot be assigned to a gang member. They join the crew with a '
+                        . 'description of what they will be doing on site, not with work of their own.'
+                    );
+                }
+            }
         });
     }
 

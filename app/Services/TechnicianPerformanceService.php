@@ -232,7 +232,7 @@ class TechnicianPerformanceService
      */
     public function getTopRecommendedTechnicians(int $limit = 3, ?string $specialization = null): array
     {
-        $query = Technician::with(['user', 'serviceRequests']);
+        $query = Technician::technicians()->with(['user', 'serviceRequests']);
 
         if ($specialization) {
             $query->where('specialization', $specialization);
@@ -273,7 +273,7 @@ class TechnicianPerformanceService
      */
     public function getAllTechniciansWithPerformance(): array
     {
-        $technicians = Technician::with(['user', 'serviceRequests', 'reviews'])->get();
+        $technicians = Technician::technicians()->with(['user', 'serviceRequests', 'reviews'])->get();
 
         return $technicians->map(function ($technician) {
             $matchScore = $this->calculateMatchScore($technician);

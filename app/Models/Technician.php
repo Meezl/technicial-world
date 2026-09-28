@@ -23,18 +23,24 @@ class Technician extends Model
      * onboarding at the same moment safe: the database, not this read,
      * is the arbiter.
      */
-    public static function generateTechnicianId(): string
+    public static function generateTechnicianId(string $kind = self::KIND_TECHNICIAN): string
     {
+        // A gang member is not a technician and should not be handed a TECH-
+        // number: the reference is read off a gate list and quoted back to the
+        // office, and one that says the wrong thing about the person is worse
+        // than no reference at all.
+        $prefix = $kind === self::KIND_GANG_MEMBER ? 'GANG' : 'TECH';
+
         // Read the references and take the maximum in PHP rather than in SQL.
         // The obvious REGEXP + CAST is MySQL-only and breaks anywhere else,
         // and the roster is small enough that the difference does not matter.
         $highest = static::query()
-            ->where('technician_id', 'like', 'TECH-%')
+            ->where('technician_id', 'like', $prefix . '-%')
             ->pluck('technician_id')
-            ->map(fn ($ref) => preg_match('/^TECH-(\d+)$/', (string) $ref, $m) ? (int) $m[1] : 0)
+            ->map(fn ($ref) => preg_match('/^' . $prefix . '-(\d+)$/', (string) $ref, $m) ? (int) $m[1] : 0)
             ->max() ?? 0;
 
-        return 'TECH-' . str_pad((string) ($highest + 1), 3, '0', STR_PAD_LEFT);
+        return $prefix . '-' . str_pad((string) ($highest + 1), 3, '0', STR_PAD_LEFT);
     }
 
     /**
@@ -44,10 +50,12 @@ class Technician extends Model
      */
     public static function createWithReference(array $attributes): self
     {
+        $kind = $attributes['kind'] ?? self::KIND_TECHNICIAN;
+
         for ($attempt = 0; $attempt < 5; $attempt++) {
             try {
                 return static::create($attributes + [
-                    'technician_id' => static::generateTechnicianId(),
+                    'technician_id' => static::generateTechnicianId($kind),
                 ]);
             } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
                 if (!str_contains($e->getMessage(), 'technician_id')) {
@@ -62,6 +70,7 @@ class Technician extends Model
     protected $fillable = [
         'user_id',
         'technician_id',
+        'kind',
         'specialization',
         'trade',
         'trades',
@@ -91,6 +100,62 @@ class Technician extends Model
         'vetted_at' => 'datetime',
         'is_active' => 'boolean',
     ];
+
+    /**
+     * A tradesman. Can be given a task on a job, carries a fee, is paid through
+     * the system, and is rated on what they deliver.
+     */
+    const KIND_TECHNICIAN = 'technician';
+
+    /**
+     * A gang member: on site, and not a tradesman.
+     *
+     * Everything the gate needs is the same — name, ID number, photograph,
+     * vetting. What differs is the work. A gang member is never given a task;
+     * they join a job's crew with a description of what they will be doing and
+     * nothing else, and they are not paid through this system. Both rules are
+     * enforced where jobs are assigned and where money moves, not here.
+     */
+    const KIND_GANG_MEMBER = 'gang_member';
+
+    const KINDS = [
+        self::KIND_TECHNICIAN => 'Technician',
+        self::KIND_GANG_MEMBER => 'Gang member',
+    ];
+
+    public function isGangMember(): bool
+    {
+        return $this->kind === self::KIND_GANG_MEMBER;
+    }
+
+    public function isTechnician(): bool
+    {
+        return !$this->isGangMember();
+    }
+
+    public function kindLabel(): string
+    {
+        return self::KINDS[$this->kind] ?? 'Technician';
+    }
+
+    /**
+     * Tradesmen only.
+     *
+     * Rows written before gang members existed carry no kind, so the absence of
+     * one has to read as "technician" — anything else would empty every picker
+     * on a database that has not been back-filled.
+     */
+    public function scopeTechnicians($query)
+    {
+        return $query->where(function ($q) {
+            $q->where('kind', self::KIND_TECHNICIAN)->orWhereNull('kind');
+        });
+    }
+
+    public function scopeGangMembers($query)
+    {
+        return $query->where('kind', self::KIND_GANG_MEMBER);
+    }
 
     const VETTING_PENDING = 'pending';
     const VETTING_UNDER_REVIEW = 'under_review';

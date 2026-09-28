@@ -13,6 +13,7 @@ use App\Models\JobAssignment;
 use App\Models\JobAuthorisation;
 use App\Models\CompensationAmendment;
 use App\Models\ProgressReport;
+use App\Rules\IsTechnician;
 use App\Services\QuotationService;
 use App\Services\JobAuthorisationService;
 use App\Services\JobService;
@@ -114,7 +115,7 @@ class PMDashboardController extends Controller
         // Show technicians that aren't outright rejected so PMs can also
         // pick up newly-onboarded technicians whose vetting flag was left
         // pending by a previous create flow (#16).
-        $technicians = Technician::with('user')
+        $technicians = Technician::technicians()->with('user')
             ->where('is_active', true)
             ->whereIn('vetting_status', [
                 Technician::VETTING_APPROVED,
@@ -263,7 +264,7 @@ class PMDashboardController extends Controller
         // Show technicians that aren't outright rejected so PMs can also
         // pick up newly-onboarded technicians whose vetting flag was left
         // pending by a previous create flow (#16).
-        $technicians = Technician::with('user')
+        $technicians = Technician::technicians()->with('user')
             ->where('is_active', true)
             ->whereIn('vetting_status', [
                 Technician::VETTING_APPROVED,
@@ -299,7 +300,7 @@ class PMDashboardController extends Controller
         $this->authorizeForPm($serviceRequest);
 
         $request->validate([
-            'technician_id' => 'required|exists:technicians,id',
+            'technician_id' => ['required', 'exists:technicians,id', new IsTechnician('this job')],
             'agreed_compensation' => 'required|numeric|min:0',
             'compensation_notes' => 'nullable|string',
             'expected_start' => 'required|date',
@@ -371,7 +372,7 @@ class PMDashboardController extends Controller
         $this->authorizeForPm($serviceRequest);
 
         $request->validate([
-            'technician_id' => 'required|exists:technicians,id',
+            'technician_id' => ['required', 'exists:technicians,id', new IsTechnician('this job')],
             'reason' => 'required|string|min:10',
         ]);
 
@@ -677,7 +678,7 @@ class PMDashboardController extends Controller
         $this->authorizeForPm($serviceRequest);
 
         $data = $request->validate([
-            'technician_id' => 'required|exists:technicians,id',
+            'technician_id' => ['required', 'exists:technicians,id', new IsTechnician('a fee change')],
             'original_amount' => 'required|numeric|min:0',
             'proposed_amount' => 'required|numeric|min:0',
             'justification' => 'required|string|min:20',

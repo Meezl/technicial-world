@@ -22,6 +22,16 @@ class User extends Authenticatable implements MustVerifyEmail
     const ROLE_PROCUREMENT = 'procurement';
     const ROLE_ACCOUNTS = 'accounts';
 
+    /**
+     * Somebody who works on site and is not a technician.
+     *
+     * The account exists to hold their name and phone number — which is where
+     * every roster, gate list and notice reads them from — not to be signed
+     * into. Nothing grants this role access to anything; the technician app is
+     * behind `role:technician`, which it is not.
+     */
+    const ROLE_GANG = 'gang';
+
     // Single source of truth for valid role values. Mirrored by the
     // `users.role` ENUM (see sync_user_role_enum migration) and by
     // validation rules that accept a role on input.
@@ -35,6 +45,7 @@ class User extends Authenticatable implements MustVerifyEmail
         self::ROLE_OFFICE,
         self::ROLE_PROCUREMENT,
         self::ROLE_ACCOUNTS,
+        self::ROLE_GANG,
     ];
 
     /**

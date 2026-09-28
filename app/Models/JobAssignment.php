@@ -47,6 +47,54 @@ class JobAssignment extends Model
 
     protected static function booted(): void
     {
+        // What a gang member's place on a job may and may not be.
+        //
+        // Two rules, stated once here rather than at each of the places an
+        // assignment is written:
+        //
+        //  · No sub-task. A gang member carries no scope of their own — that is
+        //    the whole distinction between them and a technician.
+        //  · No fee. They are not paid through this system at all, so a figure
+        //    here would create a payable nothing will ever settle and that the
+        //    committed-labour total would nonetheless count.
+        static::saving(function (self $assignment) {
+            if (!$assignment->technician_id) {
+                return;
+            }
+
+            $technician = Technician::find($assignment->technician_id);
+            if (!$technician?->isGangMember()) {
+                return;
+            }
+
+            if ($assignment->service_sub_task_id !== null) {
+                throw new \LogicException(
+                    'A gang member cannot hold a sub-task assignment. They join the crew with a '
+                    . 'description of what they will be doing on site.'
+                );
+            }
+
+            if ((float) $assignment->agreed_compensation > 0) {
+                throw new \LogicException(
+                    'A gang member is not paid through this system, so no fee can be recorded '
+                    . 'against them. Their pay is settled off-system by whoever brought them.'
+                );
+            }
+
+            // Nobody to ask, so nothing to wait for.
+            //
+            // A pending assignment means "this technician has not yet accepted"
+            // and opens a reminder that chases them every twelve hours until
+            // they do. A gang member has no account to accept in — the address
+            // on their user row exists to hold a name, not to be written to —
+            // so the office putting them on the job is the acceptance. Leaving
+            // them pending would chase a synthetic mailbox for the life of the
+            // job.
+            if ($assignment->status === self::STATUS_PENDING) {
+                $assignment->status = self::STATUS_ACCEPTED;
+            }
+        });
+
         // A technician is reminded every 12 hours until they accept or decline.
         static::created(function (self $assignment) {
             if ($assignment->status === self::STATUS_PENDING) {

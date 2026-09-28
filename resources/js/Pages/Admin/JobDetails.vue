@@ -1922,9 +1922,13 @@
                             style="margin-bottom:0.5rem;"
                         >
                         <select v-model="crewForm.technician_id" class="form-control">
-                            <option value="">Select a technician…</option>
+                            <option value="">Select a technician or gang member…</option>
+                            <!-- The one picker gang members appear in. Labelled,
+                                 because who is a tradesman and who is not
+                                 changes what the office can ask of them. -->
                             <option v-for="tech in matchingForCrew" :key="tech.id" :value="tech.id">
                                 {{ tech.user?.name }}<template v-if="tech.specialization"> — {{ tech.specialization }}</template>
+                                <template v-if="tech.kind === 'gang_member'"> (gang member)</template>
                             </option>
                         </select>
                         <small class="roster-help" v-if="!availableForCrew.length">
@@ -2014,7 +2018,19 @@
                         </small>
                     </div>
 
-                    <div class="form-group">
+                    <!-- A gang member is not paid through this system at all,
+                         so there is no figure to take. Saying that instead of
+                         offering a field the save would refuse is the whole
+                         difference between an explanation and an error. -->
+                    <div v-if="crewIsGangMember" class="form-group">
+                        <label>Agreed fee</label>
+                        <p class="roster-help" style="margin:0;">
+                            Not applicable. A gang member is paid off-system by whoever brought them,
+                            so nothing is recorded here and nothing is allocated against the labour budget.
+                        </p>
+                    </div>
+
+                    <div v-else class="form-group">
                         <label>Agreed fee <span class="roster-optional">(optional)</span></label>
                         <input v-model="crewForm.agreed_compensation" type="number" step="0.01" min="0"
                             class="form-control" placeholder="Leave blank if paid through the lead">
@@ -3364,11 +3380,13 @@ const submitCrewMember = () => {
     addToCrew()
 }
 
+const crewIsGangMember = computed(() => selectedCrewTechnician.value?.kind === 'gang_member')
+
 const addToCrew = () => {
     router.post(`/admin/jobs/${props.job.id}/crew`, {
         technician_id: crewForm.technician_id,
         role_on_job: crewForm.role_on_job,
-        agreed_compensation: crewForm.agreed_compensation || null,
+        agreed_compensation: crewIsGangMember.value ? null : (crewForm.agreed_compensation || null),
         expected_start: crewForm.expected_start || null,
         expected_end: crewForm.expected_end || null,
         attendance_dates: crewForm.attendance_dates.filter(Boolean),
@@ -3619,7 +3637,17 @@ const primaryTechnicianAvailabilityClass = computed(() => {
     if (!primaryTechnician.value) return 'pending'
     return getAvailabilityBadgeClass(primaryTechnician.value.availability)
 })
-const availableTechnicianCount = computed(() => props.technicians.filter(tech => tech.availability === 'available').length)
+/**
+ * Tradesmen only.
+ *
+ * Gang members share this list because they share a table, but they can never
+ * be given a job, a lead role or a sub-task — see the add_gang_members
+ * migration. Only the crew picker below offers them, which is the one place
+ * they belong.
+ */
+const tradesmen = computed(() => (props.technicians || []).filter(t => t.kind !== 'gang_member'))
+
+const availableTechnicianCount = computed(() => tradesmen.value.filter(tech => tech.availability === 'available').length)
 const displayQuoteAmount = computed(() => props.job.quote_amount ?? props.job.quoted_amount ?? null)
 const displayFinalAmount = computed(() => props.job.final_amount ?? null)
 const milestoneCount = computed(() => props.job.milestones?.length || 0)
@@ -3912,7 +3940,7 @@ const availableTrades = computed(() => {
     // categories so those technicians are never outside every filter, and it
     // empties itself as the data is cleaned up.
     const leftovers = new Map()
-    props.technicians.forEach((tech) => {
+    tradesmen.value.forEach((tech) => {
         technicianTradeLabels(tech).forEach((label) => {
             const key = label.toLowerCase()
             if (known.has(key) || leftovers.has(key)) return
@@ -4005,7 +4033,7 @@ const onMilestoneAllocationTechnicianChange = (index) => {
 }
 
 const sortedTechnicians = computed(() => {
-    let list = [...props.technicians]
+    let list = [...tradesmen.value]
 
     // Filter by trade — matched against every trade the profile declares,
     // case-insensitively, so a lead's "painting" and an onboarded technician's

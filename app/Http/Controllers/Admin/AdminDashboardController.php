@@ -26,6 +26,7 @@ use App\Models\Payment;
 use App\Models\PaymentMilestone;
 use App\Models\PaymentMilestoneAllocation;
 use App\Models\ProgressReport;
+use App\Rules\IsTechnician;
 use App\Models\TechnicianPayment;
 use App\Models\TechnicianPaymentEntry;
 use App\Models\Expenditure;
@@ -117,7 +118,7 @@ class AdminDashboardController extends Controller
                 ]);
             });
 
-        Technician::with('user:id,name')->orderByDesc('created_at')->limit(2)->get()
+        Technician::technicians()->with('user:id,name')->orderByDesc('created_at')->limit(2)->get()
             ->each(function ($t) use ($activity) {
                 $activity->push([
                     'id'      => 'tech-' . $t->id,
@@ -237,7 +238,9 @@ class AdminDashboardController extends Controller
             ServiceRequest::STATUS_AWAITING_TECH_AVAILABILITY,
         ];
 
-        $technicians = Technician::with(['user', 'documents'])->orderBy('created_at', 'desc')->get();
+        // Tradesmen only. Gang members share this table but not this page —
+        // its ratings, trades and job counts are all about work they do not do.
+        $technicians = Technician::technicians()->with(['user', 'documents'])->orderBy('created_at', 'desc')->get();
 
         $technicians->each(function ($tech) use ($activeStatuses) {
             $tech->active_job_refs = $tech->serviceRequests()
@@ -300,7 +303,7 @@ class AdminDashboardController extends Controller
 
         $jobs = $query->paginate(10)->withQueryString();
 
-        $technicians = Technician::with('user')
+        $technicians = Technician::technicians()->with('user')
             ->orderBy('rating', 'desc')
             ->get();
 
@@ -643,7 +646,7 @@ class AdminDashboardController extends Controller
             'percent_complete'    => 'required|integer|min:0|max:100',
             'notes'               => 'nullable|string|max:2000',
             'report_date'         => 'nullable|date',
-            'technician_id'       => 'nullable|integer|exists:technicians,id',
+            'technician_id'       => ['nullable', 'integer', 'exists:technicians,id', new IsTechnician('a progress report')],
             'service_sub_task_id' => 'nullable|integer|exists:service_sub_tasks,id',
             'photos'              => 'nullable|array|max:6',
             'photos.*'            => 'nullable|file|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
@@ -778,6 +781,110 @@ class AdminDashboardController extends Controller
         ]);
 
         return back()->with('success', '100% final progress report backfilled. Payment processing can now bill the remaining balance.');
+    }
+
+    /**
+     * The gang: everyone on the books who is not a tradesman.
+     *
+     * A page of their own rather than a filter on the Technicians screen, whose
+     * ratings, trades and job counts all measure work a gang member does not
+     * do. What matters here is who they are and whether the gate will let them
+     * in.
+     */
+    public function gangMembers()
+    {
+        $gangMembers = Technician::gangMembers()
+            ->with('user:id,name,phone')
+            ->withCount(['jobAssignments as jobs_count' => fn ($q) => $q->whereIn('status', [
+                JobAssignment::STATUS_PENDING,
+                JobAssignment::STATUS_ACCEPTED,
+                JobAssignment::STATUS_COMPLETED,
+            ])])
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return Inertia::render('Admin/GangMembers', [
+            'gangMembers' => $gangMembers,
+            // What the gate will turn somebody away for. Surfaced as a count so
+            // the office can fix it before a notice goes out rather than after
+            // a man has been sent home.
+            'missingIdCount' => $gangMembers->whereNull('national_id')->count(),
+        ]);
+    }
+
+    /**
+     * Put a gang member on the books.
+     *
+     * Deliberately not storeTechnician with fields switched off. A technician
+     * is onboarded against an NCA licence, a tertiary certificate and a KRA PIN
+     * — a trade qualification and a tax identity — and a gang member has
+     * neither, because they carry no trade and are not paid through this
+     * system. Asking for them would be asking for paperwork that does not exist
+     * and would not be looked at.
+     *
+     * What is asked for is what the gate asks for: a name, a face and an ID
+     * number. That is the whole purpose of holding their details.
+     */
+    public function storeGangMember(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+            'phone' => 'nullable|string|max:20',
+            // The number site security reads off the list. Required because a
+            // gang member with no ID number is somebody who gets turned away at
+            // the gate, which is the failure this whole record exists to stop.
+            'national_id' => 'required|string|max:32',
+            'location' => 'required|string|max:255',
+            'bio' => 'nullable|string|max:1000',
+            'passport_photo' => 'nullable|file|mimes:jpg,jpeg,png|max:3072',
+        ], [
+            'national_id.required' => 'An ID number is required — site security checks it at the gate.',
+        ]);
+
+        $technician = DB::transaction(function () use ($request) {
+            // An account with no way in. The name and phone number live here
+            // because that is where every roster, gate list and notice reads
+            // them from; the address is a placeholder to satisfy a unique
+            // column, and nothing in the system writes to it. `role:technician`
+            // keeps this account out of the technician app on its own.
+            $user = User::create([
+                'name' => $request->name,
+                'email' => 'gang-' . Str::lower(Str::random(12)) . '@no-login.invalid',
+                'password' => Hash::make(Str::random(40)),
+                'phone' => $request->phone,
+                'role' => User::ROLE_GANG,
+            ]);
+
+            $photoPath = $request->hasFile('passport_photo')
+                ? $request->file('passport_photo')->store('technician-photos', 'public')
+                : null;
+
+            return Technician::createWithReference([
+                'user_id' => $user->id,
+                'kind' => Technician::KIND_GANG_MEMBER,
+                // Not a trade. The column is not nullable and is read all over
+                // the place, so it says what they are rather than sitting empty.
+                'specialization' => 'General site work',
+                'location' => $request->location,
+                'national_id' => trim($request->national_id),
+                'profile_photo_path' => $photoPath,
+                'availability' => 'available',
+                'bio' => $request->bio,
+                'rating' => 0,
+                'total_jobs' => 0,
+                // Vetting is a site-access decision, not a trade one, and the
+                // admin recording them here is making it.
+                'vetting_status' => Technician::VETTING_APPROVED,
+                'vetted_by' => auth()->id(),
+                'vetted_at' => now(),
+            ]);
+        });
+
+        return back()->with(
+            'success',
+            $technician->user->name . ' added as a gang member (' . $technician->technician_id
+            . '). They can be put on a job\'s crew with a description of what they will be doing on site.'
+        );
     }
 
     public function storeTechnician(Request $request)
@@ -1128,7 +1235,7 @@ class AdminDashboardController extends Controller
     public function assignTechnician(Request $request, ServiceRequest $serviceRequest)
     {
         $request->validate([
-            'technician_id' => 'required|exists:technicians,id',
+            'technician_id' => ['required', 'exists:technicians,id', new IsTechnician('this job')],
             'agreed_compensation' => 'required|numeric|min:0',
             'compensation_notes' => 'nullable|string|max:1000',
             // #23 / #26 — reason captured at reassignment time, used in
@@ -1278,7 +1385,7 @@ class AdminDashboardController extends Controller
     public function assignLeadTechnician(Request $request, ServiceRequest $serviceRequest)
     {
         $request->validate([
-            'technician_id' => 'required|exists:technicians,id',
+            'technician_id' => ['required', 'exists:technicians,id', new IsTechnician('the lead role on this job')],
             'agreed_compensation' => 'required|numeric|min:0',
             'compensation_notes' => 'nullable|string|max:1000',
         ]);
@@ -1359,7 +1466,7 @@ class AdminDashboardController extends Controller
         }
 
         $data = $request->validate([
-            'technician_id' => 'required|exists:technicians,id',
+            'technician_id' => ['required', 'exists:technicians,id', new IsTechnician('a fee on this job')],
             'agreed_compensation' => 'required|numeric|min:0',
             'compensation_notes' => 'nullable|string|max:1000',
         ]);
@@ -2071,7 +2178,7 @@ class AdminDashboardController extends Controller
             'labor_release_amount'   => 'required|numeric|min:0',
             'notes'                  => 'nullable|string|max:500',
             'allocations'            => 'nullable|array',
-            'allocations.*.technician_id'    => 'required|exists:technicians,id',
+            'allocations.*.technician_id'    => ['required', 'exists:technicians,id', new IsTechnician('a share of a payment milestone')],
             'allocations.*.allocated_amount' => 'required|numeric|min:0',
             'allocations.*.notes'            => 'nullable|string|max:500',
         ]);
@@ -2109,7 +2216,7 @@ class AdminDashboardController extends Controller
             'notes'                  => 'nullable|string|max:500',
             'status'                 => 'nullable|in:pending,reached,paid',
             'allocations'            => 'nullable|array',
-            'allocations.*.technician_id'    => 'required|exists:technicians,id',
+            'allocations.*.technician_id'    => ['required', 'exists:technicians,id', new IsTechnician('a share of a payment milestone')],
             'allocations.*.allocated_amount' => 'required|numeric|min:0',
             'allocations.*.notes'            => 'nullable|string|max:500',
         ]);
@@ -2702,7 +2809,7 @@ class AdminDashboardController extends Controller
             ->get();
 
         // Technicians list for payment modal
-        $technicians = Technician::with('user')->orderBy('created_at', 'desc')->get();
+        $technicians = Technician::technicians()->with('user')->orderBy('created_at', 'desc')->get();
 
         return Inertia::render('Admin/Payments', [
             'payments' => $payments,
@@ -4251,7 +4358,17 @@ class AdminDashboardController extends Controller
             return back()->with('error', 'That technician is already on this job. Edit their row to change their role or dates.');
         }
 
+        $technician = Technician::with('user')->findOrFail($request->technician_id);
+
+        // Refused here with an explanation rather than left to the model, which
+        // throws — a gang member is not paid through this system, and an admin
+        // who typed a figure needs to be told why it cannot be taken.
         $compensation = (float) ($request->input('agreed_compensation') ?? 0);
+        if ($technician->isGangMember() && $compensation > 0) {
+            return back()->with('error',
+                $technician->user->name . ' is a gang member and is not paid through this system. '
+                . 'Their pay is settled off-system by whoever brought them, so leave the fee blank.');
+        }
 
         // Only check the labour budget when there is a fee to check. A crew
         // member on zero has nothing to allocate, and running the guard would
@@ -4267,8 +4384,6 @@ class AdminDashboardController extends Controller
             ->sort()
             ->values()
             ->all();
-
-        $technician = Technician::with('user')->findOrFail($request->technician_id);
 
         JobAssignment::create([
             'service_request_id' => $serviceRequest->id,
@@ -4624,7 +4739,7 @@ class AdminDashboardController extends Controller
     public function assignSubTaskTechnician(Request $request, ServiceSubTask $serviceSubTask)
     {
         $request->validate([
-            'technician_id' => 'required|exists:technicians,id',
+            'technician_id' => ['required', 'exists:technicians,id', new IsTechnician('a sub-task')],
             'agreed_compensation' => 'required|numeric|min:0',
             'compensation_notes' => 'nullable|string|max:1000',
         ]);

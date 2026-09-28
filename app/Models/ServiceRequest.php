@@ -305,6 +305,24 @@ class ServiceRequest extends Model
     protected static function booted(): void
     {
         static::saving(function (self $request) {
+            // Whoever carries a job, and whoever leads it, is a tradesman.
+            //
+            // A gang member has no scope of their own and is not paid through
+            // this system; making one answerable for a whole job would give
+            // them both by the back door. They belong on the crew, with a
+            // description of what they will be doing on site.
+            foreach (['technician_id' => 'carry a job', 'lead_technician_id' => 'lead a job'] as $column => $what) {
+                if (!$request->{$column} || !$request->isDirty($column)) {
+                    continue;
+                }
+
+                if (Technician::find($request->{$column})?->isGangMember()) {
+                    throw new \LogicException(
+                        "A gang member cannot {$what}. Add them to the crew instead."
+                    );
+                }
+            }
+
             if ($request->isCorporate()) {
                 if (!$request->client_organisation_id) {
                     throw new \LogicException(

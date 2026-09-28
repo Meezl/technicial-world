@@ -41,7 +41,7 @@ class QuotationComposerController extends Controller
             'totals' => $this->composer->totals($serviceRequest),
             'units' => RateItem::UNITS,
             'components' => RateItem::COMPONENTS,
-            'technicians' => Technician::with('user:id,name')
+            'technicians' => Technician::technicians()->with('user:id,name')
                 ->where('is_active', true)
                 ->get(['id', 'user_id']),
             'projections' => [

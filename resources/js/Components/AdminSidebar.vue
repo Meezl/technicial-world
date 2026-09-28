@@ -28,6 +28,7 @@ const baseItems = [
     { key: 'rfq', href: '/admin/rfq', icon: 'fas fa-file-alt', label: 'RFQ Management', caption: 'Quotes and approvals' },
     { key: 'archive', href: '/admin/archive', icon: 'fas fa-box-archive', label: 'Archive', caption: 'Completed and cancelled' },
     { key: 'technicians', href: '/admin/technicians', icon: 'fas fa-hard-hat', label: 'Technicians', caption: 'Field teams and reports' },
+    { key: 'gang-members', href: '/admin/gang-members', icon: 'fas fa-people-group', label: 'Gang Members', caption: 'On site, not tradesmen' },
     { key: 'users', href: '/admin/users', icon: 'fas fa-users', label: 'Users', caption: 'Accounts and roles' },
     { key: 'jobs', href: '/admin/jobs', icon: 'fas fa-tasks', label: 'Jobs', caption: 'Live execution status' },
     { key: 'progress-reports', href: '/admin/progress-reports', icon: 'fas fa-clipboard-check', label: 'Progress Reports', caption: 'Validate, sign off and release' },
