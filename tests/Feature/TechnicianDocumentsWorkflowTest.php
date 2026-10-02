@@ -346,6 +346,8 @@ class TechnicianDocumentsWorkflowTest extends TestCase
             'report_date' => now()->toDateString(),
             'percent_complete' => 60,
             'notes' => 'Pipe rerouting completed.',
+            // On the office desk, as any report an admin acts on must be.
+            'submitted_to_office_at' => now(),
         ]);
 
         $photoOne = $report->photos()->create([
@@ -460,6 +462,8 @@ class TechnicianDocumentsWorkflowTest extends TestCase
             'validated_by' => $admin->id,
             'validated_at' => now(),
             'validated_percent' => 50,
+            // On the office desk, as any report an admin acts on must be.
+            'submitted_to_office_at' => now(),
         ]);
 
         $response = $this->actingAs($admin)->post(route('admin.progress.pay-technician', $report));
@@ -539,6 +543,8 @@ class TechnicianDocumentsWorkflowTest extends TestCase
             'validated_by' => $admin->id,
             'validated_at' => now(),
             'validated_percent' => 50,
+            // On the office desk, as any report an admin acts on must be.
+            'submitted_to_office_at' => now(),
         ]);
 
         $response = $this->actingAs($admin)->post(route('admin.progress.pay-technician', $report));

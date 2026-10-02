@@ -157,6 +157,65 @@ class ProgressService
     }
 
     /**
+     * The office pulls a job's held reports in itself.
+     *
+     * Posting is the lead's job, and normally stays that way. But a lead who
+     * is off site, out of signal or simply has not pressed the button leaves
+     * the office blind to work that is finished — a sub-task reading 100% on
+     * the board with no report behind it that anyone in the office can open.
+     * This is the override for that: it takes everything the lead could have
+     * posted and nothing they could not, so an un-reviewed crew claim still
+     * waits for the lead rather than arriving as settled fact.
+     *
+     * Reports arrive carrying the same batch id a lead's push would have given
+     * them, so the release step downstream cannot tell the two apart.
+     */
+    public function pullBatchFromLead(ServiceRequest $serviceRequest, User $officer): int
+    {
+        return DB::transaction(function () use ($serviceRequest, $officer) {
+            $leadUserId = $serviceRequest->leadTechnician?->user_id;
+            $leadTechnicianId = $serviceRequest->lead_technician_id;
+
+            $reports = $serviceRequest->progressReports()
+                ->whereNull('submitted_to_office_at')
+                ->whereNull('rejected_at')
+                ->where(function ($q) use ($leadTechnicianId, $leadUserId) {
+                    $q->whereNotNull('approved_by_lead_at');
+                    if ($leadUserId) {
+                        $q->orWhere('submitted_by', $leadUserId);
+                    }
+                    if ($leadTechnicianId) {
+                        $q->orWhere('technician_id', $leadTechnicianId);
+                    }
+                })
+                ->lockForUpdate()
+                ->get();
+
+            if ($reports->isEmpty()) {
+                return 0;
+            }
+
+            $batchId = (string) Str::uuid();
+            $now = now();
+
+            foreach ($reports as $report) {
+                $report->update([
+                    'submitted_to_office_at' => $now,
+                    'office_batch_id' => $batchId,
+                ]);
+            }
+
+            AuditLog::log(AuditLog::ACTION_UPDATED, $serviceRequest, null, [
+                'office_pulled_reports' => $reports->count(),
+                'office_batch_id' => $batchId,
+                'pulled_by' => $officer->id,
+            ]);
+
+            return $reports->count();
+        });
+    }
+
+    /**
      * The office releases a settled batch to the client — one collective
      * report, one email, however many technicians it covered.
      *

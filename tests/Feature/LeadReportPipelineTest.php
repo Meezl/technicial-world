@@ -137,6 +137,137 @@ class LeadReportPipelineTest extends TestCase
         $this->assertTrue(ProgressReport::needsOfficeAction()->whereKey($report->id)->exists());
     }
 
+    /**
+     * The complaint this pipeline produced: a crew member reported their
+     * sub-task finished, the lead signed it off on site — so the board showed
+     * 100% — and the office's job page listed nothing, because it only ever
+     * queried posted reports. Nobody in the office could see the work, or that
+     * there was anything to chase.
+     */
+    public function test_a_report_held_by_the_lead_is_still_listed_on_the_office_job_page(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+        $subTask = $this->makeSubTask($job, $crew, 'Plumbing works');
+
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 100]);
+        $report = ProgressReport::where('service_sub_task_id', $subTask->id)->firstOrFail();
+        $this->actingAs($lead->user)->post(route('technician.progress-report.approve', $report));
+
+        // The sub-task reads complete, and the lead has not posted the batch.
+        $this->assertSame(100, (int) $subTask->fresh()->progress_percentage);
+        $this->assertNull($report->fresh()->submitted_to_office_at);
+
+        $this->actingAs($admin)
+            ->get(route('admin.jobs.show', $job))
+            ->assertInertia(fn ($page) => $page
+                ->where('job.progress_reports.0.id', $report->id)
+                ->where('job.progress_reports.0.submitted_to_office_at', null));
+    }
+
+    /** Held is not settled: the office cannot validate what the lead has not posted. */
+    public function test_the_office_cannot_validate_a_report_the_lead_has_not_posted(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+        $subTask = $this->makeSubTask($job, $crew, 'Plumbing works');
+
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 100]);
+        $report = ProgressReport::where('service_sub_task_id', $subTask->id)->firstOrFail();
+
+        $this->actingAs($admin)
+            ->post(route('admin.progress.validate', $report), ['validated_percent' => 100])
+            ->assertSessionHas('error');
+
+        $this->assertNull($report->fresh()->validated_at);
+    }
+
+    /**
+     * The override for a lead who cannot post — off site, out of signal, or
+     * simply gone. It takes what the lead had already signed off and leaves
+     * the rest with them.
+     */
+    public function test_the_office_can_pull_in_reports_the_lead_has_signed_off_but_not_posted(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $lead = $this->makeTechnician();
+        $crewA = $this->makeTechnician();
+        $crewB = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+        $signedOff = $this->makeSubTask($job, $crewA, 'Plumbing works');
+        $unreviewed = $this->makeSubTask($job, $crewB, 'Carpentry');
+
+        $this->actingAs($crewA->user)
+            ->post(route('technician.sub-tasks.progress', $signedOff), ['progress_percentage' => 100]);
+        $this->actingAs($crewB->user)
+            ->post(route('technician.sub-tasks.progress', $unreviewed), ['progress_percentage' => 40]);
+
+        $ratified = ProgressReport::where('service_sub_task_id', $signedOff->id)->firstOrFail();
+        $untouched = ProgressReport::where('service_sub_task_id', $unreviewed->id)->firstOrFail();
+        $this->actingAs($lead->user)->post(route('technician.progress-report.approve', $ratified));
+
+        $this->actingAs($admin)
+            ->post(route('admin.jobs.pull-reports', $job))
+            ->assertSessionHas('success');
+
+        // The lead's signed-off report is on the office desk; the claim they
+        // have not looked at is still theirs to review.
+        $this->assertNotNull($ratified->fresh()->submitted_to_office_at);
+        $this->assertNotNull($ratified->fresh()->office_batch_id);
+        $this->assertNull($untouched->fresh()->submitted_to_office_at);
+    }
+
+    /** Nothing signed off means nothing to pull, and the office is told why. */
+    public function test_pulling_with_nothing_signed_off_is_a_clean_no_op(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+        $subTask = $this->makeSubTask($job, $crew, 'Plumbing works');
+
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 60]);
+
+        $this->actingAs($admin)
+            ->post(route('admin.jobs.pull-reports', $job))
+            ->assertSessionHas('error');
+
+        $this->assertNull(
+            ProgressReport::where('service_sub_task_id', $subTask->id)->value('submitted_to_office_at')
+        );
+    }
+
     public function test_posting_with_nothing_ready_is_a_clean_no_op(): void
     {
         $client = User::factory()->create(['role' => User::ROLE_CLIENT]);

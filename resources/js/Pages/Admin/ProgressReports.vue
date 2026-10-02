@@ -27,6 +27,13 @@
                         <span class="pr-stat-value">{{ summary.awaiting_release || 0 }}</span>
                         <span class="pr-stat-label">Ready to release</span>
                     </div>
+                    <!-- Reported on site, not yet posted by the lead. The
+                         office cannot action these from here — the count is so
+                         that work sitting unposted is at least visible. -->
+                    <div class="pr-stat" v-if="summary.held_with_lead">
+                        <span class="pr-stat-value">{{ summary.held_with_lead }}</span>
+                        <span class="pr-stat-label">Held with leads</span>
+                    </div>
                 </div>
             </header>
 

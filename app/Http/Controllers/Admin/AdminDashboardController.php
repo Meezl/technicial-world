@@ -347,11 +347,17 @@ class AdminDashboardController extends Controller
             'paymentRequests',
             'milestones',
             'milestones.allocations.technician.user',
-            // The office sees a report only once the lead has posted it — a
-            // crew report on a lead-run job stays with the lead until then.
-            // Reports that never pass through a lead were stamped posted on
-            // submission, so this hides nothing that used to be here.
-            'progressReports' => fn ($q) => $q->whereNotNull('submitted_to_office_at'),
+            // Every report on the job, posted or not.
+            //
+            // The office may only act on a report the lead has posted, and the
+            // page enforces that per card. But filtering the held ones out of
+            // the query altogether is what produced the complaint this replaces:
+            // a sub-task reading 100% on the board, with the report behind it
+            // nowhere the office could see, because the lead had approved it on
+            // site and never pressed post. The office could not even tell there
+            // was something to chase. They are listed now, marked as held, with
+            // the option to pull them in.
+            'progressReports',
             'progressReports.technician.user',
             'progressReports.submitter',
             'progressReports.validator',
@@ -465,6 +471,16 @@ class AdminDashboardController extends Controller
             'admin_photos.*' => 'nullable|file|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
         ]);
 
+        // Not posted up yet, so not the office's to settle. The job page lists
+        // held reports now so the office can see what is coming, which puts
+        // this endpoint within reach of one — the gate belongs here rather
+        // than in the markup that hides the form.
+        if (!$progressReport->submitted_to_office_at) {
+            return back()->with('error',
+                'That report is still with the lead technician. Pull it in from the job page first, '
+                . 'or ask the lead to post it.');
+        }
+
         $adminPhotos = $request->hasFile('admin_photos') ? $request->file('admin_photos') : [];
 
         // Recorded as an admin ratification so the report can say who settled
@@ -504,6 +520,10 @@ class AdminDashboardController extends Controller
             'pending' => (clone $summaryQuery)->needsOfficeAction()->count(),
             'awaiting_sign_off' => (clone $summaryQuery)->awaitingOpsVerification()->count(),
             'awaiting_release' => (clone $summaryQuery)->clearedForRelease()->count(),
+            // Filed on site and not yet posted up. Nothing the office can act
+            // on from here, but a figure worth seeing: it is the gap between
+            // what the crew has reported and what the office has been given.
+            'held_with_lead' => (clone $summaryQuery)->awaitingLeadPost()->count(),
         ];
 
         $reports = ProgressReport::query()
@@ -606,6 +626,30 @@ class AdminDashboardController extends Controller
         return back()->with('success',
             "Released {$released} " . ($released === 1 ? 'report' : 'reports') .
             ' to the client in one update.');
+    }
+
+    /**
+     * Pull a job's held reports off the lead's desk.
+     *
+     * Posting is the lead's to do and stays theirs; this is for when they
+     * cannot or have not — the work is done, the sub-task reads complete, and
+     * the office is waiting on a button nobody is near. It takes only what the
+     * lead could have posted themselves, so an un-ratified crew claim still
+     * waits for the lead's eyes.
+     */
+    public function pullReportsFromLead(Request $request, ServiceRequest $serviceRequest)
+    {
+        $pulled = app(ProgressService::class)->pullBatchFromLead($serviceRequest, auth()->user());
+
+        if ($pulled === 0) {
+            return back()->with('error',
+                'Nothing to pull in. Any report still held is one the lead has not reviewed yet — '
+                . 'it needs their sign-off before it can count.');
+        }
+
+        return back()->with('success',
+            "Pulled {$pulled} " . ($pulled === 1 ? 'report' : 'reports') .
+            " in from the lead. They are yours to validate now.");
     }
 
     /**
@@ -771,6 +815,11 @@ class AdminDashboardController extends Controller
             'validation_notes'   => 'Auto-validated as part of backfill — admin confirmed completion separately.',
             'client_visible_notes' => $request->input('notes') ?: 'Job completed.',
             'is_pm_authored'     => true,
+            // Written by the office, so it is already on the office's desk.
+            // Without this stamp the report the admin just filed did not come
+            // back on the page — the job list only carries posted reports, and
+            // nothing here ever passed a lead to be posted by.
+            'submitted_to_office_at' => now(),
         ]);
 
         // Sync service request — this triggers billing milestones too

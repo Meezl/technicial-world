@@ -142,6 +142,10 @@ class ApprovalCommentsTest extends TestCase
             ['approval_note' => 'Lead: capping is sound.']
         );
 
+        // Signing off on site is not the same as posting it up: the office
+        // cannot settle a report still sitting on the lead's desk.
+        $this->actingAs($s['lead']->user)->post(route('technician.reports.post', $s['sr']));
+
         $this->actingAs($s['admin'])->post(route('admin.progress.validate', $report), [
             'validated_percent' => 60,
             'validation_notes' => 'Office: photos match the claim.',
@@ -165,6 +169,8 @@ class ApprovalCommentsTest extends TestCase
             'percent_complete' => 100,
             'validated_percent' => 100,
             'is_validated' => true,
+            // On the office desk, as any report an admin acts on must be.
+            'submitted_to_office_at' => now(),
         ]);
 
         $this->actingAs($s['lead']->user)->post(route('technician.jobs.status', $s['sr']), [

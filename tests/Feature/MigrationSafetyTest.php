@@ -160,6 +160,12 @@ class MigrationSafetyTest extends TestCase
             // a contradiction the model now prevents. Touches only the status
             // of rows that already have no technician.
             '2026_09_28_000002_repair_unassigned_sub_task_statuses',
+            // Stamps submitted_to_office_at on office-authored reports that
+            // never got it — the admin backfill button and the demo seeder
+            // both left it null, which hid the report from the very page the
+            // admin filed it on. Touches only is_pm_authored rows with no
+            // stamp, and sets it from created_at, so nothing moves twice.
+            '2026_10_02_000000_post_office_authored_reports_to_office',
         ];
 
         $this->assertSame(

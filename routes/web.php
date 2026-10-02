@@ -301,6 +301,9 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     Route::get('/progress-reports', [AdminDashboardController::class, 'progressReports'])->name('admin.progress-reports');
     // Release a settled batch to the client — one collective report, one email.
     Route::post('/jobs/{serviceRequest}/release-reports', [AdminDashboardController::class, 'releaseReportsToClient'])->name('admin.jobs.release-reports');
+    // Take a job's held reports off the lead's desk when the lead cannot post
+    // them — the work is done and the office should not be blind to it.
+    Route::post('/jobs/{serviceRequest}/pull-reports', [AdminDashboardController::class, 'pullReportsFromLead'])->name('admin.jobs.pull-reports');
     // Back to the lead to edit or answer, rather than a flat refusal.
     Route::post('/progress-reports/{progressReport}/return', [AdminDashboardController::class, 'returnProgressReport'])->name('admin.progress.return');
     // Office counterpart of a lead covering for their crew — files the report

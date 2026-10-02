@@ -967,6 +967,44 @@
                             </div>
                         </div>
 
+                        <!-- Reports the lead has not posted. They used to be
+                             filtered out of this page entirely, so a sub-task
+                             could read 100% with nothing behind it the office
+                             could open, and no sign anything was waiting. -->
+                        <div v-if="heldReports.length" class="held-reports-banner">
+                            <div>
+                                <strong>
+                                    <i class="fas fa-hourglass-half"></i>
+                                    {{ heldReports.length }} {{ heldReports.length === 1 ? 'report is' : 'reports are' }}
+                                    still with the lead technician
+                                </strong>
+                                <p style="margin:.35rem 0 0;font-size:.88rem;">
+                                    The lead posts their crew's reports to the office in one batch, and has not yet.
+                                    They are listed below, marked as held — you can read them, but they cannot be
+                                    validated or released until they are posted.
+                                    <template v-if="pullableReports.length">
+                                        {{ pullableReports.length }} of them {{ pullableReports.length === 1 ? 'has' : 'have' }}
+                                        the lead's sign-off already, so you can pull {{ pullableReports.length === 1 ? 'it' : 'them' }}
+                                        in if the lead is off site.
+                                    </template>
+                                    <template v-else>
+                                        None of them has the lead's sign-off yet, so they need the lead's eyes first.
+                                    </template>
+                                </p>
+                            </div>
+                            <button
+                                v-if="pullableReports.length"
+                                type="button"
+                                class="btn btn-warning"
+                                :disabled="pullingReports"
+                                @click="pullReportsFromLead"
+                                title="Take the lead's signed-off reports onto the office desk"
+                            >
+                                <i class="fas fa-inbox"></i>
+                                {{ pullingReports ? 'Pulling…' : `Pull ${pullableReports.length} in from lead` }}
+                            </button>
+                        </div>
+
                         <div v-if="progressReports.length" class="admin-report-list">
                             <article v-for="report in progressReports" :key="report.id" class="admin-report-card">
                                 <div class="admin-report-top">
@@ -980,7 +1018,10 @@
                                             </small>
                                         </p>
                                     </div>
-                                    <span :class="['status-badge', report.is_validated ? 'approved' : 'review']">
+                                    <span v-if="isHeldByLead(report)" class="status-badge pending">
+                                        Held by lead · {{ report.percent_complete }}%
+                                    </span>
+                                    <span v-else :class="['status-badge', report.is_validated ? 'approved' : 'review']">
                                         {{ report.is_validated ? `Approved ${report.validated_percent ?? report.percent_complete}%` : `Pending ${report.percent_complete}%` }}
                                     </span>
                                 </div>
@@ -1084,7 +1125,22 @@
                                      too, and offering to approve one that is
                                      out for a recount invites approving the
                                      figure that was queried. -->
-                                <div v-if="isWithLead(report)" class="admin-returned-banner">
+                                <!-- Not posted yet, so not the office's to settle.
+                                     Shown rather than hidden: the office needs to
+                                     know the work was reported, and by whom. -->
+                                <div v-if="isHeldByLead(report)" class="admin-returned-banner">
+                                    <i class="fas fa-hourglass-half"></i>
+                                    <div>
+                                        <strong>Not posted to the office yet</strong>
+                                        <p>
+                                            {{ report.approved_by_lead_at || report.is_validated
+                                                ? 'The lead has signed this off on site but has not posted it. Pull it in above if they cannot.'
+                                                : 'Waiting on the lead to review it on site before it reaches the office.' }}
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div v-else-if="isWithLead(report)" class="admin-returned-banner">
                                     <i class="fas fa-hourglass-half"></i>
                                     <div>
                                         <strong>With the lead technician</strong>
@@ -3801,12 +3857,35 @@ const isAdmin = computed(() => page.props.auth?.user?.role === 'admin')
 const progressReports = computed(() => props.job.progress_reports || [])
 const jobPhotos = computed(() => props.job.photos || [])
 
+// Filed but still on the lead's desk: the lead has not pushed the batch up, so
+// the office cannot act on it yet. Listed all the same — a report the office
+// cannot see is a report nobody chases, and the sub-task bar moves without it.
+const isHeldByLead = (report) => !report.submitted_to_office_at && !report.rejected_at
+const heldReports = computed(() => progressReports.value.filter(isHeldByLead))
+// The ones the lead could post if they were here — anything they have already
+// signed off. The rest is theirs to review first, and pulling it in would make
+// an unchecked claim look settled.
+const pullableReports = computed(() =>
+    heldReports.value.filter(r => r.approved_by_lead_at || r.is_validated)
+)
+
 // Reports the office has settled but not yet sent on. Releasing them is one
 // collective client update — one report, one email — instead of a separate
-// notification per technician.
+// notification per technician. A report still held by the lead is excluded:
+// the lead signing off on site is not the office having seen it.
 const releasableReports = computed(() =>
-    progressReports.value.filter(r => r.is_validated && !r.released_to_client_at)
+    progressReports.value.filter(r => r.is_validated && !r.released_to_client_at && !isHeldByLead(r))
 )
+const pullingReports = ref(false)
+const pullReportsFromLead = () => {
+    const n = pullableReports.value.length
+    if (!confirm(`Pull ${n} ${n === 1 ? 'report' : 'reports'} in from the lead? Normally the lead posts these; do this when they cannot.`)) return
+    pullingReports.value = true
+    router.post(`/admin/jobs/${props.job.id}/pull-reports`, {}, {
+        preserveScroll: true,
+        onFinish: () => { pullingReports.value = false },
+    })
+}
 const releasing = ref(false)
 const releaseReportsToClient = () => {
     const n = releasableReports.value.length
@@ -6891,6 +6970,23 @@ defineOptions({
 }
 .backfill-banner strong { display: block; color: #92400e; }
 .backfill-banner .btn { white-space: nowrap; flex-shrink: 0; }
+
+/* Reports filed on site that the lead has not posted up. Cooler than the
+   backfill warning — nothing is broken, the office is simply waiting. */
+.held-reports-banner {
+    margin: 0.75rem 0 1rem;
+    padding: 0.85rem 1rem;
+    border-radius: 8px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    color: #1e3a8a;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+.held-reports-banner strong { display: block; color: #1e40af; }
+.held-reports-banner .btn { white-space: nowrap; flex-shrink: 0; }
 
 /* Advance-authorisation state on the assignment card. */
 .ja-banner {

@@ -407,6 +407,9 @@ class SeedCorporateDemo extends Command
             'validated_percent' => 100,
             'is_validated' => true,
             'client_visible_notes' => 'Stopcock replaced and tested. Water restored to the riser.',
+            // Office-authored, so it is already on the office desk — without
+            // this the demo job shows a closed job with no report on it.
+            'submitted_to_office_at' => now()->subDay(),
             'released_to_client_at' => now()->subDay(),
         ]);
 
