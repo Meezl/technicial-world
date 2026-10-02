@@ -66,6 +66,16 @@
                                 <span class="section-kicker">Step 2</span>
                                 <h3>Payment Entries</h3>
                                 <p>Add one row per technician–job combination. The system will auto-populate amounts when you select a technician.</p>
+                                <!-- Which window these figures answer for. The
+                                     period was previously accepted and then
+                                     ignored, so a five-day sheet listed every
+                                     payable job on the books. -->
+                                <p v-if="computedPeriod" class="computed-period">
+                                    <i class="fas fa-calendar-check"></i>
+                                    Auto-computed for progress validated
+                                    {{ computedPeriod.start }} → {{ computedPeriod.end }},
+                                    valued at the close of the period.
+                                </p>
                             </div>
                             <div style="display:flex;gap:.5rem;">
                                 <button
@@ -470,6 +480,9 @@ const addRow = () => {
 }
 
 const autoComputing = ref(false)
+// The window the listed entries were computed for, echoed back by the server.
+const computedPeriod = ref(null)
+
 const autoCompute = async () => {
     if (!form.value.period_start || !form.value.period_end) return
     if (form.value.entries.length > 0) {
@@ -483,6 +496,10 @@ const autoCompute = async () => {
                 period_end: form.value.period_end,
             },
         })
+        // Said out loud, because the period used to be ignored: this is the
+        // window the figures below answer for.
+        computedPeriod.value = data.period || null
+
         if (data.count === 0) {
             // Use the backend's diagnostic breakdown so admin understands
             // WHY zero rows came back. Common causes: assignment missing
@@ -499,7 +516,12 @@ const autoCompute = async () => {
                     '\n\nFix: set agreed compensation on the assignment, or validate the technician\'s progress reports first.'
                 )
             } else {
-                alert('No eligible technicians with validated progress and unpaid balances in this period.\n\nThis usually means there are no active job assignments at all.')
+                alert(
+                    `No progress was validated between ${form.value.period_start} and ${form.value.period_end}, ` +
+                    'so there is nothing to pay for this period.\n\n' +
+                    'Auto-compute covers the work the office settled inside the dates you chose. ' +
+                    'Widen the period, or validate the outstanding progress reports first.'
+                )
             }
             return
         }
@@ -1196,4 +1218,11 @@ const truncate = (text, len) => {
         min-height: 38px;
     }
 }
+
+.computed-period {
+    margin-top: 0.4rem;
+    font-size: 0.82rem;
+    color: #075985;
+}
+.computed-period i { margin-right: 0.3rem; }
 </style>

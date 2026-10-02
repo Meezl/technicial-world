@@ -94,6 +94,21 @@ class PaymentProcessingController extends Controller
      * already filled in. Admin can then edit current_period_payable per row
      * before submitting the sheet. Mirrors what the PM "Compute" button does.
      */
+    /**
+     * Fill a draft sheet with the technicians owed money for work settled in
+     * the chosen period.
+     *
+     * The period used to be validated and then ignored. It parsed period_end
+     * into a variable nothing read, and then walked every JobAssignment in the
+     * system — so picking "the last five days" returned every payable job on
+     * the books, from any date, and an admin processing a week's payments was
+     * handed the whole history to prune by hand.
+     *
+     * It now asks the payment service the same two questions the sheet itself
+     * asks: which technician–job pairs had progress validated inside the
+     * window, and what was each owed at the close of it. One source for both,
+     * so the preview an admin approves is what the sheet computes.
+     */
     public function autoComputeEntries(Request $request)
     {
         $request->validate([
@@ -101,53 +116,48 @@ class PaymentProcessingController extends Controller
             'period_end'   => 'required|date|after_or_equal:period_start',
         ]);
 
-        $periodEnd = \Carbon\Carbon::parse($request->period_end);
+        $periodStart = \Carbon\Carbon::parse($request->period_start)->startOfDay();
+        $periodEnd   = \Carbon\Carbon::parse($request->period_end)->endOfDay();
 
-        // Include 'pending' — new assignments default to pending until the
-        // technician explicitly accepts, but they're still payable (admin
-        // set agreed_compensation at assignment time). Excluding pending
-        // was the bug that made auto-compute return nothing when admin
-        // tried it on fresh validated reports.
-        $assignments = JobAssignment::with(['serviceRequest', 'technician.user'])
-            ->whereIn('status', ['pending', 'accepted', 'completed'])
-            ->get();
+        $pairs = $this->paymentService->eligiblePairsInPeriod($periodStart, $periodEnd);
 
-        // Diagnostics so the admin sees WHY a technician didn't show up
-        // (the most common cause is "no agreed_compensation" or "no
-        // validated progress yet").
+        // Diagnostics so the admin sees why a technician they expected is not
+        // listed, rather than being left to guess at an empty table.
         $skipped = [
-            'no_assignment_data'  => 0,
-            'no_agreed_amount'    => 0,
+            'no_assignment_data'    => 0,
+            'no_agreed_amount'      => 0,
             'no_validated_progress' => 0,
-            'already_fully_paid'  => 0,
+            'already_fully_paid'    => 0,
         ];
 
         $rows = [];
-        foreach ($assignments as $assignment) {
-            $sr   = $assignment->serviceRequest;
-            $tech = $assignment->technician;
+        foreach ($pairs as $pair) {
+            $sr   = ServiceRequest::find($pair->service_request_id);
+            $tech = Technician::with('user')->find($pair->technician_id);
+
             if (!$sr || !$tech) {
                 $skipped['no_assignment_data']++;
                 continue;
             }
 
-            $agreed = (float) ($assignment->agreed_compensation ?? 0);
+            // The shared resolver, so a crew member paid through their lead
+            // resolves to nothing and a fee held on a sub-task is still found.
+            $agreed = $this->paymentService->resolveApprovedAmount($sr, $tech->id);
             if ($agreed <= 0) {
                 $skipped['no_agreed_amount']++;
                 continue;
             }
 
-            $progress = $this->paymentService->getValidatedProgressForTechnician($sr, $tech->id);
+            // As at the close of the period, not as at today — otherwise a
+            // sheet for last week pays for this week's progress.
+            $progress = $this->paymentService->getValidatedProgressAsOf($sr, $tech, $periodEnd);
             if ($progress <= 0) {
                 $skipped['no_validated_progress']++;
                 continue;
             }
 
-            // Same formula as computeAmounts + payApprovedProgressReport
-            // (agreed × validated%, no milestone cap). Consistency
-            // across every payout path is the point of the recent audit.
-            $cumulativeDue = round($agreed * ($progress / 100), 2);
-            $alreadyPaid   = $this->paymentService->getTotalLabourPaid($sr->id, $tech->id);
+            $cumulativeDue  = round($agreed * ($progress / 100), 2);
+            $alreadyPaid    = $this->paymentService->getTotalLabourPaid($sr->id, $tech->id);
             $currentPayable = max(0, round($cumulativeDue - $alreadyPaid, 2));
 
             if ($currentPayable <= 0) {
@@ -173,6 +183,11 @@ class PaymentProcessingController extends Controller
             'count'   => count($rows),
             'total'   => array_sum(array_column($rows, 'current_period_payable')),
             'entries' => $rows,
+            // Echoed back so the screen can say which window it answered for.
+            'period'  => [
+                'start' => $periodStart->toDateString(),
+                'end'   => $periodEnd->toDateString(),
+            ],
         ]);
     }
 

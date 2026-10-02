@@ -10,6 +10,7 @@ use App\Models\Technician;
 use App\Models\JobAssignment;
 use App\Models\AuditLog;
 use App\Models\PaymentMilestoneAllocation;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
@@ -84,15 +85,7 @@ class TechnicianPaymentService
             $periodStart = Carbon::parse($sheet->period_start)->startOfDay();
             $periodEnd = Carbon::parse($sheet->period_end)->endOfDay();
 
-            // Find the (technician, service_request) pairs that had ANY
-            // validated progress activity within the window. This is the
-            // filter the client asked for — no more all-history dumps.
-            $activePairs = DB::table('progress_reports')
-                ->select('technician_id', 'service_request_id')
-                ->where('is_validated', true)
-                ->whereBetween('validated_at', [$periodStart, $periodEnd])
-                ->groupBy('technician_id', 'service_request_id')
-                ->get();
+            $activePairs = $this->eligiblePairsInPeriod($periodStart, $periodEnd);
 
             if ($activePairs->isEmpty()) {
                 $sheet->recalculateTotal();
@@ -278,7 +271,50 @@ class TechnicianPaymentService
     /**
      * Get validated progress for a technician on a specific job as of a date.
      */
-    private function getValidatedProgressAsOf(
+    /**
+     * The technician–job pairs a sheet for this period should cover.
+     *
+     * A pair qualifies when progress on that job, for that technician, was
+     * validated inside the window: the office settling a figure is what makes
+     * the work payable, and the cumulative arithmetic downstream means a
+     * report settled after a period closes simply lands on the next sheet
+     * rather than being lost.
+     *
+     * Two details worth stating, because getting either wrong puts money on a
+     * sheet that does not belong there:
+     *
+     *  · the date is COALESCE(validated_at, report_date, created_at). Validated
+     *    rows with no validated_at exist — older ones, and anything settled
+     *    before that column was populated — and keying on validated_at alone
+     *    silently left them off every sheet.
+     *  · removed reports are excluded. This is a raw query, so the model's
+     *    soft-delete scope does not apply, and a report the office withdrew
+     *    was still putting its technician on the next sheet.
+     */
+    public function eligiblePairsInPeriod(Carbon $periodStart, Carbon $periodEnd): Collection
+    {
+        return collect(DB::table('progress_reports')
+            ->select('technician_id', 'service_request_id')
+            ->where('is_validated', true)
+            ->whereNull('deleted_at')
+            ->whereNotNull('technician_id')
+            ->whereRaw(
+                'COALESCE(validated_at, report_date, created_at) BETWEEN ? AND ?',
+                [$periodStart, $periodEnd]
+            )
+            ->groupBy('technician_id', 'service_request_id')
+            ->get());
+    }
+
+    /**
+     * Validated progress for this technician on this job as at a date.
+     *
+     * Public because the admin's auto-compute preview has to ask the same
+     * question the sheet does: what was this technician owed at the close of
+     * the period, not what are they owed today. A preview built on today's
+     * figure pays last week's sheet for this week's work.
+     */
+    public function getValidatedProgressAsOf(
         ServiceRequest $serviceRequest,
         Technician $technician,
         Carbon $asOfDate
