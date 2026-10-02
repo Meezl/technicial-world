@@ -5,3 +5,40 @@
 @tailwind components;
 @tailwind utilities;
 
+
+/*
+ * Pipeline-state badges.
+ *
+ * ProgressReport::pipelineState() names a tone; these give it a colour. Shared
+ * rather than per-page so the same state never renders two ways — the office
+ * queue was already writing tone-orange and tone-slate with nothing defining
+ * them, which is how "To validate" and "Held with the lead" came to look
+ * identical on screen.
+ */
+/*
+ * The badge shape itself. Admin/JobDetails defines this in its own unscoped
+ * block, which is why a state chip looked like a pill there and like loose
+ * coloured text on the office queue. Declared here, before any component
+ * style, so every page gets the shape and any page can still override it.
+ */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.3rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+/* A state label is a sentence, not a word — it wraps rather than running off
+   the side of the card on a narrow screen. */
+.status-badge[class*="tone-"] { white-space: normal; text-align: left; }
+
+.status-badge.tone-slate  { background: #f1f5f9; color: #475569; }
+.status-badge.tone-blue   { background: #e0f2fe; color: #075985; }
+.status-badge.tone-green  { background: #dcfce7; color: #166534; }
+.status-badge.tone-amber  { background: #fef3c7; color: #92400e; }
+.status-badge.tone-orange { background: #ffedd5; color: #9a3412; }

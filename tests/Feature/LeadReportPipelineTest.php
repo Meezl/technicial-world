@@ -174,6 +174,115 @@ class LeadReportPipelineTest extends TestCase
                 ->where('job.progress_reports.0.submitted_to_office_at', null));
     }
 
+    /**
+     * Ops asked how to read a job's reporting without going to the database.
+     * The answer is that every report carries where it stands, computed in one
+     * place so the job page and the office queue cannot word it differently.
+     */
+    public function test_each_report_says_where_it_stands_on_the_office_job_page(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $lead = $this->makeTechnician();
+        $crewA = $this->makeTechnician();
+        $crewB = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+        $signedOff = $this->makeSubTask($job, $crewA, 'Plumbing works');
+        $unreviewed = $this->makeSubTask($job, $crewB, 'Carpentry');
+
+        $this->actingAs($crewA->user)
+            ->post(route('technician.sub-tasks.progress', $signedOff), ['progress_percentage' => 100]);
+        $this->actingAs($crewB->user)
+            ->post(route('technician.sub-tasks.progress', $unreviewed), ['progress_percentage' => 0]);
+
+        $ratified = ProgressReport::where('service_sub_task_id', $signedOff->id)->firstOrFail();
+        $this->actingAs($lead->user)->post(route('technician.progress-report.approve', $ratified));
+
+        $states = collect(
+            $this->actingAs($admin)
+                ->get(route('admin.jobs.show', $job))
+                ->viewData('page')['props']['job']['progress_reports']
+        )->pluck('pipeline_state.key', 'id');
+
+        $this->assertSame('held_signed_off', $states[$ratified->id]);
+        $this->assertSame(
+            'held_unreviewed',
+            $states[ProgressReport::where('service_sub_task_id', $unreviewed->id)->value('id')]
+        );
+    }
+
+    /**
+     * A new starter must be able to answer the phone from what is on screen.
+     * Every state carries its meaning, who it is waiting on, the office's next
+     * move, and the words for a technician and for a client — and the page is
+     * sent the whole vocabulary so the legend cannot drift from the badges.
+     */
+    public function test_every_status_carries_its_meaning_and_what_to_say(): void
+    {
+        foreach (ProgressReport::pipelineStateGuide() as $state) {
+            foreach (['key', 'label', 'tone', 'waiting_on', 'meaning', 'next', 'tell_technician', 'tell_client'] as $field) {
+                $this->assertArrayHasKey($field, $state, "State is missing {$field}.");
+                $this->assertNotEmpty($state[$field], "State {$state['key']} has an empty {$field}.");
+            }
+        }
+
+        // Every state a report can actually report is one the guide explains.
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+        $subTask = $this->makeSubTask($job, $crew, 'Plumbing works');
+        $this->actingAs($crew->user)
+            ->post(route('technician.sub-tasks.progress', $subTask), ['progress_percentage' => 100]);
+
+        $page = $this->actingAs($admin)
+            ->get(route('admin.jobs.show', $job))
+            ->viewData('page')['props'];
+
+        $guideKeys = collect($page['progressStateGuide'])->pluck('key');
+        $this->assertTrue($guideKeys->contains('held_unreviewed'));
+        $this->assertTrue(
+            $guideKeys->contains($page['job']['progress_reports'][0]['pipeline_state']['key'])
+        );
+        $this->assertNotEmpty($page['job']['progress_reports'][0]['pipeline_state']['tell_technician']);
+    }
+
+    /** The office's own wording stays with the office. */
+    public function test_the_client_is_not_served_the_offices_pipeline_wording(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $tech = $this->makeTechnician();
+
+        $job = $this->makeJob($client, ['technician_id' => $tech->id]);
+
+        $report = app(ProgressService::class)
+            ->submitReport($job, $tech->id, $tech->user->id, ['percent_complete' => 40]);
+        app(ProgressService::class)->validate(
+            $report->fresh(), $admin->id, ['validated_percent' => 40], [], validatedAs: ProgressReport::AS_ADMIN
+        );
+        app(ProgressService::class)->verifyForRelease($report->fresh(), $admin, 'Checked.');
+        app(ProgressService::class)->releaseToClient($job->fresh(), null, $admin->id);
+
+        $reports = $this->actingAs($client)
+            ->get(route('client.request-status', $job))
+            ->viewData('page')['props']['serviceRequest']['progress_reports'];
+
+        $this->assertNotEmpty($reports);
+        $this->assertArrayNotHasKey('pipeline_state', $reports[0]);
+    }
+
     /** Held is not settled: the office cannot validate what the lead has not posted. */
     public function test_the_office_cannot_validate_a_report_the_lead_has_not_posted(): void
     {

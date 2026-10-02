@@ -400,6 +400,12 @@ class AdminDashboardController extends Controller
             'proxyQuoteApprover:id,name',
         ]);
 
+        // Where each report stands, said once on the model so the job page and
+        // the office queue cannot describe the same report differently. Opt-in
+        // because the client is served this model too.
+        $job->progressReports->each->append('pipeline_state');
+        $job->removedProgressReports->each->append('pipeline_state');
+
         $technicians = Technician::with('user')
             ->orderBy('rating', 'desc')
             ->get();
@@ -409,6 +415,10 @@ class AdminDashboardController extends Controller
 
         return Inertia::render('Admin/JobDetails', [
             'job' => $job,
+            // What each status means, who it is waiting on, and what to say to
+            // a technician or client who rings about it. Printed on the page
+            // rather than left to hover text, which a new starter never finds.
+            'progressStateGuide' => ProgressReport::pipelineStateGuide(),
             'technicians' => $technicians,
             // The trade filter on every technician picker is the service
             // category list, not whatever text the technicians happen to
@@ -546,6 +556,8 @@ class AdminDashboardController extends Controller
             ->paginate(12)
             ->withQueryString();
 
+        $reports->getCollection()->each->append('pipeline_state');
+
         // Jobs the office has settled but not sent on, split by what is holding
         // each one: its own sign-off, or simply nobody having pressed release.
         $byJob = ProgressReport::query()
@@ -565,6 +577,7 @@ class AdminDashboardController extends Controller
 
         return Inertia::render('Admin/ProgressReports', [
             'reports' => $reports,
+            'progressStateGuide' => ProgressReport::pipelineStateGuide(),
             'summary' => $summary,
             'releasableByJob' => $byJob,
             'filters' => [

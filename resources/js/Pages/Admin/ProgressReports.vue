@@ -87,19 +87,28 @@
                         <h2>{{ reports.total || reports.data?.length || 0 }} reports</h2>
                     </div>
                     <div class="pr-filters">
+                        <!-- Typing a REQ here and clearing the toggle is the
+                             whole history of one job's reporting, which ops
+                             previously had to go to the database for. -->
                         <input
                             v-model="jobFilter"
                             type="search"
                             class="pr-search"
-                            placeholder="Filter by job reference…"
+                            placeholder="Job reference, e.g. REQ-BGM4N7…"
                             @keyup.enter="applyFilters"
+                            @search="applyFilters"
                         >
                         <label class="pr-toggle">
                             <input type="checkbox" v-model="pendingOnly" @change="applyFilters">
                             <span>Waiting on the office only</span>
                         </label>
+                        <p v-if="!pendingOnly" class="pr-filter-note">
+                            Showing every report, including those still held by a lead.
+                        </p>
                     </div>
                 </div>
+
+                <ProgressStateLegend :states="progressStateGuide" />
 
                 <div v-if="reports.data?.length" class="pr-list">
                     <article v-for="report in reports.data" :key="report.id" class="pr-card">
@@ -113,18 +122,19 @@
                                 </p>
                             </div>
                             <div class="pr-badges">
-                                <span :class="['status-badge', report.is_validated ? 'tone-green' : 'tone-orange']">
-                                    {{ report.is_validated ? 'Validated' : 'To validate' }}
+                                <!-- Where the report stands, in one phrase.
+                                     Four badges to combine was four chances to
+                                     combine them wrong — a report the lead had
+                                     not posted read "To validate", which is the
+                                     one thing the office could not do with it. -->
+                                <span :class="['status-badge', `tone-${report.pipeline_state?.tone || 'slate'}`]">
+                                    {{ report.pipeline_state?.label }}
                                 </span>
-                                <!-- The point of the queue: a report nobody but
-                                     its author has read, said plainly. -->
-                                <span v-if="needsSignOff(report)" class="status-badge tone-amber" title="No lead reviewed this — the office is the only check">
-                                    No prior review
+                                <!-- Kept beside it because it names a person,
+                                     which the state cannot. -->
+                                <span v-if="report.ops_verified_at && report.ops_verifier?.name" class="status-badge tone-blue">
+                                    Signed off by {{ report.ops_verifier.name }}
                                 </span>
-                                <span v-else-if="report.ops_verified_at" class="status-badge tone-blue">
-                                    Signed off{{ report.ops_verifier?.name ? ` by ${report.ops_verifier.name}` : '' }}
-                                </span>
-                                <span v-if="report.released_to_client_at" class="status-badge tone-slate">Sent to client</span>
                             </div>
                         </div>
 
@@ -141,6 +151,17 @@
                                 <span>Photos</span>
                                 <strong>{{ report.photos?.length || 0 }}</strong>
                             </div>
+                        </div>
+
+                        <!-- Said on the row, not on hover: whoever is working
+                             this queue may never have seen it before. -->
+                        <div v-if="report.pipeline_state" class="pr-explain">
+                            <p class="pr-explain-waiting">
+                                <i class="fas fa-hourglass-half"></i>
+                                Waiting on <strong>{{ report.pipeline_state.waiting_on }}</strong>
+                            </p>
+                            <p class="pr-explain-meaning">{{ report.pipeline_state.meaning }}</p>
+                            <p class="pr-explain-next"><strong>Next:</strong> {{ report.pipeline_state.next }}</p>
                         </div>
 
                         <p v-if="report.notes" class="pr-notes">{{ report.notes }}</p>
@@ -191,11 +212,14 @@
 import { ref } from 'vue'
 import { Link, router } from '@inertiajs/vue3'
 import AdminSidebar from '../../Components/AdminSidebar.vue'
+import ProgressStateLegend from '../../Components/ProgressStateLegend.vue'
 
 const props = defineProps({
     reports: { type: Object, default: () => ({ data: [] }) },
     summary: { type: Object, default: () => ({}) },
     releasableByJob: { type: Array, default: () => [] },
+    // The status vocabulary, printed on the page by ProgressStateLegend.
+    progressStateGuide: { type: Array, default: () => [] },
     filters: { type: Object, default: () => ({}) },
 })
 
@@ -282,6 +306,9 @@ const formatDate = (value) => value ? new Date(value).toLocaleDateString() : '�
     font-size: 0.85rem;
 }
 .pr-toggle { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: #475569; }
+/* Says what the cleared toggle widened the list to, so "every report" is not
+   something the reader has to infer from the row count. */
+.pr-filter-note { margin: 0; flex-basis: 100%; font-size: 0.78rem; color: #64748b; }
 
 .pr-release-list { display: flex; flex-direction: column; gap: 0.6rem; }
 .pr-release-row {
@@ -322,6 +349,22 @@ const formatDate = (value) => value ? new Date(value).toLocaleDateString() : '�
 .pr-metric { display: flex; flex-direction: column; }
 .pr-metric span { font-size: 0.72rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.03em; }
 .pr-metric strong { font-size: 0.95rem; color: #0f172a; }
+
+/* Why this row is where it is, and what to do with it. */
+.pr-explain {
+    margin: 0.6rem 0 0;
+    padding: 0.6rem 0.75rem;
+    border-radius: 8px;
+    background: #f8fafc;
+    border: 1px solid #eef2f7;
+}
+.pr-explain p { margin: 0; font-size: 0.82rem; line-height: 1.5; color: #475569; }
+.pr-explain-waiting { color: #64748b !important; font-size: 0.78rem !important; }
+.pr-explain-waiting strong { color: #334155; }
+.pr-explain-waiting i { margin-right: 0.3rem; color: #94a3b8; }
+.pr-explain-meaning { margin-top: 0.3rem !important; }
+.pr-explain-next { margin-top: 0.35rem !important; }
+.pr-explain-next strong { color: #1e293b; }
 
 .pr-notes {
     margin: 0.7rem 0 0;

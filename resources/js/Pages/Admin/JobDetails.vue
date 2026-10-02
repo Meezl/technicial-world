@@ -1005,6 +1005,8 @@
                             </button>
                         </div>
 
+                        <ProgressStateLegend :states="progressStateGuide" />
+
                         <div v-if="progressReports.length" class="admin-report-list">
                             <article v-for="report in progressReports" :key="report.id" class="admin-report-card">
                                 <div class="admin-report-top">
@@ -1018,12 +1020,24 @@
                                             </small>
                                         </p>
                                     </div>
-                                    <span v-if="isHeldByLead(report)" class="status-badge pending">
-                                        Held by lead · {{ report.percent_complete }}%
-                                    </span>
-                                    <span v-else :class="['status-badge', report.is_validated ? 'approved' : 'review']">
-                                        {{ report.is_validated ? `Approved ${report.validated_percent ?? report.percent_complete}%` : `Pending ${report.percent_complete}%` }}
-                                    </span>
+                                    <!-- One answer rather than four badges to
+                                         combine. Computed on the model so this
+                                         page, the office queue and the next
+                                         screen cannot read it differently. -->
+                                    <div class="admin-report-state">
+                                        <span :class="['status-badge', `tone-${report.pipeline_state?.tone || 'slate'}`]">
+                                            {{ report.pipeline_state?.label }}
+                                            ·
+                                            {{ report.is_validated ? (report.validated_percent ?? report.percent_complete) : report.percent_complete }}%
+                                        </span>
+                                        <!-- Printed, not hovered. Somebody who
+                                             has never seen this screen has to be
+                                             able to answer the technician on the
+                                             phone from what is in front of them. -->
+                                        <span v-if="report.pipeline_state?.waiting_on" class="admin-report-waiting">
+                                            Waiting on: <strong>{{ report.pipeline_state.waiting_on }}</strong>
+                                        </span>
+                                    </div>
                                 </div>
 
                                 <div class="admin-report-metrics">
@@ -1043,6 +1057,21 @@
                                         <span>Labor payout</span>
                                         <strong>KSH {{ formatCurrency(getProgressPayableAmount(report)) }}</strong>
                                     </div>
+                                </div>
+
+                                <!-- The state in full, on the card. Whoever picks
+                                     this up mid-shift should not have to know the
+                                     pipeline to act, or to answer the phone. -->
+                                <div v-if="report.pipeline_state" class="admin-report-explain">
+                                    <p class="are-meaning">{{ report.pipeline_state.meaning }}</p>
+                                    <p class="are-next">
+                                        <strong>Next:</strong> {{ report.pipeline_state.next }}
+                                    </p>
+                                    <details class="are-script">
+                                        <summary>If they ring about it</summary>
+                                        <p><strong>Technician:</strong> {{ report.pipeline_state.tell_technician }}</p>
+                                        <p><strong>Client:</strong> {{ report.pipeline_state.tell_client }}</p>
+                                    </details>
                                 </div>
 
                                 <p v-if="report.notes" class="admin-report-notes">{{ report.notes }}</p>
@@ -2915,6 +2944,7 @@ import RefundsPanel from '../../Components/RefundsPanel.vue'
 import JobDocumentsPanel from '../../Components/JobDocumentsPanel.vue'
 import ProgressReportActions from '../../Components/ProgressReportActions.vue'
 import RemovedReportsPanel from '../../Components/RemovedReportsPanel.vue'
+import ProgressStateLegend from '../../Components/ProgressStateLegend.vue'
 import PhotoUploader from '../../Components/PhotoUploader.vue'
 import { Link, usePage } from '@inertiajs/vue3'
 import { ref, computed, reactive, watch } from 'vue'
@@ -2926,6 +2956,12 @@ const props = defineProps({
         required: true
     },
     technicians: {
+        type: Array,
+        default: () => []
+    },
+    // ProgressReport::pipelineStateGuide() — the status vocabulary, printed on
+    // the page so the meanings are not folklore.
+    progressStateGuide: {
         type: Array,
         default: () => []
     },
@@ -5898,6 +5934,57 @@ defineOptions({
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.85rem;
     margin-top: 1rem;
+}
+
+/* The state, and who it is waiting on, as one block in the card corner. */
+.admin-report-state {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.3rem;
+    text-align: right;
+    flex-shrink: 0;
+}
+.admin-report-waiting {
+    font-size: 0.75rem;
+    color: #64748b;
+}
+.admin-report-waiting strong { color: #334155; }
+
+/* What the state means and what to do about it — printed, because hover text
+   is invisible to anyone who does not already know to look for it. */
+.admin-report-explain {
+    margin-top: 0.85rem;
+    padding: 0.7rem 0.85rem;
+    border-radius: 8px;
+    background: #f8fafc;
+    border: 1px solid #eef2f7;
+}
+.admin-report-explain .are-meaning,
+.admin-report-explain .are-next {
+    margin: 0;
+    font-size: 0.83rem;
+    line-height: 1.55;
+    color: #475569;
+}
+.admin-report-explain .are-next { margin-top: 0.4rem; }
+.admin-report-explain .are-next strong { color: #1e293b; }
+.are-script { margin-top: 0.5rem; }
+.are-script > summary {
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #2563eb;
+}
+.are-script p {
+    margin: 0.35rem 0 0;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: #475569;
+}
+
+@media (max-width: 640px) {
+    .admin-report-state { align-items: flex-start; text-align: left; }
 }
 
 .admin-report-notes,
