@@ -161,4 +161,29 @@ onBeforeUnmount(() => {
 .nav-ticket-link.active {
     background: #042659;
 }
+
+/*
+ * The mobile menu panel is white, so it paints every link in it dark grey with
+ * !important — and that rule (.nav-links.open a) outweighs the pill's own
+ * colour, which left "Open a Ticket" as near-black text on the navy pill.
+ * Matched here with the same weight plus the pill's own class, and the active
+ * state covered too: it has its own !important colour that would otherwise
+ * bring the dark text back on the ticket page itself.
+ */
+@media (max-width: 768px) {
+    .nav-links.open a.nav-ticket-link,
+    .nav-links.open a.nav-ticket-link.active {
+        color: #ffffff !important;
+        background: #053272;
+        /* Inset from the panel edge so it reads as a button sitting in the
+           menu rather than a block of colour bleeding to both sides. */
+        margin: 0.5rem 0.75rem 0.35rem;
+        padding: 0.8rem 1.2rem;
+        text-align: center;
+    }
+
+    .nav-links.open a.nav-ticket-link.active {
+        background: #042659;
+    }
+}
 </style>

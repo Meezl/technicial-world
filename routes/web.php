@@ -24,7 +24,10 @@ Route::get('/', function () {
 
 Route::get('/about', fn() => Inertia::render('About'));
 Route::get('/services', fn() => Inertia::render('Services'));
-Route::get('/contact', fn() => Inertia::render('Contact'));
+// The quote form asks the same questions as the ticket form and offers the
+// same service categories, so it is served and handled by the same controller.
+Route::get('/contact', [\App\Http\Controllers\TicketController::class, 'contact'])->name('contact');
+Route::post('/contact', [\App\Http\Controllers\TicketController::class, 'storeEnquiry'])->name('contact.enquiry');
 Route::get('/ecommerce', fn() => Inertia::render('Ecommerce'));
 
 // Public technician interest form

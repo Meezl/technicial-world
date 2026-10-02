@@ -26,9 +26,16 @@ class TicketController extends Controller
                 $query->where('urgency', $urgency);
             }
         }
+        // Filtered against the values tickets actually carry, not a hardcoded
+        // three. The public forms now file the office's real trade names, and
+        // the old whitelist silently ignored every one of them — picking
+        // "Roofing Services" returned the unfiltered list.
         if ($category = $request->input('category')) {
-            if (in_array($category, ['electrical', 'plumbing', 'other'], true)) {
-                $query->where('category', $category);
+            $query->where('category', $category);
+        }
+        if ($type = $request->input('type')) {
+            if (in_array($type, [Ticket::TYPE_SUPPORT, Ticket::TYPE_CALLOUT, Ticket::TYPE_ENQUIRY], true)) {
+                $query->where('type', $type);
             }
         }
         if ($search = $request->input('search')) {
@@ -42,7 +49,9 @@ class TicketController extends Controller
 
         // Emergency / urgent first, then newest
         $tickets = $query
-            ->orderByRaw("FIELD(urgency, 'emergency', 'urgent', 'normal')")
+            // CASE rather than MySQL's FIELD(): the same ordering, but the
+            // page can be exercised by the test suite, which runs on SQLite.
+            ->orderByRaw("CASE urgency WHEN 'emergency' THEN 1 WHEN 'urgent' THEN 2 ELSE 3 END")
             ->orderByDesc('created_at')
             ->paginate(20)
             ->withQueryString();
@@ -59,8 +68,16 @@ class TicketController extends Controller
 
         return Inertia::render('Admin/Tickets/Index', [
             'tickets' => $tickets,
-            'filters' => $request->only(['status', 'urgency', 'category', 'search']),
+            'filters' => $request->only(['status', 'urgency', 'category', 'type', 'search']),
             'counts'  => $counts,
+            // Every category the tickets table holds, so legacy slugs stay
+            // filterable alongside the trade names filed since.
+            'categoryOptions' => Ticket::query()
+                ->whereNotNull('category')
+                ->distinct()
+                ->orderBy('category')
+                ->pluck('category')
+                ->all(),
         ]);
     }
 

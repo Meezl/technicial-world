@@ -41,6 +41,17 @@ class Ticket extends Model
     // Ticket types
     const TYPE_SUPPORT = 'support';   // free enquiry or complaint, guest-fileable
     const TYPE_CALLOUT = 'callout';   // paid attendance
+    /**
+     * A quote request from the public site's contact form.
+     *
+     * Filed here rather than in a module of its own because it is the same
+     * shape of thing — somebody outside the business describing work they want
+     * done — and it needs the same handling: in the ops queue, on the office's
+     * email, acknowledged to the sender. Kept distinct from a support ticket so
+     * nobody triages a request for a price as a fault to fix. Carries no fee:
+     * quoting is free, and the callout matrix governs attendance only.
+     */
+    const TYPE_ENQUIRY = 'enquiry';
 
     // Why the ticket costs what it costs. Only CHARGE_CHARGEABLE bills.
     const CHARGE_CHARGEABLE = 'chargeable';

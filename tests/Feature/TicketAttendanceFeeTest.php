@@ -290,7 +290,9 @@ class TicketAttendanceFeeTest extends TestCase
             'filer_name' => 'Guest Filer',
             'filer_email' => 'guest@example.com',
             'filer_phone' => '0712345678',
-            'category' => 'electrical',
+            // A trade the office actually sells — the form offers the service
+            // categories now, not three hardcoded slugs.
+            'category' => 'Electrical Services',
             'urgency' => 'normal',
             'subject' => 'Loose socket',
             'description' => 'The socket you fitted last week is loose.',

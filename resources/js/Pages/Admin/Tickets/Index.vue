@@ -33,9 +33,17 @@
                             </select>
                             <select v-model="category" @change="apply" class="form-control">
                                 <option value="">All categories</option>
-                                <option value="electrical">Electrical</option>
-                                <option value="plumbing">Plumbing</option>
-                                <option value="other">Other</option>
+                                <option v-for="option in categoryOptions" :key="option" :value="option">
+                                    {{ titleCase(option) }}
+                                </option>
+                            </select>
+                            <!-- A quote request is not a fault. Without this the
+                                 two sit in one list looking identical. -->
+                            <select v-model="type" @change="apply" class="form-control">
+                                <option value="">All kinds</option>
+                                <option value="support">Support</option>
+                                <option value="enquiry">Quote request</option>
+                                <option value="callout">Callout</option>
                             </select>
                             <input
                                 v-model="searchTerm"
@@ -56,6 +64,7 @@
                                     <th>Ticket</th>
                                     <th>Filer</th>
                                     <th>Subject</th>
+                                    <th>Kind</th>
                                     <th>Category</th>
                                     <th>Urgency</th>
                                     <th>Status</th>
@@ -71,6 +80,7 @@
                                         <small>{{ t.filer_email }}</small>
                                     </td>
                                     <td>{{ t.subject }}</td>
+                                    <td>{{ typeLabel(t.type) }}</td>
                                     <td>{{ titleCase(t.category) }}</td>
                                     <td>
                                         <span :class="['urgency-badge', `urg-${t.urgency}`]">
@@ -93,7 +103,7 @@
                                     </td>
                                 </tr>
                                 <tr v-if="!tickets.data.length">
-                                    <td colspan="8" class="text-center">No tickets matching the filter.</td>
+                                    <td colspan="9" class="text-center">No tickets matching the filter.</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -127,6 +137,9 @@ const props = defineProps({
     tickets: { type: Object, required: true },
     filters: { type: Object, default: () => ({}) },
     counts: { type: Object, default: () => ({}) },
+    // Categories present on existing tickets — legacy slugs and the office's
+    // real trade names alike.
+    categoryOptions: { type: Array, default: () => [] },
 })
 
 const statusOptions = [
@@ -140,9 +153,17 @@ const statusOptions = [
 const activeStatus = ref(props.filters?.status || '')
 const urgency = ref(props.filters?.urgency || '')
 const category = ref(props.filters?.category || '')
+const type = ref(props.filters?.type || '')
+
+/** A quote request reads as one, not as "Enquiry" shorthand. */
+const typeLabel = (value) => ({
+    support: 'Support',
+    enquiry: 'Quote request',
+    callout: 'Callout',
+}[value] || titleCase(value || 'support'))
 const searchTerm = ref(props.filters?.search || '')
 
-const anyFilter = computed(() => activeStatus.value || urgency.value || category.value || searchTerm.value)
+const anyFilter = computed(() => activeStatus.value || urgency.value || category.value || type.value || searchTerm.value)
 
 const applyStatus = (s) => {
     activeStatus.value = s
@@ -152,6 +173,7 @@ const apply = () => router.get('/admin/tickets', {
     status: activeStatus.value || undefined,
     urgency: urgency.value || undefined,
     category: category.value || undefined,
+    type: type.value || undefined,
     search: searchTerm.value || undefined,
 }, { preserveState: true, replace: true })
 
@@ -159,6 +181,7 @@ const clear = () => {
     activeStatus.value = ''
     urgency.value = ''
     category.value = ''
+    type.value = ''
     searchTerm.value = ''
     router.get('/admin/tickets', {}, { preserveState: true, replace: true })
 }

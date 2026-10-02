@@ -46,11 +46,16 @@
                     <div class="form-row">
                         <div class="form-group">
                             <label>Category <span class="req">*</span></label>
+                            <!-- The trades the office actually sells, from
+                                 service_categories. Three hardcoded options
+                                 meant a roofing job arrived as "other". -->
                             <select v-model="form.category" name="category" required>
-                                <option value="electrical">Electrical</option>
-                                <option value="plumbing">Plumbing</option>
-                                <option value="other">Other</option>
+                                <option value="" disabled>Choose the trade</option>
+                                <option v-for="category in categories" :key="category" :value="category">
+                                    {{ category }}
+                                </option>
                             </select>
+                            <span v-if="errors.category" class="field-error">{{ errors.category }}</span>
                         </div>
                         <div class="form-group">
                             <label>Urgency <span class="req">*</span></label>
@@ -90,6 +95,11 @@
 import { ref, reactive, computed } from 'vue'
 import { Link, router, usePage } from '@inertiajs/vue3'
 
+const props = defineProps({
+    // Active service categories, by name — see TicketController::publicCategories().
+    categories: { type: Array, default: () => [] },
+})
+
 const page = usePage()
 const success = computed(() => page.props.flash?.success)
 
@@ -97,7 +107,9 @@ const form = reactive({
     filer_name: '',
     filer_email: '',
     filer_phone: '',
-    category: 'electrical',
+    // No sensible default: picking a trade for the caller is how a roof
+    // problem ends up filed as electrical.
+    category: '',
     urgency: 'normal',
     location: '',
     subject: '',
@@ -116,7 +128,7 @@ const submit = () => {
             if (!page.props.auth?.user) {
                 Object.assign(form, {
                     filer_name: '', filer_email: '', filer_phone: '',
-                    category: 'electrical', urgency: 'normal',
+                    category: '', urgency: 'normal',
                     location: '', subject: '', description: '',
                 })
             }
