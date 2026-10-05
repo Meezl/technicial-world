@@ -120,7 +120,7 @@ class ActionReminderTest extends TestCase
 
     // ==================== Clients ====================
 
-    public function test_a_quotation_left_undecided_is_reminded_every_twelve_hours_until_decided(): void
+    public function test_a_quotation_left_undecided_is_reminded_every_two_days_until_decided(): void
     {
         $job = $this->job();
         $job->update([
@@ -129,7 +129,7 @@ class ActionReminderTest extends TestCase
             'quote_amount' => 45000,
         ]);
 
-        $this->travel(11)->hours();
+        $this->travel(47)->hours();
         $this->sweep();
         Notification::assertNothingSentTo($this->client);
 
@@ -137,32 +137,89 @@ class ActionReminderTest extends TestCase
         $this->sweep();
         Notification::assertSentToTimes($this->client, ClientActionReminder::class, 1);
 
+        // Sweeping again inside the window sends nothing.
         $this->sweep();
         Notification::assertSentToTimes($this->client, ClientActionReminder::class, 1);
 
-        $this->travel(12)->hours();
+        $this->travel(48)->hours();
         $this->sweep();
         Notification::assertSentToTimes($this->client, ClientActionReminder::class, 2);
 
         $job->update(['rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED]);
 
-        $this->travel(12)->hours();
+        $this->travel(48)->hours();
         $this->sweep();
         Notification::assertSentToTimes($this->client, ClientActionReminder::class, 2);
+    }
+
+    /**
+     * Day two, day four, day six — then silence. A client who has not decided
+     * by then is not waiting to be reminded, and a quotation chased
+     * indefinitely reads as pressure rather than service.
+     */
+    public function test_a_quotation_is_chased_three_times_and_then_left_alone(): void
+    {
+        $this->job([
+            'rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED,
+            'status' => ServiceRequest::STATUS_AWAITING_QUOTE_APPROVAL,
+            'quote_amount' => 45000,
+        ]);
+
+        foreach ([1, 2, 3] as $expected) {
+            $this->travel(48)->hours();
+            $this->sweep();
+            Notification::assertSentToTimes($this->client, ClientActionReminder::class, $expected);
+        }
+
+        // A fortnight of sweeps after that changes nothing.
+        foreach (range(1, 14) as $ignored) {
+            $this->travel(24)->hours();
+            $this->sweep();
+        }
+
+        Notification::assertSentToTimes($this->client, ClientActionReminder::class, 3);
+
+        // The quotation is still outstanding — the office still sees it.
+        $reminder = ActionReminder::outstanding()->where('kind', ActionReminder::KIND_QUOTE_DECISION)->first();
+        $this->assertNotNull($reminder);
+        $this->assertSame(3, $reminder->reminder_count);
+    }
+
+    /** A revised quotation is a new question, and gets its own three chases. */
+    public function test_a_revision_gives_the_client_a_fresh_set_of_reminders(): void
+    {
+        $job = $this->job([
+            'rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED,
+            'status' => ServiceRequest::STATUS_AWAITING_QUOTE_APPROVAL,
+            'quote_amount' => 45000,
+        ]);
+
+        foreach (range(1, 3) as $ignored) {
+            $this->travel(48)->hours();
+            $this->sweep();
+        }
+        Notification::assertSentToTimes($this->client, ClientActionReminder::class, 3);
+
+        $job->update(['quote_revision_count' => 1, 'quote_amount' => 52000]);
+
+        $this->travel(48)->hours();
+        $this->sweep();
+        Notification::assertSentToTimes($this->client, ClientActionReminder::class, 4);
     }
 
     public function test_a_revised_quotation_restarts_the_clock(): void
     {
         $job = $this->job(['rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED, 'quote_amount' => 45000]);
 
-        $this->travel(10)->hours();
+        $this->travel(40)->hours();
         $job->update(['quote_revision_count' => 1, 'quote_amount' => 50000]);
 
-        $this->travel(4)->hours();
+        // The clock restarted, so the original 48 hours no longer counts.
+        $this->travel(16)->hours();
         $this->sweep();
         Notification::assertNothingSentTo($this->client);
 
-        $this->travel(8)->hours();
+        $this->travel(32)->hours();
         $this->sweep();
         Notification::assertSentToTimes($this->client, ClientActionReminder::class, 1);
     }
@@ -364,28 +421,30 @@ class ActionReminderTest extends TestCase
             'quote_amount' => 45000,
         ]);
 
-        $this->travel(12)->hours();
+        $this->travel(48)->hours();
         $this->sweep();
 
         Notification::assertSentTo($this->client, ClientActionReminder::class);
         Notification::assertNotSentTo($this->admin, PaymentFollowUpRequired::class);
     }
 
-    /** A quotation nobody decides on still gets chased — it stalls the job, it does not ask for money. */
-    public function test_non_payment_reminders_still_repeat(): void
+    /**
+     * A sign-off is a single yes that holds the job where it is, so it keeps
+     * the 12-hour rhythm and is not capped.
+     */
+    public function test_sign_off_reminders_still_repeat_twice_a_day(): void
     {
-        $job = $this->job([
-            'rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED,
-            'status' => ServiceRequest::STATUS_AWAITING_QUOTE_APPROVAL,
-            'quote_amount' => 45000,
+        $job = $this->job(['status' => ServiceRequest::STATUS_IN_PROGRESS]);
+        $job->update([
+            'status' => ServiceRequest::STATUS_AWAITING_CLIENT_VERIFICATION,
+            'client_verification_sent_at' => now(),
         ]);
 
-        $this->travel(12)->hours();
-        $this->sweep();
-        $this->travel(12)->hours();
-        $this->sweep();
-
-        Notification::assertSentToTimes($this->client, ClientActionReminder::class, 2);
+        foreach ([1, 2, 3, 4, 5] as $expected) {
+            $this->travel(12)->hours();
+            $this->sweep();
+            Notification::assertSentToTimes($this->client, ClientActionReminder::class, $expected);
+        }
     }
 
     public function test_completed_work_awaiting_sign_off_is_reminded(): void
@@ -445,21 +504,22 @@ class ActionReminderTest extends TestCase
         ]);
         app(CorporateApprovalService::class)->openChainFor($job);
 
-        $this->travel(12)->hours();
+        $this->travel(48)->hours();
         $this->sweep();
         Notification::assertSentTo($verifier->user, ClientActionReminder::class);
         Notification::assertNothingSentTo($approver->user);
         Notification::assertNothingSentTo($requester->user);
 
-        // Verified: now it is the approver's turn, with a fresh 12 hours.
+        // Verified: now it is the approver's turn, with a fresh two days —
+        // they could not act until the verifier had.
         $job->corporateApprovals()->where('stage', CorporateApproval::STAGE_VERIFY)
             ->update(['status' => CorporateApproval::STATUS_APPROVED, 'decided_at' => now()]);
 
-        $this->travel(6)->hours();
+        $this->travel(24)->hours();
         $this->sweep();
         Notification::assertNothingSentTo($approver->user);
 
-        $this->travel(6)->hours();
+        $this->travel(24)->hours();
         $this->sweep();
         Notification::assertSentToTimes($approver->user, ClientActionReminder::class, 1);
         Notification::assertSentToTimes($verifier->user, ClientActionReminder::class, 1);

@@ -58,12 +58,18 @@ class ActionReminder extends Model
      * days would put every reminder at the same hour of the morning, and a
      * client who ignores one at 8am tends to ignore the next one too.
      *
-     * Everything else keeps the 12-hour rhythm: a quotation nobody decides on,
-     * work nobody confirms and a date nobody answers all stall the job rather
-     * than ask for money, and the chase is what unblocks them.
+     * A quotation runs slower still, at 48 hours. Deciding whether to buy
+     * takes longer than paying a deposit already agreed to, and the twice-daily
+     * mail it replaces was the other half of what clients rang to complain
+     * about.
+     *
+     * Sign-offs and proposed dates keep the 12-hour rhythm. Both are a single
+     * yes away, both hold the job where it is until it comes, and neither asks
+     * the client for anything but a moment.
      */
     const INTERVAL_HOURS_BY_KIND = [
         self::KIND_PAYMENT => 36,
+        self::KIND_QUOTE_DECISION => 48,
     ];
 
     /**
@@ -75,10 +81,16 @@ class ActionReminder extends Model
      * third one somebody has had three prompts to make the call. A fourth
      * email was never going to be the thing that worked.
      *
-     * Unlisted kinds have no limit.
+     * Three for a quotation too, at 48 hours — day two, day four, day six. A
+     * client who has not decided by then is not waiting to be reminded, and a
+     * quotation chased indefinitely reads as pressure rather than service.
+     *
+     * Unlisted kinds have no limit: a sign-off or a date is a single yes that
+     * holds the job where it is, and the chase is what unblocks it.
      */
     const MAX_REMINDERS = [
         self::KIND_PAYMENT => 3,
+        self::KIND_QUOTE_DECISION => 3,
     ];
 
     /** Hours between chases for this ask. */
