@@ -13,7 +13,7 @@ use Illuminate\Notifications\Notification;
  *
  * Sent to the office every time a payment reminder goes to a client, because
  * an unpaid deposit is not a mail problem — it is a conversation somebody has
- * to have. The client gets three reminders across a week and then the mail
+ * to have. The client gets three reminders, 36 hours apart, and then the mail
  * stops; ops gets the same three prompts, each one naming the job, the amount
  * and how long it has been outstanding, so the follow-up happens while the
  * reminder is still fresh in the client's inbox rather than a month later when
@@ -60,7 +60,7 @@ class PaymentFollowUpRequired extends Notification implements ShouldQueue
         $message->line($this->reminderNumber >= $this->reminderLimit
             ? 'This was the last reminder the client will receive. Nothing more goes out automatically — '
                 . 'the job stays where it is until somebody speaks to them.'
-            : 'A call now is worth more than the next email. The client is reminded again in two days.');
+            : 'A call now is worth more than the next email. The client is reminded again in 36 hours.');
 
         return $message
             ->action('Open the job', url('/admin/jobs/' . ($job?->id ?? '')))

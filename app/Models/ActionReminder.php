@@ -52,21 +52,25 @@ class ActionReminder extends Model
      * How often each kind is chased, where it is not the standard 12 hours.
      *
      * Money is paced differently from everything else. A client who owes a
-     * deposit gets three reminders spread across the week — roughly every
-     * other day — rather than the twice-daily mail that had clients ringing to
-     * complain. Everything else keeps the 12-hour rhythm: a quotation nobody
-     * decides on, work nobody confirms and a date nobody answers all stall the
-     * job rather than ask for money, and the chase is what unblocks them.
+     * deposit is chased every 36 hours — three times, so the last lands inside
+     * the first week — rather than the twice-daily mail that had clients
+     * ringing to complain. The odd interval is deliberate: a fixed number of
+     * days would put every reminder at the same hour of the morning, and a
+     * client who ignores one at 8am tends to ignore the next one too.
+     *
+     * Everything else keeps the 12-hour rhythm: a quotation nobody decides on,
+     * work nobody confirms and a date nobody answers all stall the job rather
+     * than ask for money, and the chase is what unblocks them.
      */
     const INTERVAL_HOURS_BY_KIND = [
-        self::KIND_PAYMENT => 48,
+        self::KIND_PAYMENT => 36,
     ];
 
     /**
      * How many times an ask of each kind may be chased, where there is a limit.
      *
-     * Three for a payment, which with the 48-hour spacing above is three
-     * reminders inside a week. After that the mail stops and the office picks
+     * Three for a payment, which with the 36-hour spacing above puts the last
+     * one inside the first week. After that the mail stops and the office picks
      * it up: every client reminder sent also tells ops to follow up, so by the
      * third one somebody has had three prompts to make the call. A fourth
      * email was never going to be the thing that worked.

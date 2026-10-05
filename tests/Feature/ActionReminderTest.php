@@ -181,18 +181,18 @@ class ActionReminderTest extends TestCase
             'status' => PaymentRequest::STATUS_PENDING,
         ]);
 
-        // Money is paced at 48 hours, not 12.
+        // Money is paced at 36 hours, not 12.
         $this->travel(12)->hours();
         $this->sweep();
         $this->assertSame(0, $this->paymentRemindersSent());
 
-        $this->travel(36)->hours();
+        $this->travel(24)->hours();
         $this->sweep();
         $this->assertSame(1, $this->paymentRemindersSent());
 
         // Client says they paid by bank deposit; the office has not confirmed.
         $payment->update(['payment_method' => PaymentRequest::METHOD_BANK_DEPOSIT, 'bank_reference' => 'FT123']);
-        $this->travel(48)->hours();
+        $this->travel(36)->hours();
         $this->sweep();
         $this->assertSame(1, $this->paymentRemindersSent());
 
@@ -257,7 +257,7 @@ class ActionReminderTest extends TestCase
         ]);
 
         // Not immediately: the clock runs from the approval, so they get the
-        // full two days rather than a demand the moment they accept.
+        // full 36 hours rather than a demand the moment they accept.
         $this->sweep();
         $this->assertSame(0, $this->paymentRemindersSent());
 
@@ -265,23 +265,23 @@ class ActionReminderTest extends TestCase
         $this->sweep();
         $this->assertSame(0, $this->paymentRemindersSent());
 
-        $this->travel(24)->hours();
+        $this->travel(12)->hours();
         $this->sweep();
         $this->assertSame(1, $this->paymentRemindersSent());
     }
 
     /**
-     * Three reminders across a week, then the mail stops and the office owns
+     * Three reminders 36 hours apart, then the mail stops and the office owns
      * it. Clients were getting one every 12 hours indefinitely.
      */
-    public function test_a_payment_is_chased_three_times_in_a_week_and_then_left_alone(): void
+    public function test_a_payment_is_chased_three_times_and_then_left_alone(): void
     {
         $job = $this->approvedJob(['status' => ServiceRequest::STATUS_AWAITING_PAYMENT]);
         $this->payment($job);
 
-        // Day two, day four, day six.
+        // 36, 72 and 108 hours in — the last one inside the first week.
         foreach ([1, 2, 3] as $expected) {
-            $this->travel(48)->hours();
+            $this->travel(36)->hours();
             $this->sweep();
             $this->assertSame($expected, $this->paymentRemindersSent(), "Expected {$expected} reminder(s) by now.");
         }
@@ -313,7 +313,7 @@ class ActionReminderTest extends TestCase
         ]);
         $this->payment($job);
 
-        $this->travel(48)->hours();
+        $this->travel(36)->hours();
         $this->sweep();
 
         $this->assertSame(1, $this->paymentRemindersSent());
@@ -322,7 +322,7 @@ class ActionReminderTest extends TestCase
 
         // One prompt per client reminder, and no more once the mail stops.
         foreach (range(1, 6) as $ignored) {
-            $this->travel(48)->hours();
+            $this->travel(36)->hours();
             $this->sweep();
         }
 
@@ -346,7 +346,7 @@ class ActionReminderTest extends TestCase
         $this->payment($job, 10000);
 
         foreach (range(1, 6) as $ignored) {
-            $this->travel(48)->hours();
+            $this->travel(36)->hours();
             $this->sweep();
         }
 

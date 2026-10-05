@@ -22,7 +22,7 @@ use Illuminate\Support\Facades\Log;
  * Clients: a quotation to decide on, a payment request to pay, completed work
  * to confirm, a proposed date to answer. Technicians: an assignment to accept
  * or decline. Reminders repeat every 12 hours until the thing is done, except
- * for money: a payment is chased three times across a week and then left to
+ * for money: a payment is chased three times, 36 hours apart, and then left to
  * the office, which is prompted to call on each one — see
  * ActionReminder::MAX_REMINDERS and tellOpsToFollowUp().
  *
