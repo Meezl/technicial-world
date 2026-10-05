@@ -48,6 +48,41 @@ class ActionReminder extends Model
     /** Hours between the ask and the first reminder, and between reminders. */
     const INTERVAL_HOURS = 12;
 
+    /**
+     * How often each kind is chased, where it is not the standard 12 hours.
+     *
+     * Money is paced differently from everything else. A client who owes a
+     * deposit gets three reminders spread across the week — roughly every
+     * other day — rather than the twice-daily mail that had clients ringing to
+     * complain. Everything else keeps the 12-hour rhythm: a quotation nobody
+     * decides on, work nobody confirms and a date nobody answers all stall the
+     * job rather than ask for money, and the chase is what unblocks them.
+     */
+    const INTERVAL_HOURS_BY_KIND = [
+        self::KIND_PAYMENT => 48,
+    ];
+
+    /**
+     * How many times an ask of each kind may be chased, where there is a limit.
+     *
+     * Three for a payment, which with the 48-hour spacing above is three
+     * reminders inside a week. After that the mail stops and the office picks
+     * it up: every client reminder sent also tells ops to follow up, so by the
+     * third one somebody has had three prompts to make the call. A fourth
+     * email was never going to be the thing that worked.
+     *
+     * Unlisted kinds have no limit.
+     */
+    const MAX_REMINDERS = [
+        self::KIND_PAYMENT => 3,
+    ];
+
+    /** Hours between chases for this ask. */
+    public function intervalHours(): int
+    {
+        return self::INTERVAL_HOURS_BY_KIND[$this->kind] ?? self::INTERVAL_HOURS;
+    }
+
     public function remindable(): MorphTo
     {
         return $this->morphTo();
@@ -84,13 +119,28 @@ class ActionReminder extends Model
             ->update(['resolved_at' => now(), 'updated_at' => now()]);
     }
 
-    /** Due when the next 12-hour mark since the ask has passed. */
+    /** Due when the next 12-hour mark has passed and the kind has chases left. */
     public function isDue(): bool
     {
+        if ($this->hasBeenChasedEnough()) {
+            return false;
+        }
+
         return $this->awaiting_since
             ->copy()
-            ->addHours(self::INTERVAL_HOURS * ($this->reminder_count + 1))
+            ->addHours($this->intervalHours() * ($this->reminder_count + 1))
             ->lte(now());
+    }
+
+    /**
+     * Said its piece. The ask stays outstanding — it is still owed, and the
+     * office still sees it — but we stop writing to the client about it.
+     */
+    public function hasBeenChasedEnough(): bool
+    {
+        $limit = self::MAX_REMINDERS[$this->kind] ?? null;
+
+        return $limit !== null && $this->reminder_count >= $limit;
     }
 
     /** Restart the clock, e.g. when a corporate quote moves to its next stage. */

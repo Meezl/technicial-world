@@ -7,8 +7,10 @@ use App\Models\CorporateApproval;
 use App\Models\JobAssignment;
 use App\Models\PaymentRequest;
 use App\Models\ServiceRequest;
+use App\Models\User;
 use App\Notifications\AssignmentResponseReminder;
 use App\Notifications\ClientActionReminder;
+use App\Notifications\PaymentFollowUpRequired;
 use App\Services\CorporateApprovalService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Collection;
@@ -19,11 +21,17 @@ use Illuminate\Support\Facades\Log;
  *
  * Clients: a quotation to decide on, a payment request to pay, completed work
  * to confirm, a proposed date to answer. Technicians: an assignment to accept
- * or decline. Each reminder repeats every 12 hours until the thing is done.
+ * or decline. Reminders repeat every 12 hours until the thing is done, except
+ * for money: a payment is chased three times across a week and then left to
+ * the office, which is prompted to call on each one — see
+ * ActionReminder::MAX_REMINDERS and tellOpsToFollowUp().
  *
  * Every open reminder is re-checked against the live record before anything is
  * sent, so a hook that missed a change can only delay closing a reminder, never
- * cause one to be sent for something already done.
+ * cause one to be sent for something already done. The payment check includes
+ * whether the client ever approved the quotation: a deposit billed on an
+ * unapproved quotation is not a debt, and chasing it was telling clients they
+ * owed money on work they had not accepted.
  */
 class SendActionReminders extends Command
 {
@@ -94,6 +102,14 @@ class SendActionReminders extends Command
                     ]);
                 }
             }
+
+            // An unpaid deposit is not a mail problem. Every reminder the
+            // client gets, the office gets a prompt to pick up the phone —
+            // while the reminder is still in the client's inbox, rather than a
+            // month later when somebody notices the job never started.
+            if ($reminder->kind === ActionReminder::KIND_PAYMENT) {
+                $this->tellOpsToFollowUp($reminder);
+            }
         }
 
         $this->info($dryRun ? "Dry run — would send {$sent} reminder(s)." : "Sent {$sent} reminder(s).");
@@ -140,6 +156,34 @@ class SendActionReminders extends Command
         if ($paymentRequest->status !== PaymentRequest::STATUS_PENDING
             || ($job && in_array($job->status, self::CLOSED_JOB_STATUSES, true))) {
             return null;
+        }
+
+        // Nobody is chased for money on work they have not agreed to.
+        //
+        // A quotation that names a deposit raises the bill when the quotation
+        // goes out, so the client has the figure and the thing to pay in one
+        // breath. That bill is pending from the moment it is written — which
+        // put a payment reminder on its 12-hour clock against a quotation the
+        // client was still reading. They were being told a payment was
+        // "outstanding" for a job they had not accepted, twice a day, and they
+        // rang to say so.
+        //
+        // Held rather than closed: the moment they approve, the deposit is
+        // genuinely due and the one reminder it is allowed starts from there.
+        // Until then the quotation reminder is the right chase, and it is
+        // already running.
+        if ($job && $job->rfq_status !== ServiceRequest::RFQ_STATUS_APPROVED) {
+            return false;
+        }
+
+        // The clock started when the bill was written, which on a deposit is
+        // when the quotation went out. Running it from the approval instead
+        // means the client gets the same 12 hours everybody else gets, rather
+        // than a payment reminder landing the moment they accept because the
+        // quotation sat with them for a week first.
+        $approvedAt = $job?->client_quote_approved_at ?? $job?->proxy_quote_approved_at;
+        if ($approvedAt && $reminder->awaiting_since->lt($approvedAt)) {
+            $reminder->restart(\Carbon\Carbon::parse($approvedAt));
         }
 
         // The client has recorded a cheque, cash or bank payment and the office
@@ -230,6 +274,56 @@ class SendActionReminders extends Command
             $this->users($members->all()),
             new ClientActionReminder($reminder->kind, $job, $reminder->awaiting_since, route('corporate.approvals.show', $job)),
         ];
+    }
+
+    /**
+     * Ask the office to chase a payment the client has just been reminded of.
+     *
+     * Goes to the job's own project manager where it has one, and to the
+     * admins either way: a PM who is away must not be the reason nobody calls.
+     * Failures are logged rather than thrown — the client's reminder has
+     * already gone, and losing the sweep over an internal mail would hold up
+     * everything behind it.
+     */
+    private function tellOpsToFollowUp(ActionReminder $reminder): void
+    {
+        $paymentRequest = $reminder->remindable;
+
+        if (!$paymentRequest instanceof PaymentRequest) {
+            return;
+        }
+
+        $job = $paymentRequest->serviceRequest;
+
+        $recipients = User::query()
+            ->where('is_active', true)
+            ->whereNotNull('email')
+            ->where(function ($q) use ($job) {
+                $q->where('role', User::ROLE_ADMIN);
+                if ($job?->assigned_pm_id) {
+                    $q->orWhere('id', $job->assigned_pm_id);
+                }
+            })
+            ->get();
+
+        $notification = new PaymentFollowUpRequired(
+            $paymentRequest,
+            $reminder->awaiting_since,
+            $reminder->reminder_count,
+            ActionReminder::MAX_REMINDERS[ActionReminder::KIND_PAYMENT] ?? $reminder->reminder_count,
+        );
+
+        foreach ($recipients as $recipient) {
+            try {
+                $recipient->notify($notification);
+            } catch (\Throwable $e) {
+                Log::warning('Payment follow-up alert failed', [
+                    'action_reminder_id' => $reminder->id,
+                    'user_id' => $recipient->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
     private function users(array $users): Collection
