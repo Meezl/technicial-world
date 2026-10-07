@@ -61,24 +61,35 @@ button.
 
 ---
 
-## 2. Two decisions needed before coding
+## 2. Decisions taken
 
-**2.1 Does variation work move the job's headline percentage?**
+Both settled by the office on 7 Oct 2026: **separate track**, and **office-raised
+variations are allowed on closed jobs** while client-raised cards stay refused.
+The reasoning each way is kept below, since the alternatives will be asked about
+again.
+
+**2.1 Does variation work move the job's headline percentage? — No. Separate track.**
 
 `headlinePercent()` is `max(highest validated whole-job report, average across
 sub-tasks)`. If variation tasks join that average, a job finished at 100% drops
 when a variation task is added and climbs back as it is done.
 
-- **Recommended — separate track.** Original scope keeps its figure; variation
+- **Chosen — separate track.** Original scope keeps its figure; variation
   tasks are reported and completed against their variation. The board reads
   "Closed · 100% · VO-02 in progress". Nothing already billed moves, and the
   client's record of what they verified stays intact.
+
+  Consequence for the build: `headlinePercent()` and `aggregateSubTaskProgress()`
+  must exclude tasks with a `variation_order_id`, and the variation needs a
+  percentage of its own, computed from its tasks. `raiseDueMilestones()` keeps
+  being handed the original-scope figure, so milestone billing on work already
+  invoiced cannot move.
 - **Alternative — enlarged scope.** The average includes variation tasks. Less
   code, but `raiseDueMilestones()` keys billing off `progress_percentage`, so
   this moves the number that drives billing on a job already billed. Would need
   tracing before it could be recommended.
 
-**2.2 May a variation be raised on a closed job?**
+**2.2 May a variation be raised on a closed job? — Yes, office-raised only.**
 
 `VariationCardService::raise()` refuses today, deliberately:
 
@@ -91,9 +102,16 @@ office-raised variation path (`VariationOrderService::create`) has no such
 guard and already bills in full on approval for a finished job, so the two
 paths disagree today.
 
-Options: keep the card refusal and allow only office-raised variations on
-closed jobs (recommended — the client-facing promise stays, ops gets the
-escape hatch); or lift it for both; or keep both closed and require a new REQ.
+**Chosen:** the card refusal stays — a caretaker asking for more work on a
+finished job is still told to raise a new request, which is the promise the
+module made to those accounts. The office-raised path
+(`VariationOrderService::create`) is allowed on a closed job, deliberately, as
+the escape hatch for work the office knows has to happen. That removes the
+disagreement between the two paths by making it explicit rather than accidental.
+
+Consequence for the build: the office path needs no new guard, but it does need
+the audited reopen in Phase 5, and the closed-job case has to be visible on the
+job page so nobody wonders why a closed job has live work on it.
 
 ---
 
@@ -146,17 +164,32 @@ escape hatch); or lift it for both; or keep both closed and require a new REQ.
 Each phase ships and is testable on its own. Phase 1 is a prerequisite for the
 rest because variation tasks make its bug routine.
 
-### Phase 1 — Pay a technician for every task they hold
+### Phase 1 — Pay a technician for every task they hold — **DONE**
 
-`resolveApprovedAmount()` returns the fee for **one** assignment. Make it sum
-the live assignments for that technician on that job, keyed per sub-task, while
-keeping the re-assignment double-count it was written to avoid: sum the latest
-live assignment **per sub-task**, plus the job-level one where there is no
-sub-task. Regression tests for: one tech one task; one tech two tasks; a
-reassignment superseded; a crew member paid through their lead (still zero).
+`resolveApprovedAmount()` now reads one slot at a time. A slot is a sub-task, or
+the job itself for a technician staffed directly. Within a slot only the newest
+assignment counts, which is what stops a re-assignment being paid twice; across
+slots they are summed, which is what stops a technician holding two tasks being
+paid for one.
 
-No migration. Touches the payment sheet and the Pay Technicians screen, so it
-needs the existing payment tests green plus new ones.
+A row left at `reassigned` still counts in its slot — somebody taken off work
+part-way is owed for what they did, and their arrears are settled from the same
+figure.
+
+This aligns the payout with the labour budget, which has always committed the
+full amount: `getLaborAllocationSummary()` sums the job-level assignments and
+every sub-task fee.
+
+No migration. Covered by `TechnicianMultiTaskPayoutTest` — ten cases including
+the two-task sum, the single-task and single-technician cases unchanged, a
+re-assignment not paid twice, a reassigned technician keeping their claim, and a
+crew member paid through their lead still owed nothing.
+
+**Before deploying:** run `multi_slot_audit.sql` against production to see which
+technician–job pairs hold more than one slot. Those are the people who have been
+underpaid, and the figure will rise for them on the next sheet. `old_figure` in
+that query is roughly what the previous code would have returned, so the
+difference is the arrears.
 
 ### Phase 2 — The task knows its variation
 

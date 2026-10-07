@@ -348,27 +348,59 @@ class TechnicianPaymentService
             : (int) ($serviceRequest->progress_percentage ?? 0);
     }
 
+    /**
+     * What this technician is owed on this job in total, across everything
+     * they hold.
+     *
+     * Read one slot at a time. A slot is a sub-task, or the job itself for a
+     * technician staffed directly — and a technician may hold several. Within
+     * a slot only the newest assignment counts, which is what stops a
+     * re-assignment being paid twice; across slots they are summed, which is
+     * what stops a technician holding two tasks being paid for one.
+     *
+     * That second half was the bug: this took `orderByDesc('id')->first()` and
+     * returned a single fee, while the payment sheet groups by (technician,
+     * job) and so had no second row to catch the shortfall. Anyone given a
+     * second task on a job was quietly paid for the later one only. The labour
+     * budget has always committed the full amount — see
+     * getLaborAllocationSummary, which sums the job-level assignments and every
+     * sub-task fee — so the budget and the payout now agree.
+     *
+     * A row left at `reassigned` still counts in its slot. Somebody taken off
+     * work part-way is owed for what they did, and their arrears are settled
+     * from the same figure; dropping it to zero would wipe the claim.
+     */
     public function resolveApprovedAmount(ServiceRequest $serviceRequest, int $technicianId): float
     {
-        // #9 — Pick the LATEST active assignment for this technician on
-        // this job. Previously this summed across all matching rows which
-        // double-counted re-assignments and the status filter excluded
-        // valid assignments that hadn't transitioned yet. Take the
-        // most recent row instead.
-        $assignment = JobAssignment::where('service_request_id', $serviceRequest->id)
+        $assignments = JobAssignment::where('service_request_id', $serviceRequest->id)
             ->where('technician_id', $technicianId)
             ->whereNotIn('status', [JobAssignment::STATUS_DECLINED])
             ->orderByDesc('id')
-            ->first();
+            ->get();
+
+        // Newest first, so the first row seen for a slot is the one that counts.
+        $latestPerSlot = [];
+        foreach ($assignments as $assignment) {
+            $slot = $assignment->service_sub_task_id ?? 'job';
+
+            if (!array_key_exists($slot, $latestPerSlot)) {
+                $latestPerSlot[$slot] = $assignment;
+            }
+        }
 
         // A crew member the office is not paying directly resolves to nothing
         // and stops there. Falling through would hand a right-hand man the
         // job's entire labour payout.
-        if ($assignment && $assignment->paid_through_lead) {
-            return 0.0;
+        foreach ($latestPerSlot as $assignment) {
+            if ($assignment->paid_through_lead) {
+                return 0.0;
+            }
         }
 
-        $approvedAmount = $assignment ? (float) ($assignment->agreed_compensation ?? 0) : 0.0;
+        $approvedAmount = array_sum(array_map(
+            fn (JobAssignment $assignment) => (float) ($assignment->agreed_compensation ?? 0),
+            $latestPerSlot
+        ));
 
         if ($approvedAmount <= 0) {
             $subTaskAmount = (float) $serviceRequest->subTasks()
