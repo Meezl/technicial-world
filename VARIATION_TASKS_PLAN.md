@@ -277,13 +277,34 @@ cannot approve their own proposal, the staffed task that cannot be declined from
 under its technician, and reporting on a closed job for a live variation task
 but not for original scope.
 
-### Phase 4 — Funding the work
+### Phase 4 — Funding the work — **DONE**
 
-On variation approval, raise `service_request_budgets.labor_budget` by the
-variation's `labor_delta`, in the same transaction, audited. Without this,
-Phase 3 produces tasks nobody can be assigned to. A zero-income variation with
-a labour delta is the interesting case: no client revenue, but a real cost — it
-still raises the labour budget, and that is the point of recording it.
+`VariationOrderService::extendBudgetForVariation()`, called from `approve()`
+inside the same transaction as the status change — a variation approved without
+its budget following would bill the client for work nobody could be assigned to.
+Both approval paths, the client's and the internal one, funnel through
+`approve()`, so there is one hook rather than two.
+
+Decisions made in the building:
+
+- **All three categories move, not only labour.** Labour is what blocks
+  staffing, but a variation that buys materials and leaves the materials budget
+  untouched reports the job as overspent for the rest of its life.
+- **A zero-income variation moves the budget too**, which is the point of
+  recording one: no revenue, but a real cost the office has taken on.
+- **A variation opens a budget where there was none.** It is the only money
+  anybody has sanctioned on that job, and without a budget row the work cannot
+  be staffed at all.
+- **Deductions reduce the budget, floored at what is already committed.**
+  Descoping work somebody is staffed on is a conversation about unassigning
+  them; silently cutting the budget under a live assignment would make the job
+  unpayable. The floor is written into the audit entry so the discrepancy is
+  visible rather than inferred. `committedLabour()` uses the same arithmetic as
+  `getLaborAllocationSummary()`, so the two cannot disagree.
+
+Covered by `VariationBudgetTest` — nine cases, including the end-to-end one:
+labour fully committed to the quoted work, a variation approved, its task
+admitted, and the technician then assignable within the raised budget.
 
 ### Phase 5 — Letting the work be done on a finished job
 

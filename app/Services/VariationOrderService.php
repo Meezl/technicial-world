@@ -402,16 +402,24 @@ class VariationOrderService
             }
         }
 
-        $vo->update([
-            'status'      => VariationOrder::STATUS_APPROVED,
-            'approved_by' => $actor->id,
-            'approved_at' => now(),
-        ]);
+        // The approval and the budget it authorises move together. A variation
+        // approved without its budget following would bill the client for work
+        // nobody could then be assigned to.
+        $budgetMovement = DB::transaction(function () use ($vo, $actor) {
+            $vo->update([
+                'status'      => VariationOrder::STATUS_APPROVED,
+                'approved_by' => $actor->id,
+                'approved_at' => now(),
+            ]);
 
-        AuditLog::log(AuditLog::ACTION_APPROVAL, $vo, null, [
+            return $this->extendBudgetForVariation($vo, $actor);
+        });
+
+        AuditLog::log(AuditLog::ACTION_APPROVAL, $vo, null, array_filter([
             'vo_number'  => $vo->vo_number,
             'net_amount' => (float) $vo->net_amount,
-        ]);
+            'budget'     => $budgetMovement,
+        ]));
 
         // Bill straight away for anything the job's progress has already
         // passed. On a finished job that means the whole variation invoices
@@ -421,6 +429,119 @@ class VariationOrderService
         $billing->raiseDueMilestones($sr->fresh(), (float) $sr->progress_percentage);
 
         return $vo->fresh();
+    }
+
+    /**
+     * Move the job's budget by what the variation bought.
+     *
+     * The gap this closes: `contractValue()` has always been the quote plus
+     * approved variations, so an approved variation raised what could be
+     * billed to the client immediately — but `service_request_budgets` is set
+     * by hand and had nothing to do with it. Approving a variation with KES
+     * 80,000 of labour therefore billed the client and then refused to let
+     * anyone be assigned to the work, because `ensureLaborBudgetCapacity()`
+     * was still measuring against the pre-variation figure.
+     *
+     * All three categories move, not only labour. Labour is what blocks
+     * staffing, but a variation that buys materials and leaves the materials
+     * budget untouched reports the job as overspent for the rest of its life.
+     *
+     * A zero-income variation moves the budget too, and that is the point of
+     * recording one: no revenue, but a real cost the office has taken on.
+     *
+     * Deductions reduce the budget, floored at what is already committed.
+     * Descoping work somebody is already staffed on is a conversation about
+     * unassigning them, and silently cutting the budget under a live
+     * assignment would make the job unpayable. The floor is recorded so the
+     * discrepancy is visible rather than inferred.
+     *
+     * Returns what moved, for the audit entry, or null if nothing did.
+     */
+    private function extendBudgetForVariation(VariationOrder $vo, User $actor): ?array
+    {
+        $deltas = [
+            'labor_budget'     => (float) $vo->labor_delta,
+            'materials_budget' => (float) $vo->materials_delta,
+            'other_budget'     => (float) $vo->transport_delta,
+        ];
+
+        if (!array_filter($deltas, fn (float $delta) => abs($delta) >= 0.01)) {
+            return null;
+        }
+
+        $sr = $vo->serviceRequest;
+        $budget = $sr->budget;
+
+        if (!$budget) {
+            // No budget was ever set. Creating one from the variation alone is
+            // the honest figure — it is the only money anybody has sanctioned
+            // on this job — and without it the work cannot be staffed at all.
+            $budget = $sr->budget()->create([
+                'labor_budget'     => max(0, $deltas['labor_budget']),
+                'materials_budget' => max(0, $deltas['materials_budget']),
+                'other_budget'     => max(0, $deltas['other_budget']),
+                'notes'            => "Opened by {$vo->vo_number}, which authorised the first budgeted work on this job.",
+                'created_by'       => $actor->id,
+            ]);
+
+            return ['opened_by_variation' => true] + array_map(
+                fn (float $delta) => round(max(0, $delta), 2),
+                $deltas
+            );
+        }
+
+        $committed = $this->committedLabour($sr);
+        $movement = [];
+        $update = [];
+
+        foreach ($deltas as $column => $delta) {
+            if (abs($delta) < 0.01) {
+                continue;
+            }
+
+            $current = (float) $budget->{$column};
+            $proposed = round($current + $delta, 2);
+
+            // Only labour has a live commitment to protect; materials and
+            // transport are spent against, not allocated to people.
+            $floor = $column === 'labor_budget' ? $committed : 0.0;
+
+            if ($proposed < $floor) {
+                $movement["{$column}_floored_at_committed"] = round($floor, 2);
+                $proposed = round($floor, 2);
+            }
+
+            $update[$column] = $proposed;
+            $movement[$column] = ['from' => round($current, 2), 'to' => $proposed];
+        }
+
+        if (!$update) {
+            return null;
+        }
+
+        $budget->update($update);
+
+        return $movement;
+    }
+
+    /**
+     * Labour already promised to technicians on this job: the job-level
+     * assignments plus every sub-task fee. The same arithmetic
+     * getLaborAllocationSummary() uses, so the two cannot disagree about what
+     * is committed.
+     */
+    private function committedLabour(ServiceRequest $sr): float
+    {
+        $direct = (float) $sr->jobAssignments()
+            ->whereNull('service_sub_task_id')
+            ->whereIn('status', ['pending', 'accepted', 'completed'])
+            ->sum('agreed_compensation');
+
+        $subTasks = (float) $sr->subTasks()
+            ->whereNotNull('technician_id')
+            ->sum('agreed_compensation');
+
+        return round($direct + $subTasks, 2);
     }
 
     public function decline(VariationOrder $vo, User $actor, ?string $reason = null): VariationOrder
