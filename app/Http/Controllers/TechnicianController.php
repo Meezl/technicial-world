@@ -1327,11 +1327,25 @@ class TechnicianController extends Controller
             abort(403, 'Unauthorized');
         }
 
+        // Work bought by a variation is not reportable until the variation is
+        // settled and an admin has admitted the task. Checked before the
+        // closed-job rule below, because a technician looking at a task on
+        // their own job deserves the real reason rather than being told the
+        // job is closed when it is the approval that is missing.
+        if ($blocked = $serviceSubTask->blockedReason()) {
+            return back()->with('error', "This task is not live yet. {$blocked}");
+        }
+
         // Checked against every finished status, not just the legacy one. A
         // job now passes through completed_pending_confirmation on its way to
         // closed, and progress filed after the office has signed off would
         // reopen an arithmetic nobody is going to look at again.
-        if (in_array($serviceRequest->status, ServiceRequest::TERMINAL_STATUSES, true)) {
+        //
+        // A live variation task is exempt: the whole point of buying work on a
+        // finished job is that somebody then does it. Phase 5 makes the reopen
+        // itself explicit; this is what lets the work be reported meanwhile.
+        if (in_array($serviceRequest->status, ServiceRequest::TERMINAL_STATUSES, true)
+            && !$serviceSubTask->isVariationTask()) {
             return back()->with('error', 'This job is closed.');
         }
 

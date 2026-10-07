@@ -683,6 +683,16 @@ Route::middleware(['auth', 'role:admin,project_manager'])->group(function () {
     // Zero-income only — anything the client pays for is theirs to agree to.
     Route::post('/variations/{variationOrder}/approve-internal', [\App\Http\Controllers\Admin\VariationOrderController::class, 'approveInternal'])
         ->name('variations.approve-internal');
+
+    // The work a variation bought. Proposing is open to a PM; admitting the
+    // task to the job is the admin's, checked in the controller so the refusal
+    // can explain itself rather than being a 403.
+    Route::post('/variations/{variationOrder}/tasks', [\App\Http\Controllers\Admin\VariationTaskController::class, 'store'])
+        ->name('variations.tasks.store');
+    Route::post('/variation-tasks/{serviceSubTask}/approve', [\App\Http\Controllers\Admin\VariationTaskController::class, 'approve'])
+        ->name('variations.tasks.approve');
+    Route::post('/variation-tasks/{serviceSubTask}/decline', [\App\Http\Controllers\Admin\VariationTaskController::class, 'decline'])
+        ->name('variations.tasks.decline');
 });
 
 Route::middleware(['auth'])->group(function () {

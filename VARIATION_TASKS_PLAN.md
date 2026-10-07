@@ -238,16 +238,44 @@ Covered by `VariationTaskModelTest` — nine cases including both consents in
 either order, the 100% job that stays at 100%, and the single-technician job
 that stays single.
 
-### Phase 3 — Proposing and approving the task
+### Phase 3 — Proposing and approving the task — **DONE**
 
-- `POST /variations/{variationOrder}/tasks` — propose a task. Admin or PM, since
-  drafting is not deciding. Refused once the variation is locked.
-- `POST /sub-tasks/{serviceSubTask}/approve-task` — **admin only**, enforced in
-  the controller, with a reason recorded in the audit log.
-- `POST /sub-tasks/{serviceSubTask}/decline-task` — admin only, needs a reason.
-- Assignment, fee and progress endpoints refuse a task that is not live, with a
-  message naming what is missing: the client's approval, the internal approval,
-  or an admin's sign-off on the task.
+`Admin\VariationTaskController`, with three routes:
+
+- `POST /variations/{variationOrder}/tasks` — propose. Admin or PM, since
+  drafting is not deciding. Refused under a **declined or void** variation
+  (nothing was bought); allowed under a draft or pending-client one, because
+  organising the work while the client decides is the normal case.
+- `POST /variation-tasks/{serviceSubTask}/approve` — **admin only**. The reply
+  says whether the task is live or still waiting on the variation, so nobody
+  discovers that at the assign step.
+- `POST /variation-tasks/{serviceSubTask}/decline` — admin only, reason
+  required, and refused on a task already staffed.
+
+Admin-only is checked in the controller rather than on the route, so a PM gets
+an explanation instead of a 403. Original scope cannot be approved or declined
+at all — there is no second consent to give.
+
+Declining **keeps the row**, via `declined_by` / `declined_at` /
+`decline_reason` (migration `2026_10_07_000001`). A PM who proposed work and
+found the row silently gone would propose it again, and whether the job needed
+that task is worth keeping. Approving a declined task clears the refusal.
+
+Guards added where work becomes real:
+
+- `assignSubTaskTechnician` and `updateSubTaskCompensation` refuse a task that
+  is not live, quoting `blockedReason()`.
+- `updateSubTaskProgress` refuses it too — checked **before** the closed-job
+  rule, so a technician is told the approval is missing rather than that the job
+  is closed.
+- A **live variation task is exempt from the closed-job rule**: the point of
+  buying work on a finished job is that somebody then does it. Original scope on
+  a closed job is still refused.
+
+Covered by `VariationTaskApprovalTest` — fifteen cases, including the PM who
+cannot approve their own proposal, the staffed task that cannot be declined from
+under its technician, and reporting on a closed job for a live variation task
+but not for original scope.
 
 ### Phase 4 — Funding the work
 

@@ -24,12 +24,16 @@ class ServiceSubTask extends Model
         'compensation_notes',
         'approved_by',
         'approved_at',
+        'declined_by',
+        'declined_at',
+        'decline_reason',
     ];
 
     protected $casts = [
         'assigned_at' => 'datetime',
         'completed_at' => 'datetime',
         'approved_at' => 'datetime',
+        'declined_at' => 'datetime',
         'progress_percentage' => 'integer',
         'order' => 'integer',
         'agreed_compensation' => 'decimal:2',
@@ -108,6 +112,12 @@ class ServiceSubTask extends Model
         return $this->belongsTo(User::class, 'approved_by');
     }
 
+    /** The admin who turned it down, and whose reason is on the record. */
+    public function decliner()
+    {
+        return $this->belongsTo(User::class, 'declined_by');
+    }
+
     /** Part of the quotation the client already agreed to. */
     public function scopeOriginalScope($query)
     {
@@ -128,7 +138,19 @@ class ServiceSubTask extends Model
     /** An admin has let this task onto the job. */
     public function isApproved(): bool
     {
-        return $this->approved_at !== null;
+        return $this->approved_at !== null && $this->declined_at === null;
+    }
+
+    /** Turned down by an admin. Kept on the record rather than removed. */
+    public function isDeclined(): bool
+    {
+        return $this->declined_at !== null;
+    }
+
+    /** Proposed under a variation and not yet answered either way. */
+    public function isAwaitingApproval(): bool
+    {
+        return $this->isVariationTask() && !$this->isApproved() && !$this->isDeclined();
     }
 
     /**
@@ -165,6 +187,11 @@ class ServiceSubTask extends Model
     {
         if ($this->isLive()) {
             return null;
+        }
+
+        if ($this->isDeclined()) {
+            return 'An admin turned this task down'
+                . ($this->decline_reason ? ": {$this->decline_reason}" : '.');
         }
 
         $variation = $this->variationOrder;

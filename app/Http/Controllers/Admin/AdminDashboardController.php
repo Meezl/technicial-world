@@ -5173,6 +5173,15 @@ class AdminDashboardController extends Controller
         $technician = Technician::findOrFail($request->technician_id);
         $serviceRequest = $serviceSubTask->serviceRequest;
 
+        // Work bought by a variation is nobody's to staff until both consents
+        // are in: the variation settled, and an admin having admitted the task
+        // to the job. Original scope passes straight through — the quotation
+        // is its authority.
+        if ($blocked = $serviceSubTask->blockedReason()) {
+            return redirect()->route('admin.jobs.show', $serviceRequest)
+                ->with('error', "This task cannot be staffed yet. {$blocked}");
+        }
+
         // Quote approved, or an admin has authorised assignment in advance.
         // One shared gate rather than an inline check, so the PM path and the
         // sub-task path cannot drift from this one again.
@@ -5254,6 +5263,10 @@ class AdminDashboardController extends Controller
             'agreed_compensation' => 'required|numeric|min:0',
             'compensation_notes' => 'nullable|string|max:1000',
         ]);
+
+        if ($blocked = $serviceSubTask->blockedReason()) {
+            return redirect()->back()->with('error', "This task is not live yet. {$blocked}");
+        }
 
         if (!$serviceSubTask->technician_id) {
             return redirect()->back()->with('error', 'Assign a technician to this sub-task before setting a fee.');
