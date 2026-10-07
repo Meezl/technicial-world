@@ -11,6 +11,7 @@ use App\Jobs\ConvertPhotoToJpeg;
 use App\Support\StoredImage;
 use App\Models\ServiceRequest;
 use App\Models\ServiceSubTask;
+use App\Models\VariationOrder;
 use App\Models\TechnicianPayment;
 use App\Models\User;
 use App\Models\AuditLog;
@@ -1071,9 +1072,40 @@ class ProgressService
         });
     }
 
+    /**
+     * The average across the job's original scope.
+     *
+     * Variation tasks are deliberately excluded. A job delivered at 100% does
+     * not fall back to 67% because the office later bought three more tasks on
+     * a variation — the client verified what they were quoted, that figure is
+     * what was billed against, and milestone billing keys off it. Variation
+     * work has its own percentage; see variationPercent().
+     */
     private function aggregateSubTaskProgress(ServiceRequest $serviceRequest): int
     {
-        return (int) round($serviceRequest->subTasks()->avg('progress_percentage') ?? 0);
+        return (int) round($serviceRequest->subTasks()->originalScope()->avg('progress_percentage') ?? 0);
+    }
+
+    /**
+     * How far along one variation's own work is.
+     *
+     * The variation's half of the separate track: its tasks average among
+     * themselves and never touch the job's headline figure. Only live tasks
+     * count — a task still waiting on an admin or on the client is not work in
+     * progress, and counting it at 0% would make an unapproved variation look
+     * like a stalled one. Null when the variation has no live tasks at all.
+     */
+    public function variationPercent(VariationOrder $variationOrder): ?int
+    {
+        $tasks = $variationOrder->subTasks()->get(['progress_percentage', 'approved_at']);
+
+        $live = $tasks->filter(fn ($task) => $task->approved_at !== null);
+
+        if ($live->isEmpty()) {
+            return null;
+        }
+
+        return (int) round($live->avg('progress_percentage'));
     }
 
     /**

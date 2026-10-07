@@ -11,6 +11,7 @@ class ServiceSubTask extends Model
 
     protected $fillable = [
         'service_request_id',
+        'variation_order_id',
         'title',
         'description',
         'technician_id',
@@ -21,11 +22,14 @@ class ServiceSubTask extends Model
         'order',
         'agreed_compensation',
         'compensation_notes',
+        'approved_by',
+        'approved_at',
     ];
 
     protected $casts = [
         'assigned_at' => 'datetime',
         'completed_at' => 'datetime',
+        'approved_at' => 'datetime',
         'progress_percentage' => 'integer',
         'order' => 'integer',
         'agreed_compensation' => 'decimal:2',
@@ -87,6 +91,93 @@ class ServiceSubTask extends Model
     public function serviceRequest()
     {
         return $this->belongsTo(ServiceRequest::class);
+    }
+
+    /**
+     * The variation that bought this work, if it was not in the original
+     * quotation. Null for original scope, which is most tasks.
+     */
+    public function variationOrder()
+    {
+        return $this->belongsTo(VariationOrder::class);
+    }
+
+    /** The admin who admitted this task to the job. */
+    public function approver()
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    /** Part of the quotation the client already agreed to. */
+    public function scopeOriginalScope($query)
+    {
+        return $query->whereNull('variation_order_id');
+    }
+
+    /** Bought by a variation, whether or not that variation has been settled. */
+    public function scopeUnderVariation($query)
+    {
+        return $query->whereNotNull('variation_order_id');
+    }
+
+    public function isVariationTask(): bool
+    {
+        return $this->variation_order_id !== null;
+    }
+
+    /** An admin has let this task onto the job. */
+    public function isApproved(): bool
+    {
+        return $this->approved_at !== null;
+    }
+
+    /**
+     * May this task be staffed, reported on and paid?
+     *
+     * Two separate consents, and both are needed. The variation answers
+     * whether the work is bought — by the client for a priced variation, by
+     * the office for a zero-income one. The task approval answers whether this
+     * particular piece of work is admitted to the job, and only an admin may
+     * give it.
+     *
+     * They can disagree in both directions: an approved variation whose task
+     * nobody has signed off, and an approved task on a variation the client
+     * then declined. This is the one question anything else should ask, rather
+     * than reading the two stamps and combining them itself.
+     *
+     * Original scope is live as it always was: the quotation is its authority
+     * and there is no second consent to wait for.
+     */
+    public function isLive(): bool
+    {
+        if (!$this->isVariationTask()) {
+            return true;
+        }
+
+        return $this->isApproved() && (bool) $this->variationOrder?->isApproved();
+    }
+
+    /**
+     * Why this task is not live, in words the office can act on. Null when it
+     * is live.
+     */
+    public function blockedReason(): ?string
+    {
+        if ($this->isLive()) {
+            return null;
+        }
+
+        $variation = $this->variationOrder;
+
+        if (!$variation?->isApproved()) {
+            $number = $variation?->vo_number ?? 'the variation';
+
+            return $variation && $variation->isZeroIncome()
+                ? "{$number} has not been approved internally yet."
+                : "{$number} is still waiting on the client's approval.";
+        }
+
+        return 'An admin has not approved this task yet.';
     }
 
     public function technician()

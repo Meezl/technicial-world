@@ -1346,9 +1346,17 @@ class ServiceRequest extends Model
      * has_sub_tasks flag alone has been left set on jobs whose sub-tasks were
      * since deleted.
      */
+    /**
+     * Is the quoted work itself broken into tasks?
+     *
+     * Original scope only. A single-technician job that later gained a
+     * variation task is still a single-technician job — the variation runs on
+     * its own track and must not turn the job's headline figure into an
+     * average, or flip the board into crew presentation.
+     */
     public function isSplitIntoSubTasks(): bool
     {
-        return $this->subTasks()->exists();
+        return $this->subTasks()->originalScope()->exists();
     }
 
     /**
@@ -1524,7 +1532,11 @@ class ServiceRequest extends Model
 
     public function recalculateProgress()
     {
-        if (!$this->subTasks()->exists()) {
+        // Original scope decides this, not variation work. has_sub_tasks is
+        // read by the board to mean "this job is split between technicians",
+        // and a variation task on a single-technician job does not make that
+        // true.
+        if (!$this->subTasks()->originalScope()->exists()) {
             return;
         }
 

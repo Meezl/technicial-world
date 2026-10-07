@@ -5070,8 +5070,9 @@ class AdminDashboardController extends Controller
         $serviceRequest = $serviceSubTask->serviceRequest;
         $serviceSubTask->delete();
 
-        // If no sub-tasks remain, reset the flag
-        if ($serviceRequest->subTasks()->count() === 0) {
+        // If no original-scope sub-tasks remain, reset the flag. Variation
+        // tasks do not keep a job in crew presentation on their own.
+        if ($serviceRequest->subTasks()->originalScope()->count() === 0) {
             $serviceRequest->update(['has_sub_tasks' => false]);
         }
 

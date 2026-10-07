@@ -191,7 +191,7 @@ underpaid, and the figure will rise for them on the next sheet. `old_figure` in
 that query is roughly what the previous code would have returned, so the
 difference is the arrears.
 
-### Phase 2 — The task knows its variation
+### Phase 2 — The task knows its variation — **DONE**
 
 Migration on `service_sub_tasks`:
 
@@ -213,6 +213,30 @@ A task is live, and therefore staffable and reportable, only when **both** hold:
 
 Original-scope tasks keep today's behaviour exactly: no variation, no approval
 step.
+
+**Built.** `variation_order_id`, `approved_by` and `approved_at` on
+`service_sub_tasks`; `variationOrder()`, `approver()`, `originalScope()`,
+`underVariation()`, `isVariationTask()`, `isApproved()`, `isLive()` and
+`blockedReason()` on `ServiceSubTask`; `subTasks()` on `VariationOrder`.
+
+The separate track went in with it, because without it the first variation task
+would have corrupted the job's percentage:
+
+- `aggregateSubTaskProgress()` averages **original scope only**.
+- `isSplitIntoSubTasks()` and `recalculateProgress()` read original scope, so a
+  variation task cannot flip a single-technician job into crew presentation on
+  the board.
+- `ProgressService::variationPercent()` gives a variation its own figure,
+  counting only admitted tasks — a task still waiting on an admin is not work in
+  progress at 0%.
+
+`blockedReason()` names which consent is missing, and distinguishes a
+zero-income variation (waiting on the office) from a priced one (waiting on the
+client), so the endpoints in Phase 3 have something to say.
+
+Covered by `VariationTaskModelTest` — nine cases including both consents in
+either order, the 100% job that stays at 100%, and the single-technician job
+that stays single.
 
 ### Phase 3 — Proposing and approving the task
 

@@ -69,6 +69,16 @@ class VariationOrder extends Model
         return $this->belongsTo(ServiceRequest::class);
     }
 
+    /**
+     * The work this variation bought. Distinct from items(), which are its
+     * money lines — a variation can raise the contract by 80,000 in labour and
+     * express that as one task or three.
+     */
+    public function subTasks(): HasMany
+    {
+        return $this->hasMany(ServiceSubTask::class);
+    }
+
     public function items(): HasMany
     {
         return $this->hasMany(VariationOrderItem::class)->orderBy('sort_order');
