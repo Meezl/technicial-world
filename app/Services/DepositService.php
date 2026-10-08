@@ -151,22 +151,52 @@ class DepositService
      * would double-count it against everything still to be approved.
      *
      * Called by Phase 4 when a closed job enters the invoice in-tray.
+     *
+     * Spent once per job by default, which is what stops a job closed twice
+     * from being charged against the float twice. A supplementary invoice —
+     * work bought on a job that had already closed — is genuinely more money
+     * owed, so it passes its own reference and is told apart by it. Without
+     * that the float would report more available than the client has left,
+     * and dispatch decisions key off that figure.
+     *
+     * Deliberately narrow: an entry written before references were used is
+     * matched by the default path, so nothing already on the ledger can be
+     * spent a second time.
      */
-    public function consume(ServiceRequest $request, float $amount, ?User $user = null): ?DepositLedgerEntry
-    {
+    public function consume(
+        ServiceRequest $request,
+        float $amount,
+        ?User $user = null,
+        ?string $supplementaryReference = null
+    ): ?DepositLedgerEntry {
         $account = $this->accountFor($request);
 
-        if (!$account || $amount <= 0 || $this->hasEntryFor($request, DepositLedgerEntry::TYPE_CONSUMPTION)) {
+        if (!$account || $amount <= 0) {
             return null;
         }
 
-        return DB::transaction(function () use ($account, $request, $amount, $user) {
+        $alreadySpent = $this->hasEntryFor($request, DepositLedgerEntry::TYPE_CONSUMPTION);
+
+        if ($alreadySpent && !$supplementaryReference) {
+            return null;
+        }
+
+        if ($supplementaryReference && DepositLedgerEntry::where('service_request_id', $request->id)
+            ->where('entry_type', DepositLedgerEntry::TYPE_CONSUMPTION)
+            ->where('reference', $supplementaryReference)
+            ->exists()) {
+            return null;
+        }
+
+        return DB::transaction(function () use ($account, $request, $amount, $user, $supplementaryReference, $alreadySpent) {
             $this->releaseCommitment($request, $user, 'Superseded by closure');
 
             return $this->append($account, DepositLedgerEntry::TYPE_CONSUMPTION, -$amount, [
                 'service_request_id' => $request->id,
-                'reference' => $request->quote_reference,
-                'note' => 'Job closed and moved to the invoice in-tray',
+                'reference' => $supplementaryReference ?: $request->quote_reference,
+                'note' => $alreadySpent
+                    ? 'Further work bought on a closed job, invoiced separately'
+                    : 'Job closed and moved to the invoice in-tray',
                 'recorded_by' => $user?->id,
             ]);
         });

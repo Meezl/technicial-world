@@ -9,6 +9,7 @@ use App\Models\ServiceRequest;
 use App\Models\User;
 use App\Models\VariationOrder;
 use App\Models\VariationOrderItem;
+use App\Services\InvoicingService;
 use App\Services\JobService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -433,6 +434,27 @@ class VariationOrderService
         // has to go back to being a job. Only fires where there are live tasks
         // to do — a variation that moves money alone leaves it closed.
         app(JobService::class)->reopenForVariationWork($sr->fresh(), $vo->fresh(), $actor);
+
+        // A variation approved on a job that stays closed has no later closure
+        // to be invoiced at, so it is invoiced here. On a corporate account
+        // that means a supplementary invoice for this variation alone; the one
+        // raised at closure is left as the client received it.
+        //
+        // Skipped where the job just reopened: that work will be invoiced when
+        // the job closes again, with everything else outstanding.
+        if ($sr->fresh()->status === ServiceRequest::STATUS_CLOSED) {
+            try {
+                app(InvoicingService::class)->raiseHeldInvoice($sr->fresh(), $actor);
+            } catch (\Throwable $e) {
+                // Worth an alert, not worth unwinding an approval the client
+                // has already given — the same reasoning as closure itself.
+                Log::error('Supplementary invoice could not be raised for a variation', [
+                    'variation_order_id' => $vo->id,
+                    'service_request_id' => $sr->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
 
         return $vo->fresh();
     }

@@ -374,10 +374,49 @@ Three things the screen taught that the plan had not:
   it is the variation holding it up, not a missing sign-off, and the old wording
   sent the reader to the wrong decision. Now "Waiting on this variation".
 
-### Phase 7 — Corporate invoicing after closure
+### Phase 7 — Corporate invoicing after closure — **DONE**
 
-Decide and implement: a second invoice for the variation, or void-and-reissue.
-Only reachable once §2.2 is settled in favour of allowing it.
+**Chosen: a second invoice, not void-and-reissue.** Voiding would rewrite an
+invoice the client may already have paid, filed in their own accounts or had
+certified for withholding. The un-invoiced part goes out as its own invoice
+instead, carrying only the lines it covers.
+
+`raiseHeldInvoice()` no longer returns early whenever an invoice exists. It asks
+what has not been billed and raises an invoice for that:
+
+- `whatIsNotYetInvoiced()` decides from the **lines already written**, not by
+  comparing totals. A line carries the variation it bills, so "has VO-02 been
+  invoiced" has an exact answer where arithmetic on totals would guess.
+- The quotation line goes on the first invoice only.
+- Nothing outstanding means the existing invoice is returned, as before — so a
+  job closed twice still bills once.
+
+Two further decisions:
+
+- **A post-closure deduction raises no invoice.** A negative invoice is not a
+  document we issue; descoping work already paid for leaves the client in
+  credit, which `RefundService::jobsInUnhandledCredit()` surfaces and a refund
+  settles. Consistent with how `approve()` already treats a descope.
+- **A supplementary invoice spends its own float.** `DepositService::consume()`
+  was one-per-job, which is what stops a job closed twice from being charged
+  twice. A supplementary invoice is genuinely more money owed, so it passes its
+  invoice number as a reference and is told apart by it — the float drives
+  dispatch decisions, and leaving it out would report more of the client's money
+  available than they have left. Deliberately narrow: an entry written before
+  references were used is still matched by the default path, so nothing already
+  on the ledger can be spent a second time.
+
+Where the invoice is raised depends on what the variation bought. One that only
+moves money leaves the job closed and is invoiced at approval. One that buys
+work reopens the job (Phase 5) and is invoiced when the job closes again, with
+everything else outstanding. Failure to raise is logged, not thrown — the same
+reasoning as closure itself, where an invoice problem must not unwind a decision
+the client has already given.
+
+Covered by `PostClosureVariationInvoiceTest` — ten cases, including the two
+invoices summing to the contract value, re-closing raising nothing, the float
+spent once per invoice, the deduction that raises nothing, and retail jobs
+raising no invoice at all.
 
 ---
 
@@ -407,3 +446,22 @@ pays them for it alongside their original task.
 
 Everything lands on `feat/corporate-segment-foundations` for testing before
 main.
+
+---
+
+## 8. All seven phases are built
+
+What is not done, and known:
+
+- **Approving an internal variation goes through a `confirm()` dialog**, which
+  could not be clicked in the test browser. Verified through the service
+  instead; it is the one path never exercised by a real click.
+- **No technician-app view of a variation task.** A technician sees it in their
+  sub-task list like any other work, which is correct, but nothing tells them it
+  was added later or which variation bought it.
+- **The client sees variation work only as the variation they approved.** There
+  is no per-task progress on their portal, by the separate-track decision — the
+  job's percentage is still the quoted work.
+- **`multi_slot_audit.sql` has not been run against production.** It lists the
+  technicians underpaid by the Phase 1 bug, whose next sheet will be larger by
+  the arrears.

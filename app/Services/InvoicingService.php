@@ -97,10 +97,23 @@ class InvoicingService
     /**
      * Raise the invoice for a job that has just closed, and spend the float.
      *
-     * Idempotent: a job already invoiced returns its existing invoice rather
-     * than a second one. Closure can be reached more than once — a reopened
-     * job closed again, a double-submitted verification — and billing a client
-     * twice for the same work is not a mistake you get to explain away.
+     * Bills only what has not been billed yet, which is what makes it safe to
+     * call more than once. Closure can be reached repeatedly — a double-
+     * submitted verification, a job reopened and closed again — and billing a
+     * client twice for the same work is not a mistake you get to explain away.
+     *
+     * The second call matters now that work can be bought after closure. A
+     * variation approved on a finished job raises the contract immediately, but
+     * the invoice was already written and returning it unchanged meant that
+     * money was never billed to anybody: the figure rose on the job and
+     * stopped there. Rather than voiding an invoice the client may already have
+     * paid or filed, the un-invoiced part goes out as its own invoice —
+     * supplementary, with only the lines it covers.
+     *
+     * A post-closure deduction raises nothing. A negative invoice is not a
+     * thing we issue; descoping work already paid for leaves the client in
+     * credit, which RefundService::jobsInUnhandledCredit surfaces and a refund
+     * settles.
      */
     public function raiseHeldInvoice(ServiceRequest $request, ?User $user = null): ?Invoice
     {
@@ -110,20 +123,25 @@ class InvoicingService
 
         $existing = Invoice::where('service_request_id', $request->id)
             ->where('status', '!=', Invoice::STATUS_VOID)
-            ->first();
+            ->orderBy('id')
+            ->get();
 
-        if ($existing) {
-            return $existing;
-        }
+        [$quoteToBill, $variationsToBill] = $this->whatIsNotYetInvoiced($request, $existing);
 
         $organisation = $request->organisation;
-        $gross = $this->billableTotal($request);
+        $gross = round($quoteToBill + $variationsToBill->sum(fn ($vo) => (float) $vo->net_amount), 2);
 
         if ($gross <= 0) {
-            return null;
+            // Nothing new. Return the invoice that already covers this job, so
+            // callers that expect one still get it.
+            return $existing->first();
         }
 
-        return DB::transaction(function () use ($request, $organisation, $gross, $user) {
+        $isSupplementary = $existing->isNotEmpty();
+
+        return DB::transaction(function () use (
+            $request, $organisation, $gross, $user, $quoteToBill, $variationsToBill, $isSupplementary
+        ) {
             $approval = $request->corporateApprovals()
                 ->where('status', 'approved')
                 ->where('stage', 'approve')
@@ -150,17 +168,28 @@ class InvoicingService
                 ]
             ));
 
-            $this->buildLines($invoice, $request);
+            $this->buildLines($invoice, $request, $quoteToBill > 0, $variationsToBill);
 
             // The float is spent at closure, which is what the brief
             // describes. The commitment taken at approval is released in the
-            // same breath — see DepositService::consume.
-            $this->deposits->consume($request, $gross, $user);
+            // same breath — see DepositService::consume. A supplementary
+            // invoice spends only its own figure: the first invoice already
+            // spent the float for the work it covered.
+            $this->deposits->consume(
+                $request,
+                $gross,
+                $user,
+                // Its own reference, so a supplementary invoice spends its own
+                // figure while a job closed twice still cannot spend twice.
+                $isSupplementary ? $invoice->invoice_number : null
+            );
 
             AuditLog::log('invoice.raised', $invoice, null, [
                 'request' => $request->request_id,
                 'gross' => $gross,
                 'held' => true,
+                'supplementary' => $isSupplementary,
+                'variations' => $variationsToBill->pluck('vo_number')->all(),
             ]);
 
             return $invoice->fresh('lines');
@@ -190,20 +219,57 @@ class InvoicingService
      * them and who approved them. A single total would hide the figures the
      * client most wants to check.
      */
-    private function buildLines(Invoice $invoice, ServiceRequest $request): void
+    /**
+     * What this job still owes an invoice.
+     *
+     * Decided from the lines already written rather than by comparing totals:
+     * a line carries the variation it bills, so "has VO-02 been invoiced" has
+     * an exact answer, where arithmetic on totals would guess. Returns the
+     * quotation amount still to bill (zero once some invoice carries it) and
+     * the approved variations no live invoice line mentions.
+     *
+     * @return array{0: float, 1: \Illuminate\Support\Collection}
+     */
+    private function whatIsNotYetInvoiced(ServiceRequest $request, $existingInvoices): array
     {
-        $invoice->lines()->create([
-            'kind' => InvoiceLine::KIND_QUOTATION,
-            'reference' => $request->quote_reference,
-            'description' => Str::limit($request->description ?: 'Works as quoted', 200),
-            'requested_by' => $request->raisedByMember?->name_on_documents,
-            'approved_by' => $invoice->approver_name,
-            'amount_ex_vat' => (float) ($request->approved_quote_amount ?? $request->quote_amount ?? 0),
-            'sort_order' => 0,
-        ]);
+        $lines = InvoiceLine::whereIn('invoice_id', $existingInvoices->pluck('id'))->get();
+
+        $quoteBilled = $lines->contains(fn ($line) => $line->kind === InvoiceLine::KIND_QUOTATION);
+        $billedVariationIds = $lines->pluck('variation_order_id')->filter()->all();
+
+        $quoteToBill = $quoteBilled
+            ? 0.0
+            : (float) ($request->approved_quote_amount ?? $request->quote_amount ?? 0);
+
+        $variationsToBill = $request->variationOrders()
+            ->whereIn('status', VariationOrder::COUNTS_TOWARD_CONTRACT)
+            ->whereNotIn('id', $billedVariationIds)
+            ->orderBy('id')
+            ->get();
+
+        return [$quoteToBill, $variationsToBill];
+    }
+
+    private function buildLines(
+        Invoice $invoice,
+        ServiceRequest $request,
+        bool $includeQuotation,
+        $variations
+    ): void {
+        if ($includeQuotation) {
+            $invoice->lines()->create([
+                'kind' => InvoiceLine::KIND_QUOTATION,
+                'reference' => $request->quote_reference,
+                'description' => Str::limit($request->description ?: 'Works as quoted', 200),
+                'requested_by' => $request->raisedByMember?->name_on_documents,
+                'approved_by' => $invoice->approver_name,
+                'amount_ex_vat' => (float) ($request->approved_quote_amount ?? $request->quote_amount ?? 0),
+                'sort_order' => 0,
+            ]);
+        }
 
         $order = 1;
-        foreach ($request->variationOrders()->whereIn('status', VariationOrder::COUNTS_TOWARD_CONTRACT)->get() as $vo) {
+        foreach ($variations as $vo) {
             $invoice->lines()->create([
                 'kind' => InvoiceLine::KIND_VARIATION,
                 'variation_order_id' => $vo->id,
