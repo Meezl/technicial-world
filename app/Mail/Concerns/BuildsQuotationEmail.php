@@ -11,8 +11,8 @@ use Illuminate\Support\Facades\Storage;
 /**
  * Shared building blocks for the quotation emails, so a first quotation and a
  * revision carry exactly the same content and attachments — the generated
- * quotation PDF, every file the office attached when quoting, and the files the
- * client sent with the original request — and both BCC the office inbox.
+ * quotation PDF, the office's documents for the current revision, and the files
+ * the client sent with the original request — and both BCC the office inbox.
  *
  * Expects a public `$serviceRequest` property on the mailable.
  */
@@ -33,9 +33,10 @@ trait BuildsQuotationEmail
     }
 
     /**
-     * The quotation PDF, every admin-attached materials file, and the client's
-     * own RFQ files. Each attachment is best-effort — a single missing file is
-     * logged and skipped rather than failing the whole send.
+     * The quotation PDF, the admin-attached materials files for the current
+     * revision, and the client's own RFQ files. Each attachment is best-effort
+     * — a single missing file is logged and skipped rather than failing the
+     * whole send.
      *
      * @return array<int, \Illuminate\Mail\Mailables\Attachment>
      */
@@ -73,13 +74,20 @@ trait BuildsQuotationEmail
             ]);
         }
 
-        // 2. Every file the office attached when quoting — the multi-file array
-        //    plus the legacy single path, de-duplicated. Previously only the
-        //    single legacy file went out, so extra documents were dropped.
-        $materialsPaths = array_values(array_unique(array_filter(array_merge(
-            (array) ($sr->quote_materials_file_paths ?? []),
-            [$sr->quote_materials_file_path],
-        ))));
+        // 2. The office-attached documents for the quotation as it now stands —
+        //    the most recent batch only, not the whole history.
+        //
+        //    Revisions deliberately keep every earlier upload on the record, and
+        //    the revision email used to attach all of them. A client on the
+        //    third revision therefore received three versions of the same
+        //    breakdown in one message with nothing marking which one to price
+        //    against. The superseded files stay in the system and on both
+        //    portals, badged as superseded; they just stop being emailed.
+        //
+        //    See ServiceRequest::currentQuotationAttachmentPaths() for how the
+        //    current batch is determined, including the fallback for rows
+        //    quoted before attachment revisions were recorded.
+        $materialsPaths = $sr->currentQuotationAttachmentPaths();
 
         $disk = Storage::disk('public');
         foreach ($materialsPaths as $index => $path) {

@@ -3308,11 +3308,18 @@ class AdminDashboardController extends Controller
 
         $serviceRequest = ServiceRequest::findOrFail($request->service_request_id);
 
+        // Stored names were keyed on time() alone, so a revision submitted in
+        // the same second as the previous one wrote to the same filename and
+        // overwrote the document it was supposed to be superseding — the
+        // history the revision trail depends on. A random suffix makes every
+        // upload its own file.
+        $uniqueSuffix = fn () => time() . '_' . \Illuminate\Support\Str::random(8);
+
         // Legacy single-file path (backward compat with older clients).
         $filePath = null;
         if ($request->hasFile('materials_file')) {
             $file = $request->file('materials_file');
-            $fileName = 'quote_materials_' . $serviceRequest->request_id . '_' . time() . '.' . $file->getClientOriginalExtension();
+            $fileName = 'quote_materials_' . $serviceRequest->request_id . '_' . $uniqueSuffix() . '.' . $file->getClientOriginalExtension();
             $filePath = $file->storeAs('quotes', $fileName, 'public');
         }
 
@@ -3323,7 +3330,7 @@ class AdminDashboardController extends Controller
             foreach ($request->file('materials_files') as $idx => $upload) {
                 if (!$upload) continue;
                 $ext = $upload->getClientOriginalExtension();
-                $filename = 'quote_materials_' . $serviceRequest->request_id . '_' . time() . '_' . $idx . '.' . $ext;
+                $filename = 'quote_materials_' . $serviceRequest->request_id . '_' . $uniqueSuffix() . '_' . $idx . '.' . $ext;
                 $newFilePaths[] = $upload->storeAs('quotes', $filename, 'public');
             }
         }
@@ -3389,6 +3396,30 @@ class AdminDashboardController extends Controller
                 ->all();
         }
 
+        // Stamp the documents uploaded by THIS submission with the revision
+        // they belong to. Earlier batches keep the number they were stamped
+        // with, so the history stays readable and the quotation email can
+        // attach the current batch alone instead of every version at once —
+        // which is what left clients holding three breakdowns for one job.
+        //
+        // The map is keyed by stored path, so it survives the array being
+        // appended to and never needs to stay index-aligned.
+        $attachmentRevision = $isRevision
+            ? (int) ($serviceRequest->quote_revision_count ?? 0) + 1
+            : (int) ($serviceRequest->quote_revision_count ?? 0);
+
+        $fileRevisions = (array) ($serviceRequest->quote_materials_file_revisions ?? []);
+        foreach (array_filter(array_merge($newFilePaths, [$filePath])) as $uploadedPath) {
+            $fileRevisions[$uploadedPath] = $attachmentRevision;
+        }
+
+        // Drop entries for files no longer on the request so the map cannot
+        // drift into holding paths nothing references.
+        $knownPaths = array_filter(array_merge($mergedFilePaths, [
+            $filePath ?? $serviceRequest->quote_materials_file_path,
+        ]));
+        $fileRevisions = array_intersect_key($fileRevisions, array_flip($knownPaths));
+
         $updateData = [
             'rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED,
             'quote_amount' => $totalAmount,
@@ -3402,6 +3433,7 @@ class AdminDashboardController extends Controller
             'quote_notes' => $request->notes,
             'quote_materials_file_path' => $filePath ?? $serviceRequest->quote_materials_file_path,
             'quote_materials_file_paths' => !empty($mergedFilePaths) ? $mergedFilePaths : null,
+            'quote_materials_file_revisions' => !empty($fileRevisions) ? $fileRevisions : null,
         ];
 
         if ($isRevision) {

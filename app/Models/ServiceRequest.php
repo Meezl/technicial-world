@@ -62,6 +62,7 @@ class ServiceRequest extends Model
         'office_reminder_count',
         'quote_materials_file_path',
         'quote_materials_file_paths',
+        'quote_materials_file_revisions',
         'rejection_reason',
         'quoted_amount',
         'final_amount',
@@ -97,7 +98,7 @@ class ServiceRequest extends Model
     // written through BillingService::replaceUnbilledMilestones() so a paid
     // milestone can never be overwritten by a mass-assign.
 
-    protected $appends = ['priority_window_ends_at', 'action_reasons', 'billing_milestones'];
+    protected $appends = ['priority_window_ends_at', 'action_reasons', 'billing_milestones', 'quotation_attachments'];
 
     // `billing_milestones` is appended to every serialised service request, so
     // the schedule is always eager-loaded. Without this, list pages fire one
@@ -108,6 +109,7 @@ class ServiceRequest extends Model
         'files' => 'array',
         'quote_materials' => 'array',
         'quote_materials_file_paths' => 'array',
+        'quote_materials_file_revisions' => 'array',
         'quoted_amount' => 'decimal:2',
         'final_amount' => 'decimal:2',
         'revenue_generated' => 'decimal:2',
@@ -1677,5 +1679,115 @@ class ServiceRequest extends Model
         $project->logActivity(ProjectActivity::TYPE_PROJECT_CREATED, "Project created from Service Request {$this->request_id}");
 
         return $project;
+    }
+
+    // ==================== QUOTATION ATTACHMENTS ====================
+
+    /**
+     * Every file the office has ever attached to this quotation, oldest first,
+     * with the legacy single-path column folded in and duplicates removed.
+     *
+     * Revisions append rather than replace — the history of what was sent to
+     * the client is deliberately kept — so this list grows across revisions.
+     *
+     * @return array<int, string>
+     */
+    public function allQuotationAttachmentPaths(): array
+    {
+        $paths = array_merge(
+            (array) ($this->quote_materials_file_paths ?? []),
+            [$this->quote_materials_file_path],
+        );
+
+        return array_values(array_unique(array_filter(
+            $paths,
+            fn ($path) => is_string($path) && $path !== '',
+        )));
+    }
+
+    /**
+     * The attachments belonging to the most recent batch the office uploaded —
+     * the documents that actually describe the quotation as it now stands.
+     *
+     * This is what goes out with a quotation email. Attaching the whole history
+     * instead, as the revision email used to, left the client holding three
+     * versions of the same breakdown with nothing saying which to price against.
+     *
+     * A revision that uploads no new document carries the previous batch
+     * forward, because that batch is still the current description of the work.
+     *
+     * Rows quoted before attachment revisions were recorded carry no map at
+     * all; those are treated as one current batch, which is how they have
+     * always behaved.
+     *
+     * @return array<int, string>
+     */
+    public function currentQuotationAttachmentPaths(): array
+    {
+        $paths = $this->allQuotationAttachmentPaths();
+        $map = (array) ($this->quote_materials_file_revisions ?? []);
+
+        $known = array_filter(
+            $map,
+            fn ($revision, $path) => in_array($path, $paths, true) && is_numeric($revision),
+            ARRAY_FILTER_USE_BOTH,
+        );
+
+        if ($known === []) {
+            return $paths;
+        }
+
+        $latest = max(array_map('intval', $known));
+
+        return array_values(array_filter(
+            $paths,
+            fn ($path) => isset($known[$path]) && (int) $known[$path] === $latest,
+        ));
+    }
+
+    /**
+     * The full attachment history, classified for display: which files belong
+     * to the quotation as it stands and which were superseded by a later
+     * revision. Both portals read this rather than deciding for themselves, so
+     * admin, client and the email all agree on what "latest" means.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getQuotationAttachmentsAttribute(): array
+    {
+        $paths = $this->allQuotationAttachmentPaths();
+
+        if ($paths === []) {
+            return [];
+        }
+
+        $map = (array) ($this->quote_materials_file_revisions ?? []);
+        $current = $this->currentQuotationAttachmentPaths();
+        $currentCount = count($current);
+        $position = 0;
+
+        return array_map(function (string $path) use ($map, $current, $currentCount, &$position) {
+            $isCurrent = in_array($path, $current, true);
+            $revision = isset($map[$path]) && is_numeric($map[$path]) ? (int) $map[$path] : null;
+            $extension = strtoupper((string) pathinfo($path, PATHINFO_EXTENSION));
+
+            if ($isCurrent) {
+                $position++;
+            }
+
+            return [
+                'path' => $path,
+                'url' => '/storage/' . ltrim($path, '/'),
+                'name' => basename($path),
+                'ext' => $extension,
+                'revision' => $revision,
+                'is_current' => $isCurrent,
+                'label' => $isCurrent && $currentCount > 1
+                    ? "Attachment {$position}"
+                    : ($isCurrent
+                        ? 'Detailed materials / quotation document'
+                        : basename($path)),
+            ];
+        }, $paths);
     }
 }
