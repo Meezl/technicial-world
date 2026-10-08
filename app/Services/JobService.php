@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\ServiceRequest;
+use App\Models\VariationOrder;
 use App\Models\JobStateLog;
 use App\Models\AuditLog;
 use App\Models\User;
@@ -67,6 +68,70 @@ class JobService
         }
 
         return $serviceRequest->fresh();
+    }
+
+    /**
+     * Put a finished job back to work because a variation bought more of it.
+     *
+     * The office may raise a variation on a job that has already been
+     * delivered — the case that built the variation ledger was work done after
+     * closure that the client still owed for. Where that variation only moves
+     * money, the job stays closed and nothing here fires. Where it buys actual
+     * work, somebody has to be able to do it, and a job reading "Closed" with
+     * live tasks on it is a job nobody will look at.
+     *
+     * Deliberate and logged, through transitionState, so it appears in the
+     * job's state history with the variation that caused it. That matters
+     * because an undeclared reopen already existed: a recompute would flip a
+     * completed job back to in_progress on its own. See
+     * ProgressService::updateServiceRequestProgress.
+     *
+     * The client needs no separate notice. A priced variation is approved by
+     * the client themselves in their portal, so they already know; a
+     * zero-income one never reaches them by design.
+     *
+     * Cancelled and archived jobs are left alone. Cancelled means the work
+     * never happened, and reviving it through a variation would be the wrong
+     * instrument — that is a new request.
+     */
+    public function reopenForVariationWork(
+        ServiceRequest $serviceRequest,
+        VariationOrder $variationOrder,
+        ?User $actor = null
+    ): ?ServiceRequest {
+        $reopenable = [
+            ServiceRequest::STATUS_COMPLETED,
+            ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION,
+            ServiceRequest::STATUS_CLOSED,
+        ];
+
+        if (!in_array($serviceRequest->status, $reopenable, true)) {
+            return null;
+        }
+
+        // Only live work reopens a job. A task still waiting on an admin, or
+        // on the client agreeing the variation, is not work anybody can start.
+        $live = $variationOrder->subTasks()
+            ->whereNotNull('approved_at')
+            ->whereNull('declined_at')
+            ->where('progress_percentage', '<', 100)
+            ->exists();
+
+        if (!$live || !$variationOrder->isApproved()) {
+            return null;
+        }
+
+        return $this->transitionState(
+            $serviceRequest,
+            ServiceRequest::STATUS_IN_PROGRESS,
+            "Reopened for work bought by {$variationOrder->vo_number}.",
+            [
+                'reopened_for_variation' => $variationOrder->vo_number,
+                'variation_order_id' => $variationOrder->id,
+                'previous_status' => $serviceRequest->status,
+                'reopened_by' => $actor?->id,
+            ]
+        );
     }
 
     /**

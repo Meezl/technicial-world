@@ -306,15 +306,42 @@ Covered by `VariationBudgetTest` — nine cases, including the end-to-end one:
 labour fully committed to the quoted work, a variation approved, its task
 admitted, and the technician then assignable within the raised budget.
 
-### Phase 5 — Letting the work be done on a finished job
+### Phase 5 — Letting the work be done on a finished job — **DONE**
 
-- An explicit, audited reopen when a variation with live tasks is approved on a
-  terminal job: status to `in_progress`, a note on the job, the client told if
-  the variation is client-visible.
-- Tighten the accidental reopen in `updateServiceRequestProgress()` so status
-  only ever changes deliberately.
-- `updateSubTaskProgress()` permits progress on a live variation task even where
-  the job is otherwise finished.
+`JobService::reopenForVariationWork()`, through `transitionState()` so the
+reopen lands in the job's state history and the audit log with the variation
+that caused it. Called from **both** moments a task can become live — the
+variation being approved, and the task being admitted — since either can be the
+last consent.
+
+Decisions made in the building:
+
+- **Only live, unfinished work reopens a job.** A variation that moves money
+  alone leaves it closed, which is the original polished-concrete case: the work
+  was already done and the client simply owed for it.
+- **Cancelled and archived jobs are left alone.** Cancelled means the work never
+  happened; reviving it through a variation is the wrong instrument.
+- **No new client notification.** A priced variation is approved by the client
+  themselves in their portal, so they already know the job is going back to
+  work; a zero-income one never reaches them by design.
+- **Unfinished variation work holds the job open.** A reopened job still carries
+  the lead's old 100% whole-job report, so without this the next recompute would
+  declare it finished again while the new work was still being done — the reopen
+  and the rollup fighting each other. Once the variation work reaches 100% the
+  job returns to `completed_pending_confirmation` for the office, which is the
+  right destination.
+- **The reopen that already existed now says so.** A recompute with no whole-job
+  sign-off behind it still flips a completed job back to `in_progress` — the
+  alternative is a job claiming to be finished on arithmetic that no longer
+  supports it — but it writes an audit entry explaining itself instead of
+  happening silently.
+
+`updateSubTaskProgress()` already exempted live variation tasks from the
+closed-job rule in Phase 3.
+
+Covered by `VariationReopenTest` — eight cases, including both approval orders,
+the money-only variation that changes nothing, the cancelled job that stays
+cancelled, and the recompute that must not re-close a job with work outstanding.
 
 ### Phase 6 — Seeing it
 

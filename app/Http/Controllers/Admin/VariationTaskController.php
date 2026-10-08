@@ -109,7 +109,24 @@ class VariationTaskController extends Controller
             'note' => $data['note'] ?? null,
         ]);
 
-        $blocked = $serviceSubTask->fresh()->blockedReason();
+        $task = $serviceSubTask->fresh();
+
+        // The other moment a task becomes live: the variation was already
+        // settled and this approval is the last consent. If the job had
+        // finished, it goes back to work.
+        $reopened = app(\App\Services\JobService::class)->reopenForVariationWork(
+            $task->serviceRequest,
+            $task->variationOrder,
+            $request->user(),
+        );
+
+        $blocked = $task->blockedReason();
+
+        if ($reopened) {
+            return back()->with('success',
+                'Task approved. ' . $task->serviceRequest->request_id
+                . ' was finished, so it has been put back to in progress for this work.');
+        }
 
         return back()->with('success', $blocked
             // Approved, but the variation itself is not settled — say so now

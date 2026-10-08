@@ -668,11 +668,17 @@ class ProgressService
             // The office gives final approval — see JobService for the three
             // stages — so this lands on pending confirmation rather than
             // reaching a terminal status on its own.
+            //
+            // Unfinished variation work holds it open. A job reopened because
+            // a variation bought more of it still carries the lead's old 100%
+            // whole-job report, and without this the next recompute would
+            // declare it finished again while the new work was still being
+            // done — the reopen and the rollup fighting each other.
             if (!in_array($serviceRequest->status, [
                 ServiceRequest::STATUS_COMPLETED,
                 ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION,
                 ServiceRequest::STATUS_CLOSED,
-            ], true)) {
+            ], true) && !$this->hasUnfinishedVariationWork($serviceRequest)) {
                 $updateData['status'] = ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION;
             }
         } elseif (in_array($serviceRequest->status, [
@@ -682,7 +688,21 @@ class ProgressService
             // Previously closed on the old arithmetic, but nothing signs off
             // for it now — a job showing "Completed" at 20% is worse than one
             // showing the truth.
+            //
+            // This is a reopen, and it used to happen silently: no state log,
+            // no audit entry, nothing to tell the office why a delivered job
+            // was back in progress. Recorded now. It is still automatic,
+            // because the alternative is leaving a job claiming to be finished
+            // on arithmetic that no longer supports it.
             $updateData['status'] = ServiceRequest::STATUS_IN_PROGRESS;
+
+            AuditLog::log(AuditLog::ACTION_STATE_CHANGED, $serviceRequest, [
+                'status' => $serviceRequest->status,
+            ], [
+                'status' => ServiceRequest::STATUS_IN_PROGRESS,
+                'reason' => 'Recomputed progress no longer carries a whole-job sign-off.',
+                'progress_percentage' => $effectivePercent,
+            ]);
         }
 
         $serviceRequest->update($updateData);
@@ -714,6 +734,23 @@ class ProgressService
      * a split job cannot submit one — so a validated 100% here is the lead's
      * sign-off, or an admin's on their behalf.
      */
+    /**
+     * Live variation work still to do.
+     *
+     * Only admitted tasks count: a task waiting on an admin, or on the client
+     * agreeing the variation, is not work in progress and must not hold a job
+     * open on its own.
+     */
+    private function hasUnfinishedVariationWork(ServiceRequest $serviceRequest): bool
+    {
+        return $serviceRequest->subTasks()
+            ->underVariation()
+            ->whereNotNull('approved_at')
+            ->whereNull('declined_at')
+            ->where('progress_percentage', '<', 100)
+            ->exists();
+    }
+
     private function hasLeadSignOff(ServiceRequest $serviceRequest): bool
     {
         return $serviceRequest->progressReports()

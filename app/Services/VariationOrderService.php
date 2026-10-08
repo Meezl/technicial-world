@@ -9,6 +9,7 @@ use App\Models\ServiceRequest;
 use App\Models\User;
 use App\Models\VariationOrder;
 use App\Models\VariationOrderItem;
+use App\Services\JobService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -427,6 +428,11 @@ class VariationOrderService
         // done, the client owed 7,500, and nothing should wait on a
         // milestone that will never come round again.
         $billing->raiseDueMilestones($sr->fresh(), (float) $sr->progress_percentage);
+
+        // If this variation bought work on a job that had finished, the job
+        // has to go back to being a job. Only fires where there are live tasks
+        // to do — a variation that moves money alone leaves it closed.
+        app(JobService::class)->reopenForVariationWork($sr->fresh(), $vo->fresh(), $actor);
 
         return $vo->fresh();
     }
