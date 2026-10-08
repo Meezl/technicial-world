@@ -343,15 +343,36 @@ Covered by `VariationReopenTest` — eight cases, including both approval orders
 the money-only variation that changes nothing, the cancelled job that stays
 cancelled, and the recompute that must not re-close a job with work outstanding.
 
-### Phase 6 — Seeing it
+### Phase 6 — Seeing it — **DONE**
 
-- **Job page:** one sub-task list, grouped "Original scope" and then per
-  variation with its VO number, each variation group showing its status and
-  whether the tasks are approved. Proposed tasks are visibly not live.
-- **Job board:** split the count — "4 sub-tasks · 2 under VO-02" — so a
-  variation task is never mistaken for original scope.
-- **Variations panel:** each variation lists the tasks it bought and their
-  progress.
+- **Job page:** one list, grouped by what authorised the work — "Original
+  scope", then "Added by REQ-x/VO-01" with the variation's reason, its status,
+  its charge (or "Internal — no client charge"), and its own percentage. A task
+  that is not live is drawn dashed and carries a panel saying what it waits on,
+  with the admin's Approve / Turn down buttons.
+- **Job board:** the quoted work and the variation work are counted apart —
+  "4 sub-tasks" and "+2 under variation". Shown whether or not the job is split,
+  since a single-technician job that later gained variation work would otherwise
+  say nothing about it.
+- **Variations panel:** a "Work added" block under each variation's money lines,
+  listing its tasks with their state, its own percentage, and a one-field form
+  to propose another.
+
+`task_state` is appended to each sub-task by the model, so the rules about which
+consents a task needs are not re-derived in JavaScript. `variationProgress` is
+passed as its own prop, keyed by variation id.
+
+Three things the screen taught that the plan had not:
+
+- **Offer only the decision that is outstanding.** A task already admitted and
+  waiting on the variation was being shown an "Approve task" button, which does
+  nothing. It now reads "Admitted by X. It starts once the variation itself is
+  settled."
+- **Hide Assign on work that is not live.** The server refuses it, but a control
+  that cannot work is worse than the panel that explains why.
+- **"Awaiting approval" was wrong on an admitted task** in the variations panel —
+  it is the variation holding it up, not a missing sign-off, and the old wording
+  sent the reader to the wrong decision. Now "Waiting on this variation".
 
 ### Phase 7 — Corporate invoicing after closure
 

@@ -671,8 +671,40 @@
                             </div>
                         </div>
 
+                        <!-- Grouped by what authorised the work: the quotation
+                             the client signed, then each variation that bought
+                             more. One list so the job reads as one job, but a
+                             task is never mistaken for scope it is not. -->
                         <div v-if="job.sub_tasks?.length" class="subtask-list">
-                            <div v-for="subTask in job.sub_tasks" :key="subTask.id" class="subtask-card">
+                          <div v-for="group in subTaskGroups" :key="group.key" class="subtask-group">
+                            <div class="subtask-group-head" :class="{ 'is-variation': group.variation }">
+                                <div>
+                                    <strong>{{ group.label }}</strong>
+                                    <p v-if="group.variation">
+                                        {{ group.variation.reason }}
+                                        <span v-if="group.variation.origin === 'zero_income'" class="vt-chip vt-chip-internal">
+                                            Internal — no client charge
+                                        </span>
+                                        <span v-else class="vt-chip">
+                                            KSH {{ formatCurrency(group.variation.net_amount) }}
+                                        </span>
+                                    </p>
+                                </div>
+                                <div class="subtask-group-meta">
+                                    <span v-if="group.variation" :class="['vt-status', `vt-status-${group.variation.status}`]">
+                                        {{ formatVariationStatus(group.variation.status) }}
+                                    </span>
+                                    <!-- The variation's own figure. Deliberately
+                                         not folded into the job's percentage —
+                                         a job delivered at 100% stays there. -->
+                                    <span v-if="group.variation && group.percent !== null" class="vt-percent">
+                                        {{ group.percent }}% of this variation
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div v-for="subTask in group.tasks" :key="subTask.id" class="subtask-card"
+                                 :class="{ 'subtask-not-live': subTask.task_state && !subTask.task_state.is_live }">
                                 <div class="subtask-header">
                                     <div class="subtask-title-row">
                                         <span class="subtask-order">#{{ subTask.order }}</span>
@@ -765,8 +797,15 @@
                                              happily have staffed — a card
                                              reading "Unassigned" with no way to
                                              assign and nothing saying why. -->
+                                        <!-- Hidden on work that is not live
+                                             yet. The server refuses it anyway,
+                                             but offering a control that cannot
+                                             work and then explaining why is
+                                             worse than the panel below, which
+                                             says what is missing. -->
                                         <button
-                                            v-if="subTask.status !== 'completed' && canAssignTechnician"
+                                            v-if="subTask.status !== 'completed' && canAssignTechnician
+                                                && (!subTask.task_state || subTask.task_state.is_live)"
                                             @click="showAssignModalFor(subTask)"
                                             class="btn btn-primary btn-xs"
                                         >
@@ -840,7 +879,64 @@
                                     </div>
                                     <span class="progress-label">{{ subTaskProgress(subTask) }}%</span>
                                 </div>
+
+                                <!-- What this task is waiting on, and the one
+                                     decision that moves it. Admin only: a task
+                                     carries a fee against the labour budget and
+                                     a place in the payment sheet. -->
+                                <div v-if="subTask.task_state?.is_variation_task && !subTask.task_state.is_live"
+                                     class="vt-gate">
+                                    <p class="vt-gate-reason">
+                                        <i class="fas fa-hourglass-half"></i>
+                                        {{ subTask.task_state.blocked_reason }}
+                                    </p>
+                                    <!-- Only offer the decision that is
+                                         actually outstanding. A task already
+                                         admitted and waiting on the variation
+                                         needs the variation settled, not a
+                                         second approval of itself. -->
+                                    <div v-if="isAdmin && !subTask.technician_id && !subTask.task_state.is_approved"
+                                         class="vt-gate-actions">
+                                        <button type="button" class="btn btn-primary btn-xs"
+                                                :disabled="decidingTaskId === subTask.id"
+                                                @click="approveVariationTask(subTask)">
+                                            <i class="fas fa-check"></i>
+                                            {{ subTask.task_state.is_declined ? 'Approve after all' : 'Approve task' }}
+                                        </button>
+                                        <button v-if="!subTask.task_state.is_declined"
+                                                type="button" class="btn btn-outline btn-xs"
+                                                @click="openDeclineTask(subTask.id)">
+                                            <i class="fas fa-ban"></i> Turn down
+                                        </button>
+                                    </div>
+                                    <p v-else-if="isAdmin && subTask.task_state.is_approved" class="vt-gate-note">
+                                        Admitted by {{ subTask.task_state.approved_by_name || 'an admin' }}. It starts
+                                        once the variation itself is settled.
+                                    </p>
+                                    <p v-else-if="!isAdmin" class="vt-gate-note">
+                                        Only an admin can admit work added under a variation.
+                                    </p>
+
+                                    <div v-if="decliningTaskId === subTask.id" class="vt-decline-box">
+                                        <label>Why is this task not needed?</label>
+                                        <textarea v-model="declineTaskReason" rows="2" class="form-control form-control-sm"
+                                                  placeholder="e.g. The client is handling this one themselves."></textarea>
+                                        <div class="vt-gate-actions">
+                                            <button type="button" class="btn btn-primary btn-xs"
+                                                    @click="declineVariationTask(subTask)">Turn down</button>
+                                            <button type="button" class="btn btn-secondary btn-xs"
+                                                    @click="decliningTaskId = null">Cancel</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <p v-else-if="subTask.task_state?.is_variation_task" class="vt-live-note">
+                                    <i class="fas fa-circle-check"></i>
+                                    Admitted by {{ subTask.task_state.approved_by_name || 'an admin' }} under
+                                    {{ subTask.task_state.variation_number }}.
+                                </p>
                             </div>
+                          </div>
                         </div>
 
                         <div v-else-if="!showAddSubTaskForm" class="empty-subtasks">
@@ -1313,7 +1409,7 @@
                             </div>
                         </div>
 
-                        <VariationOrdersPanel :job="job" :ledger="variationLedger" />
+                        <VariationOrdersPanel :job="job" :ledger="variationLedger" :variation-progress="variationProgress" />
                     </article>
 
                     <article class="job-shell-card">
@@ -2965,6 +3061,12 @@ const props = defineProps({
         type: Array,
         default: () => []
     },
+    // Each variation's own progress, keyed by variation id. Kept separate from
+    // the job's percentage on purpose — see VARIATION_TASKS_PLAN.md §2.1.
+    variationProgress: {
+        type: Object,
+        default: () => ({})
+    },
     // Active service category names — the trade filter's option list.
     serviceCategories: {
         type: Array,
@@ -3855,6 +3957,81 @@ const subTaskProgress = (subTask) =>
     subTask.status === 'completed' ? 100 : Number(subTask.progress_percentage ?? 0)
 
 const subTaskCount = computed(() => props.job.sub_tasks?.length || 0)
+
+// ---- Variation tasks ----
+
+const variationProgress = computed(() => props.variationProgress || {})
+
+/**
+ * The sub-task list grouped by what authorised each piece of work: the
+ * quotation first, then each variation that bought more.
+ *
+ * Grouping rather than one flat list because the two are not the same kind of
+ * thing. Original scope is what the client signed for and what the job's
+ * percentage measures; a variation task is separately bought, separately
+ * approved, and deliberately kept out of that figure.
+ */
+const subTaskGroups = computed(() => {
+    const tasks = props.job.sub_tasks || []
+    const groups = []
+
+    const original = tasks.filter(t => !t.variation_order_id)
+    if (original.length) {
+        groups.push({ key: 'original', label: 'Original scope', variation: null, percent: null, tasks: original })
+    }
+
+    const byVariation = new Map()
+    for (const task of tasks.filter(t => t.variation_order_id)) {
+        if (!byVariation.has(task.variation_order_id)) byVariation.set(task.variation_order_id, [])
+        byVariation.get(task.variation_order_id).push(task)
+    }
+
+    for (const [variationId, variationTasks] of byVariation) {
+        const variation = variationTasks[0].variation_order || null
+        groups.push({
+            key: `variation-${variationId}`,
+            label: variation?.vo_number ? `Added by ${variation.vo_number}` : 'Added by a variation',
+            variation,
+            percent: variationProgress.value[variationId] ?? null,
+            tasks: variationTasks,
+        })
+    }
+
+    return groups
+})
+
+const formatVariationStatus = (status) => ({
+    draft: 'Draft',
+    pending_client: 'With the client',
+    approved: 'Approved',
+    declined: 'Declined',
+    void: 'Withdrawn',
+}[status] || status)
+
+const decidingTaskId = ref(null)
+const decliningTaskId = ref(null)
+const declineTaskReason = ref('')
+
+const openDeclineTask = (taskId) => {
+    decliningTaskId.value = taskId
+    declineTaskReason.value = ''
+}
+
+const approveVariationTask = (subTask) => {
+    decidingTaskId.value = subTask.id
+    router.post(`/variation-tasks/${subTask.id}/approve`, {}, {
+        preserveScroll: true,
+        onFinish: () => { decidingTaskId.value = null },
+    })
+}
+
+const declineVariationTask = (subTask) => {
+    if (!declineTaskReason.value.trim()) return
+    router.post(`/variation-tasks/${subTask.id}/decline`, { reason: declineTaskReason.value }, {
+        preserveScroll: true,
+        onSuccess: () => { decliningTaskId.value = null; declineTaskReason.value = '' },
+    })
+}
 const activeSubTasks = computed(() => Math.max(subTaskCount.value - completedSubTasks.value, 0))
 const normalizedProgress = computed(() => Number(props.job.progress_percentage ?? 0))
 const serviceCategoryName = computed(() => props.job.service_category?.name || 'Uncategorized service')
@@ -7374,4 +7551,100 @@ defineOptions({
     line-height: 1.45;
 }
 .crew-record-flag i { margin-top: 2px; }
+
+/* ---- Variation tasks ---- */
+
+/* The list is grouped by what authorised the work, so each group needs a head
+   that says which that was. */
+.subtask-group + .subtask-group { margin-top: 1.1rem; }
+.subtask-group-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.6rem;
+    border-radius: 8px;
+    background: #f8fafc;
+    border: 1px solid #eef2f7;
+}
+.subtask-group-head.is-variation {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+}
+.subtask-group-head strong { font-size: 0.92rem; color: #1e293b; }
+.subtask-group-head p {
+    margin: 0.2rem 0 0;
+    font-size: 0.8rem;
+    color: #64748b;
+    line-height: 1.5;
+}
+.subtask-group-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.25rem;
+    flex-shrink: 0;
+}
+
+.vt-chip {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: #dbeafe;
+    color: #1e40af;
+}
+.vt-chip-internal { background: #f1f5f9; color: #475569; }
+
+.vt-status {
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.vt-status-approved { background: #dcfce7; color: #166534; }
+.vt-status-pending_client { background: #fef3c7; color: #92400e; }
+.vt-status-draft { background: #f1f5f9; color: #475569; }
+.vt-status-declined,
+.vt-status-void { background: #fee2e2; color: #991b1b; }
+.vt-percent { font-size: 0.75rem; color: #475569; }
+
+/* A task nobody has admitted yet is visibly not part of the job. */
+.subtask-not-live { opacity: 0.85; border-style: dashed; }
+
+.vt-gate {
+    margin-top: 0.7rem;
+    padding: 0.6rem 0.75rem;
+    border-radius: 8px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+}
+.vt-gate-reason {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: #78350f;
+}
+.vt-gate-reason i { margin-right: 0.3rem; }
+.vt-gate-note { margin: 0.35rem 0 0; font-size: 0.78rem; color: #92400e; }
+.vt-gate-actions { display: flex; gap: 0.4rem; margin-top: 0.5rem; flex-wrap: wrap; }
+.vt-decline-box { margin-top: 0.55rem; }
+.vt-decline-box label {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #78350f;
+    margin-bottom: 0.25rem;
+}
+.vt-live-note {
+    margin: 0.6rem 0 0;
+    font-size: 0.78rem;
+    color: #166534;
+}
+.vt-live-note i { margin-right: 0.3rem; }
 </style>

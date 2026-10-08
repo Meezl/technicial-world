@@ -177,6 +177,61 @@
                 </div>
             </div>
 
+            <!-- The work this variation bought, as distinct from its money
+                 lines above. A variation could always raise the contract; what
+                 it could not do until now was create something a technician
+                 can be given and paid for. -->
+            <div class="vo-tasks">
+                <strong>
+                    Work added
+                    <span v-if="taskPercent(vo) !== null" class="vo-chip vo-chip-muted">
+                        {{ taskPercent(vo) }}% done
+                    </span>
+                </strong>
+
+                <p v-if="!tasksFor(vo).length" class="vo-tasks-empty">
+                    No tasks yet. Add one if this variation buys work somebody has to do,
+                    rather than only moving money.
+                </p>
+
+                <div v-for="task in tasksFor(vo)" :key="task.id" class="vo-task">
+                    <span>
+                        {{ task.title }}
+                        <em v-if="task.technician?.user?.name" class="vo-task-tech">
+                            — {{ task.technician.user.name }}
+                        </em>
+                    </span>
+                    <span v-if="task.task_state?.is_live" class="vo-chip vo-chip-live">
+                        {{ task.progress_percentage || 0 }}%
+                    </span>
+                    <span v-else-if="task.task_state?.is_declined" class="vo-chip vo-chip-muted">
+                        Turned down
+                    </span>
+                    <!-- Admitted already: it is the variation holding this up,
+                         not a missing sign-off, and saying "awaiting approval"
+                         would send somebody to the wrong decision. -->
+                    <span v-else-if="task.task_state?.is_approved" class="vo-chip vo-chip-waiting">
+                        Waiting on this variation
+                    </span>
+                    <span v-else class="vo-chip vo-chip-waiting">Awaiting admin approval</span>
+                </div>
+
+                <form v-if="canAddTask(vo)" class="vo-task-add" @submit.prevent="addTask(vo)">
+                    <input
+                        v-model="taskForms[vo.id]"
+                        type="text"
+                        maxlength="255"
+                        placeholder="What needs doing? e.g. Re-skim the east wall"
+                    >
+                    <button type="submit" class="vo-btn vo-btn-secondary" :disabled="!taskForms[vo.id]">
+                        <i class="fas fa-plus"></i> Add task
+                    </button>
+                </form>
+                <p v-else-if="vo.status === 'declined' || vo.status === 'void'" class="vo-tasks-empty">
+                    Nothing was bought, so there is no work to add.
+                </p>
+            </div>
+
             <div class="vo-card-actions">
                 <button
                     v-if="canSend(vo)"
@@ -227,12 +282,41 @@ import { router, useForm } from '@inertiajs/vue3'
 const props = defineProps({
     job: { type: Object, required: true },
     ledger: { type: Object, default: null },
+    // Each variation's own progress, keyed by id. Separate from the job's
+    // percentage by design — variation work does not move what the client
+    // verified.
+    variationProgress: { type: Object, default: () => ({}) },
 })
 
 const showForm = ref(false)
 const sendNow = ref(false)
 
 const variations = computed(() => props.job.variation_orders || [])
+
+// ---- The work a variation bought ----
+
+const taskForms = ref({})
+
+const tasksFor = (vo) => (props.job.sub_tasks || []).filter(t => t.variation_order_id === vo.id)
+
+const taskPercent = (vo) => props.variationProgress?.[vo.id] ?? null
+
+/**
+ * Work may be organised while the client is still deciding — that is the
+ * normal case, and isLive() on the server keeps it from being staffed until
+ * they agree. Only a refused or withdrawn variation bought nothing.
+ */
+const canAddTask = (vo) => !['declined', 'void'].includes(vo.status)
+
+const addTask = (vo) => {
+    const title = (taskForms.value[vo.id] || '').trim()
+    if (!title) return
+
+    router.post(`/variations/${vo.id}/tasks`, { title }, {
+        preserveScroll: true,
+        onSuccess: () => { taskForms.value[vo.id] = '' },
+    })
+}
 
 const form = useForm({
     origin: 'tw',
@@ -431,4 +515,35 @@ const voidVo = (vo) => {
 .vo-btn-primary:hover:not(:disabled) { background: #04255a; }
 .vo-btn-ghost { background: #fff; color: #374151; border-color: #D1D5DB; }
 .vo-btn-ghost:hover:not(:disabled) { background: #F9FAFB; }
+
+/* The work a variation bought, beneath its money lines. */
+.vo-tasks {
+    margin-top: 0.7rem;
+    padding-top: 0.6rem;
+    border-top: 1px dashed #e2e8f0;
+}
+.vo-tasks > strong { display: block; font-size: 0.82rem; color: #1e293b; margin-bottom: 0.4rem; }
+.vo-tasks-empty { margin: 0; font-size: 0.78rem; color: #64748b; line-height: 1.5; }
+.vo-task {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.3rem 0;
+    font-size: 0.82rem;
+    color: #334155;
+}
+.vo-task + .vo-task { border-top: 1px solid #f1f5f9; }
+.vo-task-tech { color: #64748b; font-style: normal; }
+.vo-chip-live { background: #dcfce7; color: #166534; }
+.vo-chip-waiting { background: #fef3c7; color: #92400e; }
+
+.vo-task-add { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
+.vo-task-add input {
+    flex: 1;
+    padding: 0.35rem 0.55rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 0.82rem;
+}
 </style>

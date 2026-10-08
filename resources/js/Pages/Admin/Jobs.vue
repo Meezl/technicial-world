@@ -82,7 +82,7 @@
                                             <span class="sub-text">{{ getAssignedTechCount(job) }} technician(s)</span>
                                         </span>
                                         <span v-else class="text-muted">Not Assigned</span>
-                                        <span class="sub-task-badge">{{ job.sub_tasks?.length || 0 }} sub-tasks</span>
+                                        <span class="sub-task-badge">{{ quotedTaskCount(job) }} sub-tasks</span>
                                     </template>
                                     <template v-else>
                                         <span v-if="job.technician">
@@ -91,6 +91,15 @@
                                         </span>
                                         <span v-else class="text-muted">Not Assigned</span>
                                     </template>
+
+                                    <!-- Counted apart from the quoted work, and
+                                         shown whether or not the job is split:
+                                         a single-technician job that later
+                                         gained variation work would otherwise
+                                         show nothing about it here. -->
+                                    <span v-if="variationTaskCount(job)" class="sub-task-badge sub-task-badge-variation">
+                                        +{{ variationTaskCount(job) }} under variation
+                                    </span>
                                 </td>
                                 <td>
                                     <div class="progress-bar">
@@ -488,6 +497,15 @@ const buildAssignmentFormData = (scalars) => {
     return fd
 }
 
+/**
+ * The quoted work, and the work a variation added, counted apart.
+ *
+ * A single number covering both would read as scope the client agreed to when
+ * some of it was bought afterwards.
+ */
+const quotedTaskCount = (job) => (job.sub_tasks || []).filter(t => !t.variation_order_id).length
+const variationTaskCount = (job) => (job.sub_tasks || []).filter(t => t.variation_order_id).length
+
 const getAssignedTechCount = (job) => {
     if (!job.sub_tasks) return 0
     const uniqueTechIds = new Set(
@@ -777,6 +795,12 @@ defineOptions({
     font-weight: 600;
     margin-top: 0.25rem;
     width: fit-content;
+}
+
+/* Work bought later reads differently from work the client first agreed to. */
+.sub-task-badge-variation {
+    background: #DBEAFE;
+    color: #1E40AF;
 }
 
 .pagination-container {

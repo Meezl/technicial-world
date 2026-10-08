@@ -334,6 +334,12 @@ class AdminDashboardController extends Controller
             'technician.user',
             'leadTechnician.user',
             'subTasks.technician.user',
+            // The variation that bought each task, and who admitted it, so the
+            // page can group the list by origin and say what a task is waiting
+            // on without re-deriving the rules.
+            'subTasks.variationOrder:id,vo_number,status,origin,net_amount,reason',
+            'subTasks.approver:id,name',
+            'subTasks.decliner:id,name',
             'jobAssignments.technician.user',
             'budget',
             'technicianPayments.technician.user',
@@ -406,6 +412,18 @@ class AdminDashboardController extends Controller
         $job->progressReports->each->append('pipeline_state');
         $job->removedProgressReports->each->append('pipeline_state');
 
+        // Which consents each task is waiting on, by the same reasoning.
+        $job->subTasks->each->append('task_state');
+
+        // How far along each variation's own work is. Kept off the job's
+        // headline figure deliberately — see VARIATION_TASKS_PLAN.md §2.1 — so
+        // the panel needs a number of its own.
+        $variationProgress = $job->variationOrders
+            ->mapWithKeys(fn ($variation) => [
+                $variation->id => app(ProgressService::class)->variationPercent($variation),
+            ])
+            ->all();
+
         $technicians = Technician::with('user')
             ->orderBy('rating', 'desc')
             ->get();
@@ -419,6 +437,8 @@ class AdminDashboardController extends Controller
             // a technician or client who rings about it. Printed on the page
             // rather than left to hover text, which a new starter never finds.
             'progressStateGuide' => ProgressReport::pipelineStateGuide(),
+            // Per-variation progress, keyed by variation id.
+            'variationProgress' => $variationProgress,
             'technicians' => $technicians,
             // The trade filter on every technician picker is the service
             // category list, not whatever text the technicians happen to

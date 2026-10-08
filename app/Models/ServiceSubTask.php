@@ -92,6 +92,32 @@ class ServiceSubTask extends Model
         });
     }
 
+    /**
+     * The task's standing, for the screens.
+     *
+     * Appended rather than left to the frontend to re-derive: the rules about
+     * which consents a variation task needs live in isLive() and blockedReason(),
+     * and a second copy of them in JavaScript would drift. Opt-in per page via
+     * ->append('task_state'), so the client portal and the technician app are
+     * not handed the office's wording.
+     */
+    public function getTaskStateAttribute(): array
+    {
+        return [
+            'is_variation_task' => $this->isVariationTask(),
+            'variation_number' => $this->variationOrder?->vo_number,
+            'variation_status' => $this->variationOrder?->status,
+            'is_live' => $this->isLive(),
+            'is_approved' => $this->isApproved(),
+            'is_awaiting_approval' => $this->isAwaitingApproval(),
+            'is_declined' => $this->isDeclined(),
+            'blocked_reason' => $this->blockedReason(),
+            'approved_by_name' => $this->approver?->name,
+            'declined_by_name' => $this->decliner?->name,
+            'decline_reason' => $this->decline_reason,
+        ];
+    }
+
     public function serviceRequest()
     {
         return $this->belongsTo(ServiceRequest::class);
