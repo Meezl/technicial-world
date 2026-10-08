@@ -336,6 +336,11 @@ class TechnicianController extends Controller
         'technician_payout',
         'quote_materials_file_path',
         'quote_materials_file_paths',
+        // Which revision each attached document belongs to, and the classified
+        // list both portals render from it. It is the quotation paperwork and
+        // its version history — none of it is a fact about the work.
+        'quote_materials_file_revisions',
+        'quotation_attachments',
         'billing_milestones',
         'billingSchedule',
         // The quotation's own notes. Written for the client and routinely

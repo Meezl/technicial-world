@@ -100,17 +100,39 @@
                                 <p class="attachments-hint">Documents your quotation team attached to this request.</p>
                                 <div class="quote-attachments-list">
                                     <a
-                                        v-for="att in quoteAttachments"
+                                        v-for="att in currentQuoteAttachments"
                                         :key="att.path"
-                                        :href="`/storage/${att.path}`"
+                                        :href="att.url"
                                         target="_blank"
                                         rel="noopener"
                                         class="quote-attachment-link"
                                     >
                                         <i class="fas fa-file-download"></i>
                                         <span class="attachment-label">{{ att.label }}</span>
+                                        <span class="attachment-current-badge">Current</span>
                                         <span v-if="att.ext" class="attachment-ext">{{ att.ext }}</span>
                                     </a>
+                                </div>
+                                <div v-if="supersededQuoteAttachments.length" class="quote-attachments-superseded">
+                                    <p class="attachments-hint">
+                                        Earlier versions, replaced by the current quotation. Kept here for your
+                                        reference only — please work from the documents above.
+                                    </p>
+                                    <div class="quote-attachments-list">
+                                        <a
+                                            v-for="att in supersededQuoteAttachments"
+                                            :key="att.path"
+                                            :href="att.url"
+                                            target="_blank"
+                                            rel="noopener"
+                                            class="quote-attachment-link is-superseded"
+                                        >
+                                            <i class="fas fa-file-download"></i>
+                                            <span class="attachment-label">{{ att.name }}</span>
+                                            <span v-if="att.revision !== null" class="attachment-superseded-badge">Revision #{{ att.revision }}</span>
+                                            <span v-if="att.ext" class="attachment-ext">{{ att.ext }}</span>
+                                        </a>
+                                    </div>
                                 </div>
                             </div>
 
@@ -201,17 +223,39 @@
                             <p class="attachments-hint">Documents your quotation team attached to this request.</p>
                             <div class="quote-attachments-list">
                                 <a
-                                    v-for="att in quoteAttachments"
+                                    v-for="att in currentQuoteAttachments"
                                     :key="att.path"
-                                    :href="`/storage/${att.path}`"
+                                    :href="att.url"
                                     target="_blank"
                                     rel="noopener"
                                     class="quote-attachment-link"
                                 >
                                     <i class="fas fa-file-download"></i>
                                     <span class="attachment-label">{{ att.label }}</span>
+                                    <span class="attachment-current-badge">Current</span>
                                     <span v-if="att.ext" class="attachment-ext">{{ att.ext }}</span>
                                 </a>
+                            </div>
+                            <div v-if="supersededQuoteAttachments.length" class="quote-attachments-superseded">
+                                <p class="attachments-hint">
+                                    Earlier versions, replaced by the current quotation. Kept here for your
+                                    reference only — please work from the documents above.
+                                </p>
+                                <div class="quote-attachments-list">
+                                    <a
+                                        v-for="att in supersededQuoteAttachments"
+                                        :key="att.path"
+                                        :href="att.url"
+                                        target="_blank"
+                                        rel="noopener"
+                                        class="quote-attachment-link is-superseded"
+                                    >
+                                        <i class="fas fa-file-download"></i>
+                                        <span class="attachment-label">{{ att.name }}</span>
+                                        <span v-if="att.revision !== null" class="attachment-superseded-badge">Revision #{{ att.revision }}</span>
+                                        <span v-if="att.ext" class="attachment-ext">{{ att.ext }}</span>
+                                    </a>
+                                </div>
                             </div>
                         </div>
 
@@ -1374,20 +1418,16 @@ const authUserId = computed(() => usePage().props.auth?.user?.id ?? null)
 // server.
 const jobDocuments = computed(() => props.serviceRequest.documents || [])
 
-// Every file the office attached to the quotation: the multi-file array the
-// admin uploads plus the legacy single path, de-duplicated. Lets the client
-// download all of them, not just the first. Labelled by extension, and
-// numbered when there is more than one.
-const quoteAttachments = computed(() => {
-    const paths = [...(props.serviceRequest.quote_materials_file_paths || [])]
-    const single = props.serviceRequest.quote_materials_file_path
-    if (single && !paths.includes(single)) paths.unshift(single)
-    return paths.filter(Boolean).map((path, i, arr) => ({
-        path,
-        ext: (String(path).split('.').pop() || '').toUpperCase(),
-        label: arr.length > 1 ? `Attachment ${i + 1}` : 'Detailed materials / quotation document',
-    }))
-})
+// Every file the office attached to the quotation, classified server-side
+// (ServiceRequest::$quotation_attachments) into the documents describing the
+// quotation as it now stands and the ones a later revision replaced.
+//
+// Both groups stay downloadable — a client may well want the version they were
+// originally quoted on — but only the current group is presented as the one to
+// price against, and only that group is emailed out with a revision.
+const quoteAttachments = computed(() => props.serviceRequest.quotation_attachments || [])
+const currentQuoteAttachments = computed(() => quoteAttachments.value.filter(a => a.is_current))
+const supersededQuoteAttachments = computed(() => quoteAttachments.value.filter(a => !a.is_current))
 
 const isMyDocument = (doc) => doc.uploaded_by != null && doc.uploaded_by === authUserId.value
 
@@ -2425,6 +2465,46 @@ defineOptions({
     background: #f3f4f6;
     border-radius: 4px;
     padding: 2px 6px;
+}
+
+/* Quotation revisions keep every earlier document on the record, so the
+   current batch has to be unmistakable — a client who prices against a
+   superseded breakdown is the whole problem this styling exists to prevent. */
+.attachment-current-badge {
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: #065f46;
+    background: #d1fae5;
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+
+.quote-attachments-superseded {
+    margin-top: 1rem;
+    padding-top: 0.85rem;
+    border-top: 1px dashed #e2e8f0;
+}
+
+.quote-attachment-link.is-superseded {
+    opacity: 0.72;
+    background: #fafafa;
+}
+
+.quote-attachment-link.is-superseded .attachment-label {
+    color: #6b7280;
+    text-decoration: line-through;
+}
+
+.attachment-superseded-badge {
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: #6b7280;
+    background: #f3f4f6;
+    border-radius: 999px;
+    padding: 2px 8px;
 }
 
 .quote-notes {

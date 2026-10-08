@@ -116,6 +116,7 @@
                                 <span>Client</span>
                                 <strong>{{ job.user.name }}</strong>
                                 <p>{{ job.user.email }}</p>
+                                <p>{{ job.user.phone || 'No mobile on file' }}</p>
                             </div>
                             <div class="overview-item">
                                 <span>Service category</span>
@@ -1723,6 +1724,13 @@
                             <div class="sidebar-detail-item">
                                 <span>Email</span>
                                 <strong>{{ job.user.email }}</strong>
+                            </div>
+                            <div class="sidebar-detail-item">
+                                <span>Mobile</span>
+                                <strong>
+                                    <a v-if="job.user.phone" :href="`tel:${job.user.phone}`">{{ job.user.phone }}</a>
+                                    <template v-else>Not provided</template>
+                                </strong>
                             </div>
                             <div class="sidebar-detail-item">
                                 <span>Request type</span>
