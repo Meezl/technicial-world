@@ -144,7 +144,7 @@
                                 <strong>{{ report.percent_complete }}%</strong>
                             </div>
                             <div class="pr-metric">
-                                <span>Validated</span>
+                                <span>{{ validatedByLabel(report) }}</span>
                                 <strong>{{ report.is_validated && report.validated_percent !== null ? `${report.validated_percent}%` : '—' }}</strong>
                             </div>
                             <div class="pr-metric">
@@ -232,6 +232,18 @@ const signingId = ref(null)
  * Settled, unsent, and nobody but its author has read it. A crew report on a
  * lead-run job carries the lead's review; this one carries nothing.
  */
+// A lead's site figure and an office settlement both set is_validated. The
+// difference decides whether money may move, so the label says which — see
+// the same helper on the job page.
+const isLeadFigure = (report) => Boolean(report.is_validated && report.approved_by_lead_at)
+const validatedByLabel = (report) => {
+    if (!report.is_validated) return 'Validated'
+    if (isLeadFigure(report)) return 'Validated by lead'
+    const by = report.validated_as
+    if (by === 'admin' || by === 'project_manager') return 'Validated by office'
+    return 'Validated'
+}
+
 const needsSignOff = (report) =>
     report.is_validated
     && !report.released_to_client_at

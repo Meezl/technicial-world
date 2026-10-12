@@ -1115,9 +1115,21 @@
                                         <span>Reported</span>
                                         <strong>{{ report.percent_complete }}%</strong>
                                     </div>
+                                    <!-- Who settled it, not just that something did.
+                                         A lead's site figure and an office
+                                         settlement both set is_validated, so this
+                                         tile read "Validated 95%" beside a state
+                                         saying the office had not settled it — two
+                                         true statements that read as a contradiction
+                                         and left ops not trusting either. -->
                                     <div class="subtask-summary-card">
-                                        <span>Validated</span>
+                                        <span>{{ validatedByLabel(report) }}</span>
                                         <strong>{{ report.is_validated ? `${report.validated_percent ?? report.percent_complete}%` : 'Pending' }}</strong>
+                                        <small v-if="report.is_validated" class="validated-by-note">
+                                            {{ isLeadFigure(report)
+                                                ? 'Site figure — not settled for payment'
+                                                : 'Settled by the office' }}
+                                        </small>
                                     </div>
                                     <div class="subtask-summary-card">
                                         <span>Photos</span>
@@ -4057,6 +4069,23 @@ const releasableReports = computed(() =>
 
 // Already with the client. Nothing on this page said so, which is how a job
 // with nine reports gives no answer to "which ones went out, and when".
+// A lead's sign-off and an office settlement both set is_validated, and the
+// tile that reported it said only "Validated". The difference is the whole
+// point of the two steps: the lead's figure moves the work and the job
+// percentage, the office's releases the money. `approved_by_lead_at` is the
+// marker — validate() clears it when the office settles, so a lingering one
+// means the figure still stands on the site's word alone.
+const isLeadFigure = (report) =>
+    Boolean(report.is_validated && report.approved_by_lead_at)
+
+const validatedByLabel = (report) => {
+    if (!report.is_validated) return 'Validated'
+    if (isLeadFigure(report)) return 'Validated by lead'
+    const by = report.validated_as
+    if (by === 'admin' || by === 'project_manager') return 'Validated by office'
+    return 'Validated'
+}
+
 const releasedReports = computed(() =>
     progressReports.value.filter(r => r.released_to_client_at)
 )
@@ -5325,6 +5354,15 @@ defineOptions({
     margin: 0.5rem 0 0;
     padding-left: 1.1rem;
     font-size: 0.85rem;
+}
+
+.validated-by-note {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    line-height: 1.3;
+    color: #64748b;
 }
 
 .release-count-sent {
