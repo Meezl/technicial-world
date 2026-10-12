@@ -3,6 +3,28 @@
         <AdminSidebar current-page="jobs" />
 
         <main class="main-content job-details-page">
+            <!-- Pinned, because every action on this page preserves scroll and
+                 the reader is never at the top when one lands. -->
+            <transition name="job-flash">
+                <div
+                    v-if="activeFlash"
+                    :class="['job-flash', `job-flash-${activeFlash.tone}`]"
+                    role="status"
+                    aria-live="polite"
+                >
+                    <i
+                        :class="[
+                            'fas',
+                            activeFlash.tone === 'error' ? 'fa-circle-exclamation'
+                                : activeFlash.tone === 'warning' ? 'fa-triangle-exclamation'
+                                : 'fa-circle-check',
+                        ]"
+                    ></i>
+                    <p>{{ activeFlash.text }}</p>
+                    <button type="button" class="job-flash-close" @click="dismissFlash" aria-label="Dismiss">&times;</button>
+                </div>
+            </transition>
+
             <section class="job-details-hero">
                 <div class="hero-copy">
                     <div class="hero-topline">
@@ -896,20 +918,62 @@
                             </div>
                             <div class="header-actions-row">
                                 <span class="sub-task-count">{{ progressReports.length }} report{{ progressReports.length === 1 ? '' : 's' }}</span>
+                                <!-- How many of them the client already has. The page
+                                     showed only a total, so "which ones went out" had
+                                     no answer anywhere on screen. -->
+                                <span v-if="releasedReports.length" class="sub-task-count release-count-sent">
+                                    {{ releasedReports.length }} sent
+                                </span>
                                 <!-- Release the settled batch to the client as one
                                      collective update — a single report and a single
                                      email, in place of one per technician. -->
                                 <button
                                     v-if="releasableReports.length"
                                     type="button"
-                                    class="btn btn-primary btn-sm"
+                                    class="btn btn-sm"
+                                    :class="releaseBlocked ? 'btn-secondary' : 'btn-primary'"
                                     @click="releaseReportsToClient"
                                     :disabled="releasing"
-                                    title="Send one collective progress update to the client"
+                                    :title="releaseBlocked
+                                        ? `${reportsNeedingSignOff.length} report(s) need the office's sign-off before any can go`
+                                        : 'Send one collective progress update to the client'"
                                 >
-                                    <i class="fas fa-paper-plane"></i>
-                                    {{ releasing ? 'Releasing…' : `Release ${releasableReports.length} to client` }}
+                                    <i :class="['fas', releaseBlocked ? 'fa-lock' : 'fa-paper-plane']"></i>
+                                    {{ releasing
+                                        ? 'Releasing…'
+                                        : releaseBlocked
+                                            ? `Release held — ${reportsNeedingSignOff.length} need sign-off`
+                                            : `Release ${releasableReports.length} to client` }}
                                 </button>
+                            </div>
+                        </div>
+
+                        <!-- Why the release is held. The server refuses the whole
+                             batch when any settled report has been read by nobody
+                             but its author, and said so in a flash message this
+                             page never rendered — so the office saw an unchanged
+                             button and clicked it again. -->
+                        <div v-if="releaseBlocked" class="release-blocked-banner">
+                            <i class="fas fa-lock"></i>
+                            <div>
+                                <strong>
+                                    Release held — {{ reportsNeedingSignOff.length }}
+                                    {{ reportsNeedingSignOff.length === 1 ? 'report has' : 'reports have' }}
+                                    been read by nobody but the author
+                                </strong>
+                                <p>
+                                    Nothing goes to the client until {{ reportsNeedingSignOff.length === 1 ? 'it is' : 'they are' }}
+                                    signed off — the batch is held as a whole, so the client gets one
+                                    coherent update rather than two for the same stretch of work.
+                                    Use <strong>Sign off</strong> on the {{ reportsNeedingSignOff.length === 1 ? 'card' : 'cards' }} below.
+                                </p>
+                                <ul class="release-blocked-list">
+                                    <li v-for="r in reportsNeedingSignOff" :key="r.id">
+                                        {{ r.sub_task?.title || 'Whole job' }} —
+                                        {{ r.validated_percent ?? r.percent_complete }}%,
+                                        {{ r.submitter?.name || r.technician?.user?.name || 'Unknown' }}
+                                    </li>
+                                </ul>
                             </div>
                         </div>
 
@@ -1012,7 +1076,12 @@
                             <article v-for="report in progressReports" :key="report.id" class="admin-report-card">
                                 <div class="admin-report-top">
                                     <div>
-                                        <strong>{{ report.service_sub_task ? `Sub-task: ${report.service_sub_task.title || report.service_sub_task.name}` : 'Whole job update' }}</strong>
+                                        <!-- `service_sub_task` is not a key on the payload — the
+                                             relation is subTask, so Inertia sends `sub_task`.
+                                             Every card therefore read "Whole job update",
+                                             sub-task reports included, which is a large part
+                                             of why a job's reports cannot be told apart. -->
+                                        <strong>{{ report.sub_task ? `Sub-task: ${report.sub_task.title}` : 'Whole job update' }}</strong>
                                         <p>
                                             Submitted by {{ report.submitter?.name || report.technician?.user?.name || 'Unknown' }}
                                             on {{ formatDateTime(report.created_at) }}
@@ -1292,6 +1361,32 @@
                                     <span v-else class="paid-progress-note">
                                         Already paid up to this approved progress level.
                                     </span>
+                                </div>
+
+                                <!-- Where this one actually stands with the client.
+                                     released_to_client_at was in the payload all
+                                     along and shown nowhere. -->
+                                <div class="report-release-row">
+                                    <span v-if="report.released_to_client_at" class="report-sent-stamp">
+                                        <i class="fas fa-paper-plane"></i>
+                                        Sent to client · {{ formatDateTime(report.released_to_client_at) }}
+                                    </span>
+                                    <span v-else-if="report.is_validated && !isHeldByLead(report)" class="report-unsent-stamp">
+                                        <i class="fas fa-clock"></i>
+                                        Not yet sent to client
+                                    </span>
+
+                                    <button
+                                        v-if="reportsNeedingSignOff.some(r => r.id === report.id)"
+                                        type="button"
+                                        class="btn btn-warning btn-sm"
+                                        @click="signOffReport(report)"
+                                        :disabled="signingOffId === report.id"
+                                        title="The office's own check, standing in for the on-site review this report never had"
+                                    >
+                                        <i class="fas fa-user-check"></i>
+                                        {{ signingOffId === report.id ? 'Signing off…' : 'Sign off' }}
+                                    </button>
                                 </div>
 
                                 <ProgressReportActions :report="report" :is-admin="isAdmin" />
@@ -3898,6 +3993,45 @@ const milestoneLaborReleasedTotal = computed(() => {
 const page = usePage()
 const isAdmin = computed(() => page.props.auth?.user?.role === 'admin')
 
+// This page rendered no flash messages at all, on any action.
+//
+// That is how a blocked release reads as a broken button: releasing throws
+// when reports on the job still need the office's own sign-off, the server
+// says so in as many words, and the message was dropped on the floor. The
+// office saw an unchanged page with the same count on the button, clicked
+// again, and got the same silence. Nothing was ever released and nothing
+// ever said why.
+//
+// Pinned rather than placed at the top of the page. Every action here uses
+// preserveScroll, so the reader is wherever they clicked — usually far down
+// at the reports panel — and a banner in the hero would be a message
+// delivered off screen, which is what we already had.
+const flash = computed(() => page.props.flash || {})
+const dismissedFlash = ref(null)
+const activeFlash = computed(() => {
+    const f = flash.value
+    const current = f.error
+        ? { tone: 'error', text: f.error }
+        : f.warning
+            ? { tone: 'warning', text: f.warning }
+            : f.success
+                ? { tone: 'success', text: f.success }
+                : null
+
+    if (!current || current.text === dismissedFlash.value) return null
+    return current
+})
+const dismissFlash = () => { dismissedFlash.value = activeFlash.value?.text ?? null }
+
+// A success can go on its own; an error is the one the reader has to act on,
+// so it stays until dismissed.
+watch(activeFlash, (f) => {
+    if (f && f.tone === 'success') {
+        const text = f.text
+        setTimeout(() => { if (dismissedFlash.value !== text) dismissedFlash.value = text }, 6000)
+    }
+})
+
 const progressReports = computed(() => props.job.progress_reports || [])
 const jobPhotos = computed(() => props.job.photos || [])
 
@@ -3920,6 +4054,51 @@ const pullableReports = computed(() =>
 const releasableReports = computed(() =>
     progressReports.value.filter(r => r.is_validated && !r.released_to_client_at && !isHeldByLead(r))
 )
+
+// Already with the client. Nothing on this page said so, which is how a job
+// with nine reports gives no answer to "which ones went out, and when".
+const releasedReports = computed(() =>
+    progressReports.value.filter(r => r.released_to_client_at)
+)
+
+// What will stop a release before it starts.
+//
+// Mirrors ProgressService::releaseToClient, which refuses the whole batch when
+// any settled report on the job has been read by nobody but its author — the
+// office standing in for the on-site review a single-technician job never had.
+// Held as a whole on purpose: letting the reviewed half go would hand the
+// client two updates for one stretch of work.
+//
+// Kept to the same raw columns as the server's scope rather than the pipeline
+// state, so what the button says and what the server does cannot drift apart.
+const reportsNeedingSignOff = computed(() =>
+    progressReports.value.filter(r =>
+        r.is_validated
+        && !r.released_to_client_at
+        && !r.is_pm_authored
+        && !r.lead_reviewed_at
+        && !r.ops_verified_at
+    )
+)
+const releaseBlocked = computed(() => reportsNeedingSignOff.value.length > 0)
+
+// The office putting its own name to a report no lead reviewed. The route has
+// existed since the pipeline shipped, but the only control for it was on the
+// cross-job queue — so an office blocked here was told to do something with no
+// way to do it from the page they were on.
+const signingOffId = ref(null)
+const signOffReport = (report) => {
+    if (!confirm(
+        'Sign off this report as checked by the office?\n\n'
+        + 'Nobody but its author has read it. Signing off says you are satisfied with '
+        + 'the evidence — it is what the client\'s copy rests on.'
+    )) return
+    signingOffId.value = report.id
+    router.post(`/admin/progress-reports/${report.id}/verify`, {}, {
+        preserveScroll: true,
+        onFinish: () => { signingOffId.value = null },
+    })
+}
 const pullingReports = ref(false)
 const pullReportsFromLead = () => {
     const n = pullableReports.value.length
@@ -3933,6 +4112,19 @@ const pullReportsFromLead = () => {
 const releasing = ref(false)
 const releaseReportsToClient = () => {
     const n = releasableReports.value.length
+
+    // Refused here as well as on the server, so the reader is told before the
+    // click rather than by an error afterwards.
+    if (releaseBlocked.value) {
+        const blocked = reportsNeedingSignOff.value.length
+        alert(
+            `${blocked} ${blocked === 1 ? 'report' : 'reports'} on this job ${blocked === 1 ? 'has' : 'have'} `
+            + 'been read by nobody but the person who wrote it, so the whole batch is held.\n\n'
+            + 'Sign them off on their cards below, then release.'
+        )
+        return
+    }
+
     if (!confirm(`Release ${n} settled ${n === 1 ? 'report' : 'reports'} to the client as one update? The client receives a single collective report and one email.`)) return
     releasing.value = true
     router.post(`/admin/jobs/${props.job.id}/release-reports`, {}, {
@@ -5018,6 +5210,155 @@ defineOptions({
 </script>
 
 <style>
+
+/*
+ * Flash messages for this page. Pinned to the viewport rather than placed in
+ * the document, because every action here preserves scroll: a banner in the
+ * hero is a message the reader never sees.
+ */
+.job-flash {
+    position: fixed;
+    top: 1.25rem;
+    right: 1.25rem;
+    z-index: 2000;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    max-width: min(32rem, calc(100vw - 2.5rem));
+    padding: 0.9rem 1rem;
+    border-radius: 14px;
+    border: 1px solid transparent;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+    font-size: 0.9rem;
+    line-height: 1.45;
+}
+
+.job-flash p {
+    margin: 0;
+    flex: 1;
+}
+
+.job-flash i {
+    margin-top: 0.1rem;
+    font-size: 1rem;
+}
+
+.job-flash-close {
+    border: 0;
+    background: none;
+    cursor: pointer;
+    font-size: 1.25rem;
+    line-height: 1;
+    padding: 0;
+    color: inherit;
+    opacity: 0.6;
+}
+
+.job-flash-close:hover {
+    opacity: 1;
+}
+
+.job-flash-success {
+    background: #ecfdf5;
+    border-color: #a7f3d0;
+    color: #065f46;
+}
+
+.job-flash-warning {
+    background: #fffbeb;
+    border-color: #fde68a;
+    color: #92400e;
+}
+
+.job-flash-error {
+    background: #fef2f2;
+    border-color: #fecaca;
+    color: #991b1b;
+}
+
+.job-flash-enter-active,
+.job-flash-leave-active {
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.job-flash-enter-from,
+.job-flash-leave-to {
+    opacity: 0;
+    transform: translateY(-0.5rem);
+}
+
+@media (max-width: 640px) {
+    .job-flash {
+        top: 0.75rem;
+        right: 0.75rem;
+        left: 0.75rem;
+        max-width: none;
+    }
+}
+
+/* Why a release is held, and what each report's standing with the client is. */
+.release-blocked-banner {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    margin: 0 0 1rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid #fde68a;
+    border-left: 4px solid #d97706;
+    border-radius: 12px;
+    background: #fffbeb;
+    color: #92400e;
+}
+
+.release-blocked-banner strong {
+    display: block;
+    margin-bottom: 0.25rem;
+}
+
+.release-blocked-banner p {
+    margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+
+.release-blocked-list {
+    margin: 0.5rem 0 0;
+    padding-left: 1.1rem;
+    font-size: 0.85rem;
+}
+
+.release-count-sent {
+    background: #ecfdf5;
+    color: #065f46;
+}
+
+.report-release-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px dashed #e2e8f0;
+}
+
+.report-sent-stamp,
+.report-unsent-stamp {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+
+.report-sent-stamp {
+    color: #047857;
+}
+
+.report-unsent-stamp {
+    color: #64748b;
+}
 
 .job-details-page {
     background:

@@ -63,11 +63,14 @@ class ApprovalCommentsTest extends TestCase
         $crew = $this->tech('Gordon Ochieng Okello');
         $sr->update(['technician_id' => $lead->id, 'lead_technician_id' => $lead->id]);
 
+        // Finished: this fixture is used by a test that signs the job off,
+        // and a split job can no longer be closed with a task outstanding.
         $task = ServiceSubTask::create([
             'service_request_id' => $sr->id,
             'title' => 'Roof sheeting',
             'technician_id' => $crew->id,
-            'status' => ServiceSubTask::STATUS_ASSIGNED,
+            'status' => ServiceSubTask::STATUS_COMPLETED,
+            'progress_percentage' => 100,
             'agreed_compensation' => 45000,
         ]);
 

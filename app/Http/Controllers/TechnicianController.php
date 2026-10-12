@@ -1329,25 +1329,63 @@ class TechnicianController extends Controller
             // previous %, which leaves the payment system unable to bill
             // the remaining balance.
             //
-            // On a project with sub-tasks the lead may never file a report
-            // in their own name — the crew files them per sub-task. Scoping
-            // the check to the lead's own reports would leave such a job
-            // impossible to close, so read the job-wide validated progress
-            // there and keep the per-technician check for solo jobs.
+            // On a split job this read the most recent validated report of
+            // any kind and took its validated_percent as the job's. But a
+            // sub-task report's percentage is that sub-task's, so one trade
+            // finishing unlocked the whole job: jobs closed at "100%" with a
+            // second trade sitting at 0% and never asked for. Three jobs
+            // reached a completed status that way.
+            //
+            // A split job is finished when its sub-tasks are, so that is what
+            // is asked. The whole-job report is still required alongside —
+            // it is the lead's own statement that the job is done, and
+            // ProgressService::hasLeadSignOff (which decides whether the
+            // rollup may move the job to pending confirmation) has always
+            // required one. The two agree now; before, this guard was the
+            // weaker of the pair and let work through the other would not.
+            $isSplit = $serviceRequest->isSplitIntoSubTasks();
+
+            if ($isSplit) {
+                $outstanding = $serviceRequest->subTasks()
+                    ->where('progress_percentage', '<', 100)
+                    ->orderBy('progress_percentage')
+                    ->get(['title', 'progress_percentage']);
+
+                if ($outstanding->isNotEmpty()) {
+                    return back()->with('error', sprintf(
+                        'This job cannot be closed while %d of its tasks %s unfinished: %s. '
+                        . 'Each one needs a validated 100%% report before the job is signed off.',
+                        $outstanding->count(),
+                        $outstanding->count() === 1 ? 'is' : 'are',
+                        $outstanding
+                            ->map(fn ($task) => sprintf('%s (%d%%)', $task->title, (int) $task->progress_percentage))
+                            ->implode(', ')
+                    ));
+                }
+            }
+
+            // The lead's own whole-job report. Scoped to this technician on a
+            // solo job, as before; on a split job the lead files it in their
+            // own name and a crew member cannot, so the scope is the job.
             $validatedQuery = $serviceRequest->progressReports()
                 ->where('is_validated', true)
-                ->orderBy('report_date', 'desc');
+                ->whereNull('service_sub_task_id');
 
-            if (!$serviceRequest->has_sub_tasks) {
+            if (!$isSplit) {
                 $validatedQuery->where('technician_id', $technician->id);
             }
 
-            $latestValidatedPct = (int) ($validatedQuery->value('validated_percent') ?? 0);
+            // Highest, not latest. report_date carries no time, so "the most
+            // recent" was a coin toss between two reports filed on the same
+            // day — the same trap ProgressService::highestValidatedWholeJobPercent
+            // was already fixed for.
+            $latestValidatedPct = (int) ($validatedQuery->max('validated_percent') ?? 0);
 
             if ($latestValidatedPct < 100) {
                 return back()->with('error',
-                    'Submit a 100% progress report first (and wait for admin validation) before marking the job complete. ' .
-                    'The latest validated progress on this job is ' . $latestValidatedPct . '%.'
+                    'Submit a 100% progress report for the job as a whole (and wait for admin validation) '
+                    . 'before marking it complete. '
+                    . 'The highest validated whole-job progress is ' . $latestValidatedPct . '%.'
                 );
             }
 

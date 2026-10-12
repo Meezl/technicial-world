@@ -67,11 +67,16 @@ class ClientVerificationTest extends TestCase
         $sr->update(['technician_id' => $lead->id, 'lead_technician_id' => $lead->id]);
 
         if ($withSubTasks) {
+            // Finished, because this fixture walks the job all the way to a
+            // client sign-off and a split job can no longer be closed with a
+            // task outstanding. It used to sit at 0% here and close anyway,
+            // which is the defect these preconditions were hiding.
             ServiceSubTask::create([
                 'service_request_id' => $sr->id,
                 'title' => 'Roof sheeting',
                 'technician_id' => $crew->id,
-                'status' => ServiceSubTask::STATUS_ASSIGNED,
+                'status' => ServiceSubTask::STATUS_COMPLETED,
+                'progress_percentage' => 100,
                 'agreed_compensation' => 45000,
             ]);
         }
