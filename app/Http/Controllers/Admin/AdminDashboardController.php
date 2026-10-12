@@ -1469,6 +1469,17 @@ class AdminDashboardController extends Controller
         // Update service request
         $serviceRequest->update([
             'technician_id' => $technician->id,
+            // The counterpart of the fix in assignLeadTechnician, which had
+            // the same split the other way round. One technician on a job is
+            // that job's lead — isLeadTechnician() has always said so, falling
+            // back to technician_id when no lead is named — but the column was
+            // left null, so the two disagreed on paper.
+            //
+            // That gap is what let assignSubTaskTechnician hand the job to
+            // somebody else: it asked "is there a lead yet?", read a null, and
+            // took the answer to mean the job was unstaffed. Naming the lead
+            // here closes it at the source as well as at that check.
+            'lead_technician_id' => $technician->id,
             'status' => 'assigned',
             'assigned_at' => now(),
             'commencement_at' => $commencementAt,
@@ -5307,8 +5318,21 @@ class AdminDashboardController extends Controller
 
         $this->absorbBareCrewPlace($serviceRequest, $technician, $assignment);
 
-        // Determine if this is the first assigned technician (becomes lead)
-        $isFirstAssignment = !$serviceRequest->lead_technician_id;
+        // Is anybody already carrying this job?
+        //
+        // This asked only whether lead_technician_id was set, and a job staffed
+        // through the single-technician route has a technician_id and no named
+        // lead. So the first sub-task assignment on such a job read "no lead",
+        // decided it was the first assignment, and wrote BOTH columns to the
+        // sub-task's technician — handing the whole job to a crew member who
+        // had been given one task on it. The technician who had been running
+        // it was displaced, and their dues went with them: the assignment row
+        // survives, but nothing on the job points at them any more, so the
+        // fee the office agreed simply stops being shown.
+        //
+        // The test is now the one ServiceRequest::isLeadTechnician() uses —
+        // either column means somebody holds this job.
+        $isFirstAssignment = !$serviceRequest->lead_technician_id && !$serviceRequest->technician_id;
 
         if ($isFirstAssignment) {
             $serviceRequest->update([
@@ -5325,6 +5349,14 @@ class AdminDashboardController extends Controller
             if ($serviceRequest->user && $serviceRequest->user->email) {
                 Mail::to($serviceRequest->user->email)->send(new TechnicianAssigned($serviceRequest, $technician));
             }
+        } elseif (!$serviceRequest->lead_technician_id && $serviceRequest->technician_id) {
+            // Somebody holds the job without being named its lead — a job
+            // staffed before it was broken into tasks. Say so, rather than
+            // leaving a project whose lead the page reports as nobody. The
+            // office reading "No lead technician assigned yet" on a job that
+            // plainly has one is how the lead came to be reassigned by hand in
+            // the first place.
+            $serviceRequest->update(['lead_technician_id' => $serviceRequest->technician_id]);
         }
 
         // Update technician availability
