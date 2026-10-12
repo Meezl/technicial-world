@@ -105,6 +105,32 @@ class NewRequestAlertTest extends TestCase
             ->assertDontSeeInHtml('within 2 hours');
     }
 
+    public function test_the_portal_tells_the_client_the_same_thing_the_email_did(): void
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-10-14 09:00', config('app.timezone')));
+
+        $this->actingAs($this->client)->post(route('service-requests.store'), [
+            'service_category_id' => $this->category->id,
+            'description' => 'Leak in the wall, no rush about it.',
+            'location' => 'Lavington, Nairobi',
+            'urgency' => 'low',
+        ]);
+
+        $sr = ServiceRequest::latest('id')->firstOrFail();
+
+        // The promise is on the request, so the status page can state it
+        // rather than saying "shortly" — which told the client nothing and
+        // agreed with nothing the email said.
+        $this->assertNotNull($sr->response_due_at, 'The request carries no promise for the portal to show.');
+
+        $this->actingAs($this->client)
+            ->get("/client/request-status/{$sr->id}")
+            ->assertOk()
+            ->assertInertia(fn ($page) => $page
+                ->where('serviceRequest.response_due_at', fn ($due) => !empty($due))
+                ->where('serviceRequest.urgency', 'low'));
+    }
+
     public function test_an_overnight_request_is_never_promised_a_time_in_the_night(): void
     {
         $this->travelTo(CarbonImmutable::parse('2026-10-14 23:00', config('app.timezone')));

@@ -144,6 +144,15 @@ class ServiceRequestController extends Controller
                 'id' => $serviceRequest->id,
                 'request_id' => $serviceRequest->request_id,
                 'service_category' => $serviceRequest->serviceCategory?->name,
+                // The same promise the confirmation email makes. The screen
+                // said "routed for review" while the email named a time, so
+                // the client was told two different things about the same
+                // request within a second of each other.
+                'urgency' => $serviceRequest->urgency,
+                'respond_by' => $serviceRequest->response_due_at
+                    ? \App\Services\ResponseTargetService::make()
+                        ->phrase($serviceRequest->response_due_at)
+                    : null,
             ]);
     }
 

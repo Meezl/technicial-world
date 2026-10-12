@@ -64,9 +64,32 @@
 
                     <!-- Pending RFQ -->
                     <div v-else-if="serviceRequest.rfq_status === 'pending'" class="rfq-pending">
+                        <!-- The promise, where a client checks back for it.
+                             "Shortly" told them nothing and agreed with
+                             nothing: the confirmation email named a time, and
+                             a client wondering whether to chase us had no way
+                             to know what it was. -->
                         <div class="info-message">
                             <i class="fas fa-clock"></i>
-                            <p>Your service request is being reviewed by our team. We will send you a quotation shortly.</p>
+                            <p v-if="respondByPhrase">
+                                Your request is with our team. You marked it
+                                <strong>{{ serviceRequest.urgency }}</strong> urgency, so we will come back to you
+                                <strong>{{ respondByPhrase }}</strong>.
+                            </p>
+                            <p v-else>Your service request is being reviewed by our team. We will send you a quotation shortly.</p>
+                        </div>
+
+                        <!-- Said plainly rather than left for them to work
+                             out. A client who can see we are late is a client
+                             who does not have to wonder whether they were
+                             forgotten. -->
+                        <div v-if="responseOverdue" class="info-message info-message-late">
+                            <i class="fas fa-triangle-exclamation"></i>
+                            <p>
+                                We are past the time we gave you, and we are sorry. Your request is still open
+                                and the office has been alerted — if you would like to chase it, reply to your
+                                confirmation email or call us on 0117 962 395.
+                            </p>
                         </div>
                     </div>
 
@@ -1704,6 +1727,39 @@ const jumpToPaymentForm = () => {
 // decision can sit well below the fold on a long quote. Landing them on the
 // page and leaving them to find it is most of the distance between "I clicked
 // approve" and an approval the office actually received.
+// The same promise the confirmation email made, phrased the same way. Built
+// here rather than passed through, so it stays true as the day moves on.
+const respondByPhrase = computed(() => {
+    const due = props.serviceRequest.response_due_at
+    if (!due) return null
+
+    const at = new Date(due)
+    if (Number.isNaN(at.getTime())) return null
+
+    const time = at.toLocaleTimeString('en-KE', { hour: 'numeric', minute: '2-digit' }).toLowerCase()
+    const today = new Date()
+    const sameDay = (a, b) => a.toDateString() === b.toDateString()
+
+    if (sameDay(at, today)) return `by ${time} today`
+
+    const tomorrow = new Date(today)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    if (sameDay(at, tomorrow)) return `by ${time} tomorrow`
+
+    const within7 = (at - today) / 86400000 < 7
+    return within7
+        ? `by ${at.toLocaleDateString('en-KE', { weekday: 'long' })} at ${time}`
+        : `by ${at.toLocaleDateString('en-KE', { day: 'numeric', month: 'short' })} at ${time}`
+})
+
+const responseOverdue = computed(() => {
+    const due = props.serviceRequest.response_due_at
+    if (!due || props.serviceRequest.rfq_status !== 'pending') return false
+
+    const at = new Date(due)
+    return !Number.isNaN(at.getTime()) && at < new Date()
+})
+
 const decisionHighlighted = ref(false)
 
 const jumpToDecision = () => {
@@ -2594,6 +2650,13 @@ defineOptions({
  * to do exactly this, and the old pair of ordinary buttons was quieter than
  * the green tick they had already pressed in their inbox.
  */
+.info-message-late {
+    margin-top: 0.75rem;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #9a3412;
+}
+
 .quote-decision {
     margin-top: 1.5rem;
     padding: 1.25rem;
