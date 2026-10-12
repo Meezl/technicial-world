@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
+use App\Models\AuditLog;
 use App\Models\ServiceSubTask;
 use App\Models\ServiceRequest;
 use App\Models\Technician;
@@ -687,6 +688,24 @@ class TechnicianController extends Controller
             ]);
         }
 
+        // Tools leaving the store against a name is the start of the chain
+        // that ends in a technician being charged for something they say they
+        // never had. The office's side of it — issuing, confirming a return —
+        // is recorded; the asking was not.
+        AuditLog::log(
+            AuditLog::ACTION_CREATED,
+            $toolRequest,
+            null,
+            [
+                'event' => 'tool_request_submitted',
+                'technician_id' => $technician->id,
+                'service_request_id' => $data['service_request_id'] ?? null,
+                'urgency' => $toolRequest->urgency,
+                'notes' => $toolRequest->notes,
+                'items' => $toolRequest->items()->get(['tool_id', 'tool_name_requested', 'quantity'])->toArray(),
+            ]
+        );
+
         // Let the office know there is a request waiting.
         app(\App\Services\NotificationService::class)->notifyToolRequestSubmitted($toolRequest);
 
@@ -720,6 +739,17 @@ class TechnicianController extends Controller
             'decided_at'     => now(),
             'decision_notes' => 'Cancelled by technician.',
         ]);
+
+        AuditLog::log(
+            AuditLog::ACTION_STATE_CHANGED,
+            $toolRequest,
+            ['status' => ToolRequest::STATUS_PENDING],
+            [
+                'event' => 'tool_request_cancelled_by_technician',
+                'status' => ToolRequest::STATUS_CANCELLED,
+                'technician_id' => $technician->id,
+            ]
+        );
 
         return back()->with('success', 'Tool request cancelled.');
     }
@@ -825,9 +855,21 @@ class TechnicianController extends Controller
             'bio'            => 'nullable|string|max:1000',
         ]);
 
+        // Read before anything is written. Two of these are applied on the
+        // spot and two go to an approval queue, so without a "before" the
+        // entry cannot say what the office actually agreed to.
+        $before = [
+            'phone' => $user->phone,
+            'skills' => array_values(array_filter((array) ($technician->skills ?? []))),
+            'bio' => $technician->bio,
+            'profile_photo_path' => $technician->profile_photo_path,
+        ];
+        $applied = [];
+
         // === Auto-applied fields (low risk) ============================
         if ($request->filled('phone')) {
             $user->update(['phone' => $request->phone]);
+            $applied['phone'] = $request->phone;
         }
 
         if ($request->hasFile('profile_photo')) {
@@ -837,6 +879,7 @@ class TechnicianController extends Controller
             $technician->update([
                 'profile_photo_path' => StoredImage::put($request->file('profile_photo'), 'technician-photos/' . $technician->id),
             ]);
+            $applied['profile_photo_path'] = $technician->profile_photo_path;
         }
 
         // === Approval-gated fields (skills + bio) ======================
@@ -867,7 +910,31 @@ class TechnicianController extends Controller
         if ($changed) {
             $pending['submitted_at'] = now()->toIso8601String();
             $technician->update(['pending_profile_changes' => $pending]);
+
+            // A technician's skills decide which jobs they are matched to, so
+            // the submission is logged as well as the admin's decision on it.
+            // Approving a change whose request left no trace means the trail
+            // starts with somebody agreeing to something unrecorded.
+            AuditLog::log(
+                AuditLog::ACTION_UPDATED,
+                $technician,
+                $before,
+                array_merge($applied, [
+                    'event' => 'technician_profile_submitted',
+                    'pending_profile_changes' => array_diff_key($pending, ['submitted_at' => null]),
+                ])
+            );
+
             return back()->with('success', 'Profile updated. Skills and bio changes are now awaiting admin approval.');
+        }
+
+        if ($applied) {
+            AuditLog::log(
+                AuditLog::ACTION_UPDATED,
+                $technician,
+                $before,
+                array_merge($applied, ['event' => 'technician_profile_updated'])
+            );
         }
 
         return back()->with('success', 'Profile updated successfully.');
@@ -884,7 +951,22 @@ class TechnicianController extends Controller
             return back()->with('error', 'Technician profile not found');
         }
 
+        $withdrawn = (array) ($technician->pending_profile_changes ?? []);
+
         $technician->update(['pending_profile_changes' => null]);
+
+        if ($withdrawn) {
+            AuditLog::log(
+                AuditLog::ACTION_UPDATED,
+                $technician,
+                ['pending_profile_changes' => $withdrawn],
+                [
+                    'event' => 'technician_profile_changes_withdrawn',
+                    'pending_profile_changes' => null,
+                ]
+            );
+        }
+
         return back()->with('success', 'Pending profile changes withdrawn.');
     }
 
@@ -917,7 +999,20 @@ class TechnicianController extends Controller
 
         // Replace existing document of the same type
         $existing = $technician->documents()->where('document_type', $request->document_type)->first();
+        $replaced = null;
+
         if ($existing) {
+            // What is being written over, captured before it goes. Replacing a
+            // licence clears its verification, so an upload here can quietly
+            // undo an office decision — the one case where knowing which file
+            // was displaced actually matters.
+            $replaced = [
+                'file_name' => $existing->file_name,
+                'verified' => (bool) $existing->verified,
+                'verified_by' => $existing->verified_by,
+                'verified_at' => (string) $existing->verified_at,
+            ];
+
             \Illuminate\Support\Facades\Storage::disk('public')->delete($existing->file_path);
             $existing->update([
                 'file_path' => $path,
@@ -934,6 +1029,22 @@ class TechnicianController extends Controller
                 'file_name' => $file->getClientOriginalName(),
             ]);
         }
+
+        AuditLog::log(
+            $existing ? AuditLog::ACTION_UPDATED : AuditLog::ACTION_CREATED,
+            $technician,
+            $replaced,
+            [
+                'event' => $existing ? 'technician_document_replaced' : 'technician_document_uploaded',
+                'document_type' => $request->document_type,
+                'file_name' => $file->getClientOriginalName(),
+                'size_bytes' => $file->getSize(),
+                // Stated outright rather than left to be inferred from the
+                // old values: a replacement sends the document back to
+                // unverified whatever the office had already decided.
+                'verification_reset' => (bool) ($replaced['verified'] ?? false),
+            ]
+        );
 
         return back()->with('success', 'Document uploaded successfully.');
     }
@@ -954,9 +1065,23 @@ class TechnicianController extends Controller
             'availability' => 'required|in:available,busy',
         ]);
 
+        $availabilityBefore = $technician->availability;
+
         $technician->update([
             'availability' => $request->availability,
         ]);
+
+        // Allocation reads this, so "nobody was free" is an answer the office
+        // may later have to show the working for.
+        AuditLog::log(
+            AuditLog::ACTION_UPDATED,
+            $technician,
+            ['availability' => $availabilityBefore],
+            [
+                'event' => 'technician_availability_changed',
+                'availability' => $request->availability,
+            ]
+        );
 
         return back()->with('success', 'Availability updated');
     }
@@ -1147,19 +1272,55 @@ class TechnicianController extends Controller
         app(\App\Services\AssignmentResponseService::class)->acceptAllFor($serviceRequest, $technician);
 
         if ($action === 'en_route') {
+            $statusBefore = $serviceRequest->status;
+            $startedBefore = $serviceRequest->started_at;
+
             $serviceRequest->update([
                 'status' => 'in_progress',
                 'started_at' => $serviceRequest->started_at ?? now(),
                 // 'progress_percentage' => 25, // Optional: managed by subtasks usually
             ]);
 
+            // Started on site without passing through transitionState, which
+            // is what audits every other status move on a job — so the moment
+            // work actually began was the one step of the pipeline writing
+            // nothing. It is also the figure an SLA argument turns on, and the
+            // counterpart of the client's own arrival confirmation.
+            AuditLog::log(
+                AuditLog::ACTION_STATE_CHANGED,
+                $serviceRequest,
+                ['status' => $statusBefore, 'started_at' => (string) $startedBefore],
+                [
+                    'event' => 'technician_en_route',
+                    'status' => 'in_progress',
+                    'started_at' => (string) $serviceRequest->fresh()->started_at,
+                    'technician_id' => $technician->id,
+                ]
+            );
+
             // Automatically set technician status to busy
             $technician->update(['availability' => 'busy']);
         } elseif ($action === 'on_site') {
+            $arrivedBefore = (bool) $serviceRequest->technician_arrived;
+
             $serviceRequest->update([
                 'technician_arrived' => true,
                 // 'progress_percentage' => 50,
             ]);
+
+            // The technician's own arrival stamp. The client has one too, and
+            // a dispute is usually about the distance between them, so both
+            // sides of it need to be in the record.
+            AuditLog::log(
+                AuditLog::ACTION_UPDATED,
+                $serviceRequest,
+                ['technician_arrived' => $arrivedBefore],
+                [
+                    'event' => 'technician_on_site',
+                    'technician_arrived' => true,
+                    'technician_id' => $technician->id,
+                ]
+            );
         } elseif ($action === 'completed') {
             // Block "Mark Complete" unless the technician has a validated
             // 100% progress report. This prevents the schema disconnect
@@ -1249,6 +1410,8 @@ class TechnicianController extends Controller
             'condition' => 'required|in:good,fair,needs_repair,damaged',
         ]);
 
+        $conditionBefore = $tool->condition;
+
         // Assuming a method exists or manually updating
         $tool->update([
             'status' => 'available',
@@ -1256,6 +1419,23 @@ class TechnicianController extends Controller
             'condition' => $request->condition,
             // 'returned_at' => now(), // If column exists
         ]);
+
+        // The technician's own account of the state they handed it back in,
+        // which is what a damage charge is argued against. Unlike PPE, this
+        // return restocks the tool immediately with nobody confirming it, so
+        // this entry is the only record that the handover happened.
+        AuditLog::log(
+            AuditLog::ACTION_UPDATED,
+            $tool,
+            ['technician_id' => $technician->id, 'condition' => $conditionBefore, 'status' => 'issued'],
+            [
+                'event' => 'tool_returned_by_technician',
+                'technician_id' => null,
+                'condition' => $request->condition,
+                'status' => 'available',
+                'returned_by' => $technician->id,
+            ]
+        );
 
         return back()->with('success', 'Tool returned successfully');
     }
@@ -1291,7 +1471,25 @@ class TechnicianController extends Controller
             $toolIssuance->notes = trim($toolIssuance->notes . "\n" . $data['notes']);
         }
 
+        $returnableBefore = $toolIssuance->quantity_returnable;
+
         $toolIssuance->requestReturn((int) $data['quantity']);
+
+        // A request, not a restock — the office confirms it later, and that
+        // confirmation is recorded. The asking was not, so a dispute over PPE
+        // the technician says they handed back began at the office's word.
+        AuditLog::log(
+            AuditLog::ACTION_CREATED,
+            $toolIssuance,
+            ['quantity_returnable' => $returnableBefore],
+            [
+                'event' => 'ppe_return_requested',
+                'quantity' => (int) $data['quantity'],
+                'tool' => $toolIssuance->tool?->name,
+                'notes' => $data['notes'] ?? null,
+                'technician_id' => $technician->id,
+            ]
+        );
 
         // Let the office know there is a return to confirm.
         app(\App\Services\NotificationService::class)->notifyToolReturn(

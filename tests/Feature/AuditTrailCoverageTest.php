@@ -57,6 +57,24 @@ class AuditTrailCoverageTest extends TestCase
         ], $attributes));
     }
 
+    private function technician(): User
+    {
+        $user = User::factory()->create([
+            'role' => User::ROLE_TECHNICIAN,
+            'email_verified_at' => now(),
+        ]);
+
+        \App\Models\Technician::create([
+            'user_id' => $user->id,
+            'technician_id' => 'TECH-' . strtoupper(uniqid()),
+            'specialization' => 'Electrical Installations',
+            'location' => 'Nairobi',
+            'availability' => 'available',
+        ]);
+
+        return $user->fresh();
+    }
+
     /** The entries written for one job, whatever action name they carry. */
     private function entriesFor(ServiceRequest $serviceRequest)
     {
@@ -224,25 +242,20 @@ class AuditTrailCoverageTest extends TestCase
 
     public function test_an_unlogged_write_still_leaves_a_catch_all_entry(): void
     {
-        // The floor under the trail. Exercised through a real route that does
-        // not audit itself — a technician editing their own availability —
-        // because the point of the middleware is the routes nobody
-        // instrumented, and asserting it against a stub would prove nothing.
-        $technician = User::factory()->create([
-            'role' => User::ROLE_TECHNICIAN,
-            'email_verified_at' => now(),
-        ]);
+        // Bound to a throwaway route rather than a real uninstrumented one.
+        // This test first used the technician availability endpoint and then
+        // broke the moment that endpoint was given a named entry of its own —
+        // which is the right outcome for the trail and the wrong property for
+        // a test to rest on. What is being asserted is the middleware, so the
+        // route exists only here and will never acquire a log of its own.
+        \Illuminate\Support\Facades\Route::middleware('web')
+            ->post('/__audit-probe', fn () => response()->noContent());
 
-        \App\Models\Technician::create([
-            'user_id' => $technician->id,
-            'technician_id' => 'TECH-' . strtoupper(uniqid()),
-            'specialization' => 'Electrical Installations',
-            'location' => 'Nairobi',
-            'availability' => 'available',
-        ]);
+        $technician = $this->technician();
 
         $this->actingAs($technician)
-            ->post('/technician/availability', ['availability' => 'busy']);
+            ->post('/__audit-probe', ['note' => 'changed something quietly'])
+            ->assertNoContent();
 
         $entry = AuditLog::where('action', AuditLog::ACTION_REQUEST)
             ->where('user_id', $technician->id)
@@ -251,6 +264,8 @@ class AuditTrailCoverageTest extends TestCase
         $this->assertNotNull($entry, 'An uninstrumented write left no audit entry at all.');
         $this->assertSame(User::ROLE_TECHNICIAN, $entry->new_values['role']);
         $this->assertSame('POST', $entry->new_values['method']);
+        $this->assertSame('/__audit-probe', $entry->new_values['path']);
+        $this->assertSame('changed something quietly', $entry->new_values['input']['note']);
     }
 
     public function test_the_catch_all_does_not_duplicate_an_action_that_logged_itself(): void
@@ -287,6 +302,150 @@ class AuditTrailCoverageTest extends TestCase
             $encoded = json_encode([$entry->old_values, $entry->new_values]);
             $this->assertStringNotContainsString('a-much-longer-secret-1', $encoded);
         }
+    }
+
+    public function test_a_technician_going_en_route_is_audited(): void
+    {
+        $technician = $this->technician();
+        $serviceRequest = $this->request([
+            'status' => 'assigned',
+            'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
+            'technician_id' => $technician->technician->id,
+            // The commencement gate has its own tests; exempting the fixture
+            // the way the migration exempts pre-existing jobs keeps this one
+            // about the audit entry.
+            'commencement_gated' => false,
+        ]);
+
+        $this->actingAs($technician)
+            ->post("/technician/jobs/{$serviceRequest->id}/status", ['action' => 'en_route']);
+
+        // The moment work actually began. It writes the status directly
+        // rather than through transitionState, so it was the one step of a
+        // job's life leaving no entry — and it is the figure an SLA argument
+        // turns on.
+        $entry = $this->entriesFor($serviceRequest)
+            ->firstWhere(fn ($log) => ($log->new_values['event'] ?? null) === 'technician_en_route');
+
+        $this->assertNotNull($entry, 'A technician starting work left no audit entry.');
+        $this->assertSame($technician->id, $entry->user_id);
+        $this->assertSame('in_progress', $entry->new_values['status']);
+        $this->assertSame('assigned', $entry->old_values['status']);
+    }
+
+    public function test_a_technician_arriving_on_site_is_audited(): void
+    {
+        $technician = $this->technician();
+        $serviceRequest = $this->request([
+            'status' => ServiceRequest::STATUS_IN_PROGRESS,
+            'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
+            'technician_id' => $technician->technician->id,
+            'commencement_gated' => false,
+        ]);
+
+        $this->actingAs($technician)
+            ->post("/technician/jobs/{$serviceRequest->id}/status", ['action' => 'on_site']);
+
+        // Both sides of the arrival are now recorded. A dispute is usually
+        // about the distance between the two stamps, which needs both.
+        $entry = $this->entriesFor($serviceRequest)
+            ->firstWhere(fn ($log) => ($log->new_values['event'] ?? null) === 'technician_on_site');
+
+        $this->assertNotNull($entry, 'A technician arriving on site left no audit entry.');
+        $this->assertFalse($entry->old_values['technician_arrived']);
+        $this->assertTrue($entry->new_values['technician_arrived']);
+    }
+
+    public function test_a_technician_changing_their_availability_is_audited(): void
+    {
+        $technician = $this->technician();
+
+        $this->actingAs($technician)
+            ->post('/technician/availability', ['availability' => 'busy']);
+
+        $entry = AuditLog::where('user_id', $technician->id)
+            ->get()
+            ->firstWhere(fn ($log) => ($log->new_values['event'] ?? null) === 'technician_availability_changed');
+
+        $this->assertNotNull($entry, 'An availability change left no audit entry.');
+        $this->assertSame('available', $entry->old_values['availability']);
+        $this->assertSame('busy', $entry->new_values['availability']);
+        // Named, so the catch-all stays out of its way.
+        $this->assertSame(0, AuditLog::where('action', AuditLog::ACTION_REQUEST)->count());
+    }
+
+    public function test_a_technician_submitting_profile_changes_is_audited(): void
+    {
+        $technician = $this->technician();
+
+        $this->actingAs($technician)->post('/technician/profile/update', [
+            'skills' => ['Three-phase wiring', 'Solar PV'],
+            'bio' => 'Fifteen years on commercial installations.',
+        ]);
+
+        // Skills decide which jobs a technician is matched to. The admin's
+        // decision on the change was audited; the submission was not, so the
+        // trail began with somebody approving something unrecorded.
+        $entry = AuditLog::where('user_id', $technician->id)
+            ->get()
+            ->firstWhere(fn ($log) => ($log->new_values['event'] ?? null) === 'technician_profile_submitted');
+
+        $this->assertNotNull($entry, 'A profile change submission left no audit entry.');
+        $this->assertSame(
+            ['Three-phase wiring', 'Solar PV'],
+            $entry->new_values['pending_profile_changes']['skills']
+        );
+        $this->assertSame([], $entry->old_values['skills']);
+    }
+
+    public function test_a_technician_requesting_tools_is_audited(): void
+    {
+        $technician = $this->technician();
+
+        $this->actingAs($technician)->post('/technician/tool-requests', [
+            'urgency' => 'high',
+            'notes' => 'Needed on site Monday.',
+            'items' => [['tool_name_requested' => 'Insulation tester', 'quantity' => 2]],
+        ]);
+
+        $toolRequest = \App\Models\ToolRequest::firstOrFail();
+
+        $entry = AuditLog::where('auditable_type', \App\Models\ToolRequest::class)
+            ->where('auditable_id', $toolRequest->id)
+            ->get()
+            ->firstWhere(fn ($log) => ($log->new_values['event'] ?? null) === 'tool_request_submitted');
+
+        $this->assertNotNull($entry, 'A tool request left no audit entry.');
+        $this->assertSame($technician->id, $entry->user_id);
+        $this->assertSame('Insulation tester', $entry->new_values['items'][0]['tool_name_requested']);
+    }
+
+    public function test_a_technician_returning_a_tool_records_the_condition_they_claim(): void
+    {
+        $technician = $this->technician();
+
+        $tool = \App\Models\Tool::create([
+            'name' => 'Insulation tester',
+            'category' => 'electrical',
+            'condition' => 'good',
+            'status' => 'issued',
+            'technician_id' => $technician->technician->id,
+        ]);
+
+        $this->actingAs($technician)
+            ->post("/technician/tools/{$tool->id}/return", ['condition' => 'needs_repair']);
+
+        $entry = AuditLog::where('auditable_type', \App\Models\Tool::class)
+            ->where('auditable_id', $tool->id)
+            ->first();
+
+        // This return restocks the tool immediately with nobody confirming
+        // it, so the entry is the only record the handover happened — and the
+        // claimed condition is what a damage charge is argued against.
+        $this->assertNotNull($entry, 'A tool return left no audit entry.');
+        $this->assertSame('good', $entry->old_values['condition']);
+        $this->assertSame('needs_repair', $entry->new_values['condition']);
+        $this->assertSame($technician->id, $entry->user_id);
     }
 
     public function test_the_viewer_can_be_filtered_to_one_role(): void
