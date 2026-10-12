@@ -365,6 +365,28 @@ class ClientController extends Controller
             app(\App\Services\JobConversionService::class)
                 ->tryConvert($serviceRequest->fresh(), Auth::user(), 'client_quote_approval');
 
+            $channel = 'client_portal';
+            // Their proof, in their own inbox. Deferred so the client is not kept
+            // waiting on SMTP, and never allowed to take the approval down with
+            // it: a receipt that fails to send is worth a log line, not a client
+            // told their approval did not go through when it did.
+            $srId = $serviceRequest->id;
+            app()->terminating(function () use ($srId, $channel) {
+                try {
+                    $sr = \App\Models\ServiceRequest::with(['user', 'serviceCategory'])->find($srId);
+                    if (!$sr?->user?->email) {
+                        return;
+                    }
+                    \Illuminate\Support\Facades\Mail::to($sr->user->email)
+                        ->send(new \App\Mail\QuotationApprovalReceipt($sr, $channel));
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('Approval receipt failed', [
+                        'service_request_id' => $srId,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            });
+
             return response()->json(['success' => true, 'message' => 'Quotation approved successfully']);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::error('approveRFQ failed', [

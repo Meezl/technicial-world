@@ -66,23 +66,17 @@
 
         <!-- Action buttons at the top so they don't get hidden under Gmail's "show trimmed content" -->
         <div style="margin: 0 0 22px; text-align: center;">
+            {{-- See the note in quotation.blade.php: a tick and a cross that
+                 both went to the same page and decided nothing. --}}
             <p style="margin: 0 0 10px; font-size: 15px; color: #0F172A;">
                 <strong>Review the revised quotation and let us know your decision.</strong>
             </p>
-            <table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto;">
-                <tr>
-                    <td style="padding:0 6px;">
-                        <a href="{{ url('/client/request-status/' . $serviceRequest->id) }}" class="btn btn-success">
-                            ✓ Approve Revised Quote
-                        </a>
-                    </td>
-                    <td style="padding:0 6px;">
-                        <a href="{{ url('/client/request-status/' . $serviceRequest->id) }}" class="btn btn-danger">
-                            ✕ Decline
-                        </a>
-                    </td>
-                </tr>
-            </table>
+            <a href="{{ url('/client/request-status/' . $serviceRequest->id) }}#quotation-decision" class="btn btn-success">
+                Review the revised quotation &rarr;
+            </a>
+            <p style="margin:12px 0 0;font-size:13px;color:#64748B;">
+                Opens your portal, where you can approve it or ask for changes.
+            </p>
         </div>
 
         <div class="section">

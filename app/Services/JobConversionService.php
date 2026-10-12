@@ -277,6 +277,25 @@ class JobConversionService
             $serviceRequest->user_id
         );
 
+        // Their proof, in their own inbox — and the one the receipt matters
+        // most for, because they never pressed anything to approve.
+        $srId = $serviceRequest->id;
+        app()->terminating(function () use ($srId) {
+            try {
+                $sr = ServiceRequest::with(['user', 'serviceCategory'])->find($srId);
+                if (!$sr?->user?->email) {
+                    return;
+                }
+                \Illuminate\Support\Facades\Mail::to($sr->user->email)
+                    ->send(new \App\Mail\QuotationApprovalReceipt($sr, 'client_payment'));
+            } catch (\Throwable $e) {
+                Log::warning('Approval receipt failed', [
+                    'service_request_id' => $srId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        });
+
         return $serviceRequest->fresh();
     }
 
