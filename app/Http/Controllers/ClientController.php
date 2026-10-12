@@ -317,6 +317,7 @@ class ClientController extends Controller
                 // the moment the quote is revised again.
                 'client_quote_approved_by' => Auth::id(),
                 'client_quote_approved_at' => now(),
+                'quote_approval_channel' => 'client_portal',
                 'approved_quote_revision' => $currentRevision,
                 'approved_quote_amount' => $serviceRequest->quote_amount,
             ];

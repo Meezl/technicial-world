@@ -110,6 +110,7 @@ class QuotationService
                 'status' => ServiceRequest::STATUS_AWAITING_PAYMENT,
                 'client_quote_approved_by' => $approver?->id,
                 'client_quote_approved_at' => $approver ? now() : null,
+                'quote_approval_channel' => $approver ? 'client_portal' : null,
                 'approved_quote_amount' => $quotation->grand_total,
                 // The version stands in for the revision counter the flat
                 // quote path uses: it is the record of which figures were on

@@ -179,11 +179,105 @@ class JobConversionService
             return false;
         }
 
+        // Money in is an answer. Taken before the conversion check, because
+        // the check is what the unrecorded approval was blocking.
+        $serviceRequest = $this->recordDepositConsent($serviceRequest) ?? $serviceRequest;
+
         if (!$this->canConvert($serviceRequest)) {
             return false;
         }
 
         return $this->convert($serviceRequest, $by, $via);
+    }
+
+    /**
+     * A client who has paid the deposit has agreed to the quotation.
+     *
+     * The office bills the deposit when it sends the quotation — see
+     * raiseDepositRequest, which has no approval check, unlike the
+     * payment-request modal. So the client receives the figures and the thing
+     * to pay in the same breath. Pay it and nothing recorded an approval,
+     * because no payment path wrote rfq_status; the request sat at "awaiting
+     * approval" over money already banked, and this very service refused to
+     * convert it with "The client has not approved the quotation yet" until
+     * somebody approved on its behalf. REQ-AAO0LJ was paid in full within two
+     * hours of being quoted and spent the next day looking unapproved.
+     *
+     * approveRFQ has always held this belief — "a client who settled the
+     * deposit before getting round to the approve button has already said yes
+     * with their money" — but only acted on it once they pressed approve
+     * anyway, which is the one case where it was not needed.
+     *
+     * Recorded under its own channel rather than dressed up as a portal
+     * click. How somebody agreed is exactly what a dispute turns on, and an
+     * approval that claims a button was pressed when it was not would be the
+     * wrong answer written confidently.
+     *
+     * @return ServiceRequest|null The refreshed request, or null if nothing
+     *         was recorded.
+     */
+    public function recordDepositConsent(ServiceRequest $serviceRequest): ?ServiceRequest
+    {
+        // Only from awaiting-approval. An approved request needs nothing, and
+        // a client who has declined has said the opposite in words — money
+        // arriving afterwards is a question for the office, not consent.
+        if ($serviceRequest->rfq_status !== ServiceRequest::RFQ_STATUS_QUOTED) {
+            return null;
+        }
+
+        // A management company agrees through its own chain, which exists so
+        // that a caretaker cannot approve their own request. Their float is
+        // money we already hold, so payment says nothing about whether this
+        // particular job was sanctioned — reading it as consent would route
+        // around the chain with the organisation's own money.
+        if ($serviceRequest->isCorporate()) {
+            return null;
+        }
+
+        // The deposit, not a part of it. depositSettled holds a part payment
+        // against a billed deposit to be exactly that.
+        if (!$this->depositSettled($serviceRequest)) {
+            return null;
+        }
+
+        $approvedAt = now();
+        $revision = (int) ($serviceRequest->quote_revision_count ?? 0);
+
+        $serviceRequest->update([
+            'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
+            // The client whose request it is. Not whoever happened to be
+            // signed in — an offline payment is confirmed by the office, and
+            // naming them here would read as the office approving its own
+            // quotation.
+            'client_quote_approved_by' => $serviceRequest->user_id,
+            'client_quote_approved_at' => $approvedAt,
+            'quote_approval_channel' => 'client_payment',
+            'approved_quote_revision' => $revision,
+            'approved_quote_amount' => $serviceRequest->quote_amount,
+        ]);
+
+        AuditLog::log(
+            AuditLog::ACTION_APPROVAL,
+            $serviceRequest,
+            ['rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED],
+            [
+                'event' => 'quotation_accepted_by_payment',
+                'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
+                'approved_by' => $serviceRequest->user_id,
+                'approved_at' => $approvedAt->toDateTimeString(),
+                'approved_quote_revision' => $revision,
+                'approved_quote_amount' => (string) $serviceRequest->quote_amount,
+                'deposit_required' => (string) $this->depositRequired($serviceRequest),
+                'deposit_paid' => (string) $this->depositPaid($serviceRequest),
+                // Says how they agreed. A client portal approval is a button;
+                // this is a bank transfer, and the record should not pretend
+                // otherwise.
+                'channel' => 'client_payment',
+            ],
+            $serviceRequest->user_id
+        );
+
+        return $serviceRequest->fresh();
     }
 
     /**

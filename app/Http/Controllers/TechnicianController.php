@@ -365,6 +365,10 @@ class TechnicianController extends Controller
         'approved_quote_revision',
         'client_quote_approved_by',
         'client_quote_approved_at',
+        // How the client agreed — a portal click or a deposit paid. Same
+        // reasoning as the stamps above it: the quotation's paperwork, and
+        // nothing a technician needs to do the work.
+        'quote_approval_channel',
         'proxy_quote_approved_by',
         'proxy_quote_approved_at',
         // Rate-schedule quoting. Which price list a job was quoted from,
