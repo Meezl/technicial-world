@@ -411,6 +411,25 @@ class ClientController extends Controller
             'rejection_reason' => $request->reason ? "Client declined: " . $request->reason : "Client declined the quotation"
         ]);
 
+        // The mirror of the entry approveRFQ writes. A decline is the decision
+        // the office is more often asked to account for later — a job that was
+        // quoted and never ran — and it was the one leaving no record of who
+        // said no, when, or on what grounds.
+        \App\Models\AuditLog::log(
+            \App\Models\AuditLog::ACTION_STATE_CHANGED,
+            $serviceRequest,
+            ['rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED],
+            [
+                'rfq_status' => ServiceRequest::RFQ_STATUS_REJECTED,
+                'declined_by' => Auth::id(),
+                'declined_at' => now()->toDateTimeString(),
+                'reason' => $request->reason,
+                'quote_revision' => (int) ($serviceRequest->quote_revision_count ?? 0),
+                'quote_amount' => (string) $serviceRequest->quote_amount,
+                'channel' => 'client_portal',
+            ]
+        );
+
         return response()->json(['success' => true, 'message' => 'Quotation declined']);
     }
 
@@ -597,6 +616,24 @@ class ClientController extends Controller
             ]);
         }
 
+        // A bill the client raised on themselves. Worth recording as theirs:
+        // every other payment request on a job is raised by the office, and a
+        // reconciliation that cannot tell the two apart will go looking for
+        // the admin who raised this one.
+        \App\Models\AuditLog::log(
+            \App\Models\AuditLog::ACTION_PAYMENT,
+            $paymentRequest,
+            null,
+            [
+                'event' => 'balance_raised_by_client',
+                'service_request' => $serviceRequest->request_id,
+                'amount' => (string) $amount,
+                'percentage' => (string) $percentage,
+                'milestone' => $milestone?->label,
+                'raised_by' => Auth::id(),
+            ]
+        );
+
         return back()->with('success',
             $milestone
                 ? sprintf('Payment for "%s" is ready — choose how you would like to pay below.', $milestone->label)
@@ -622,6 +659,11 @@ class ClientController extends Controller
             ], 400);
         }
 
+        // Read before the update: once the model saves, its original
+        // attributes are re-synced and the "before" value is gone.
+        $arrivedBefore = (bool) $serviceRequest->technician_arrived;
+        $statusBefore = $serviceRequest->status;
+
         // Idempotent: confirming twice is a no-op success.
         $update = ['technician_arrived' => true];
         if ($serviceRequest->status === 'assigned') {
@@ -643,6 +685,23 @@ class ClientController extends Controller
                 'error' => 'Could not confirm arrival right now. Please try again.',
             ], 500);
         }
+
+        // The client's word on when the crew actually turned up. This is the
+        // figure an SLA argument turns on, and it is the client's own stamp
+        // rather than the technician's, so it is kept with the address it was
+        // sent from.
+        \App\Models\AuditLog::log(
+            \App\Models\AuditLog::ACTION_UPDATED,
+            $serviceRequest,
+            ['technician_arrived' => $arrivedBefore, 'status' => $statusBefore],
+            [
+                'event' => 'client_confirmed_arrival',
+                'technician_arrived' => true,
+                'confirmed_by' => Auth::id(),
+                'confirmed_at' => now()->toDateTimeString(),
+                'status' => $serviceRequest->fresh()->status,
+            ]
+        );
 
         return response()->json(['success' => true, 'message' => 'Technician arrival confirmed']);
     }
@@ -668,7 +727,28 @@ class ClientController extends Controller
         // everybody's work on it without the lead or the office seeing any of
         // it. Their confirmation is evidence for the office's review, not a
         // substitute for it.
+        $statusBefore = $serviceRequest->status;
+
         app(\App\Services\JobService::class)->clientConfirmCompletion($serviceRequest);
+
+        // Recorded here rather than left to transitionState, which is what
+        // audits every other step of a job: this confirmation deliberately
+        // moves no status, so it passed through the pipeline writing nothing
+        // and the client's own sign-off was the one act on a job with no
+        // history behind it.
+        \App\Models\AuditLog::log(
+            \App\Models\AuditLog::ACTION_APPROVAL,
+            $serviceRequest,
+            ['client_confirmed_completion' => false],
+            [
+                'event' => 'client_confirmed_completion',
+                'client_confirmed_completion' => true,
+                'confirmed_by' => Auth::id(),
+                'confirmed_at' => now()->toDateTimeString(),
+                'status' => $statusBefore,
+                'channel' => 'client_portal',
+            ]
+        );
 
         // Deliberately nothing else. Completing every sub-task and crediting
         // the crew is the office's act on final approval — see
@@ -762,6 +842,21 @@ class ClientController extends Controller
             'rating' => $validated['rating'],
             'review' => $validated['comments'] ?? null,
         ]);
+
+        // A score changes a technician's standing on the platform, so who gave
+        // it and from where is worth the same evidence as an approval.
+        \App\Models\AuditLog::log(
+            \App\Models\AuditLog::ACTION_CREATED,
+            $serviceRequest,
+            null,
+            [
+                'event' => 'client_rated_job',
+                'rating' => $validated['rating'],
+                'review' => $validated['comments'] ?? null,
+                'technician_id' => $serviceRequest->technician_id,
+                'rated_by' => Auth::id(),
+            ]
+        );
 
         if ($serviceRequest->technician_id) {
             $tech = \App\Models\Technician::find($serviceRequest->technician_id);

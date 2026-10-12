@@ -73,6 +73,23 @@ class PaymentController extends Controller
                 'status'              => MpesaTransaction::STATUS_INITIATED,
             ]);
 
+            // mpesa_transactions already holds the Safaricom side of this.
+            // The audit entry is the client's side: who pressed pay, from
+            // which address, on which bill — the questions a reconciliation
+            // asks when a push is claimed and no callback ever arrived.
+            AuditLog::log(
+                AuditLog::ACTION_PAYMENT,
+                $paymentRequest,
+                null,
+                [
+                    'event' => 'mpesa_push_initiated',
+                    'amount' => (string) $amount,
+                    'phone_number' => $phoneNumber,
+                    'checkout_request_id' => $result['checkout_request_id'] ?? null,
+                    'service_request' => $accountReference,
+                ]
+            );
+
             return response()->json([
                 'success' => true,
                 'message' => 'Payment initiated. Please check your phone to complete the payment.',
@@ -88,6 +105,21 @@ class PaymentController extends Controller
             'result_desc'        => $result['message'] ?? 'Safaricom rejected STK push',
             'status'             => MpesaTransaction::STATUS_FAILED,
         ]);
+
+        // A refused push is recorded too. "I tried to pay and it would not let
+        // me" is a complaint the office cannot answer from a table of
+        // successes, and the middleware's catch-all skips 4xx responses.
+        AuditLog::log(
+            AuditLog::ACTION_PAYMENT,
+            $paymentRequest,
+            null,
+            [
+                'event' => 'mpesa_push_failed',
+                'amount' => (string) $amount,
+                'phone_number' => $phoneNumber,
+                'reason' => $result['message'] ?? 'Safaricom rejected STK push',
+            ]
+        );
 
         return response()->json([
             'success' => false,
@@ -356,6 +388,26 @@ class PaymentController extends Controller
                 'error' => 'We could not record your payment right now. The team has been notified — please try again or contact support.',
             ], 422);
         }
+
+        // The client's own declaration that they have paid outside the
+        // platform. Confirming one is audited further down; declaring one was
+        // not, so a cheque number could be entered, acted on and later changed
+        // with no record of what was first claimed.
+        AuditLog::log(
+            AuditLog::ACTION_PAYMENT,
+            $paymentRequest,
+            null,
+            [
+                'event' => 'offline_payment_declared',
+                'payment_method' => $paymentMethod,
+                'amount' => (string) $paymentRequest->amount,
+                'cheque_number' => $request->cheque_number,
+                'bank_reference' => $request->bank_reference,
+                'notes' => $request->notes,
+                'evidence_attached' => $request->hasFile('evidence'),
+                'declared_by' => auth()->id(),
+            ]
+        );
 
         $messages = [
             'cheque' => 'Cheque payment recorded. Please submit the cheque to our office for confirmation.',

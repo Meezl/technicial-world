@@ -23,6 +23,10 @@ return Application::configure(basePath: dirname(__DIR__))
             // set-password screen. Appended after Inertia so the redirect it
             // issues is one Inertia understands.
             \App\Http\Middleware\RequirePasswordChange::class,
+            // The floor under the audit trail: any authenticated write that
+            // logged nothing of its own leaves one catch-all entry here.
+            // Appended last so it wraps the handlers it is auditing.
+            \App\Http\Middleware\AuditUserActions::class,
         ]);
 
         $middleware->alias([

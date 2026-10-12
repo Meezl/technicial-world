@@ -5376,15 +5376,37 @@ class AdminDashboardController extends Controller
      */
     public function auditLogs(Request $request)
     {
-        $logs = \App\Models\AuditLog::with('user')
+        $logs = \App\Models\AuditLog::with('user:id,name,email,role')
             ->when($request->action, fn($q, $a) => $q->where('action', $a))
             ->when($request->user_id, fn($q, $u) => $q->where('user_id', $u))
+            // Who acted, not what they acted on. The trail now covers every
+            // role, which makes "show me what the clients did" the question
+            // this page is most often opened to answer, and it could only be
+            // asked one named user at a time.
+            ->when($request->role, fn($q, $role) => $q->whereHas(
+                'user',
+                fn($u) => $u->where('role', $role)
+            ))
+            ->when($request->from, fn($q, $from) => $q->where('created_at', '>=', \Carbon\Carbon::parse($from)->startOfDay()))
+            ->when($request->to, fn($q, $to) => $q->where('created_at', '<=', \Carbon\Carbon::parse($to)->endOfDay()))
             ->orderBy('created_at', 'desc')
-            ->paginate(50);
+            ->paginate(50)
+            ->withQueryString();
 
         return Inertia::render('Admin/AuditLogs', [
             'logs' => $logs,
-            'filters' => $request->only(['action', 'user_id']),
+            'filters' => $request->only(['action', 'user_id', 'role', 'from', 'to']),
+            // Taken from the table rather than hardcoded in the page. The
+            // frontend listed the eleven constants on the model, so the dotted
+            // actions the services write — deposit.opened, quotation.signed,
+            // and everything added since — were unfilterable and invisible as
+            // options even though the rows were right there.
+            'actionTypes' => \App\Models\AuditLog::query()
+                ->select('action')
+                ->distinct()
+                ->orderBy('action')
+                ->pluck('action'),
+            'roles' => \App\Models\User::ROLES,
         ]);
     }
 

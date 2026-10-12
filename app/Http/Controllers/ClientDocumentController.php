@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\ServiceRequest;
 use App\Models\ServiceRequestDocument;
 use Illuminate\Http\Request;
@@ -43,10 +44,12 @@ class ClientDocumentController extends Controller
             'documents.*.max'   => 'Each PDF must be 20 MB or smaller.',
         ]);
 
+        $stored = [];
+
         foreach ($request->file('documents', []) as $file) {
             $path = $file->store('job-documents/' . $serviceRequest->request_id, 'public');
 
-            ServiceRequestDocument::create([
+            $stored[] = ServiceRequestDocument::create([
                 'service_request_id' => $serviceRequest->id,
                 'kind'               => ServiceRequestDocument::KIND_CLIENT_UPLOAD,
                 // The client doesn't name their upload; the file's own name is
@@ -62,7 +65,29 @@ class ClientDocumentController extends Controller
             ]);
         }
 
-        $count = count($request->file('documents', []));
+        $count = count($stored);
+
+        // A drawing or a spec is often how the work is actually described, so
+        // which revision the client put on the job — and when — is as much a
+        // part of the record as the quote built from it.
+        if ($count > 0) {
+            AuditLog::log(
+                AuditLog::ACTION_CREATED,
+                $serviceRequest,
+                null,
+                [
+                    'event' => 'client_shared_documents',
+                    'count' => $count,
+                    'documents' => array_map(fn ($document) => [
+                        'id' => $document->id,
+                        'title' => $document->title,
+                        'original_name' => $document->original_name,
+                        'size_bytes' => $document->size_bytes,
+                    ], $stored),
+                    'uploaded_by' => $request->user()->id,
+                ]
+            );
+        }
 
         return back()->with('success', $count . ' document' . ($count === 1 ? '' : 's') . ' shared on this job.');
     }
@@ -80,8 +105,22 @@ class ClientDocumentController extends Controller
             return back()->with('error', 'You can only remove a document you attached yourself.');
         }
 
+        // Captured before the row goes: a deletion entry that cannot say what
+        // was deleted is the one kind of audit entry that is worse than none.
+        $removed = $document->only(['id', 'title', 'original_name', 'size_bytes', 'path']);
+
         Storage::disk('public')->delete($document->path);
         $document->delete();
+
+        AuditLog::log(
+            AuditLog::ACTION_DELETED,
+            $serviceRequest,
+            $removed,
+            [
+                'event' => 'client_withdrew_document',
+                'removed_by' => $request->user()->id,
+            ]
+        );
 
         return back()->with('success', 'Document removed.');
     }
