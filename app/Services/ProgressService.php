@@ -628,6 +628,33 @@ class ProgressService
     }
 
     /**
+     * The honest percentage, without touching the status.
+     *
+     * recalculate() moves both, which is right when a report lands and wrong
+     * when a job is being reopened: a job with a validated 100% whole-job
+     * report would be walked straight back to pending confirmation by the
+     * rollup, and the reopen would look like it had failed. Here the caller
+     * has already decided the status and only wants the figure corrected —
+     * markCompleted writes a flat 100 on sign-off, so a reopened job is
+     * carrying a number that was never computed from anything.
+     *
+     * Billing is deliberately untouched. A milestone that has raised a
+     * payment request keeps it; progress dropping cannot un-bill.
+     */
+    public function refreshHeadlinePercent(ServiceRequest $serviceRequest): ?int
+    {
+        $percent = $this->headlinePercent($serviceRequest);
+
+        if ($percent === null) {
+            return null;
+        }
+
+        $serviceRequest->update(['progress_percentage' => $percent]);
+
+        return $percent;
+    }
+
+    /**
      * The job's headline percentage.
      *
      * Two things go into it, and the higher one wins:

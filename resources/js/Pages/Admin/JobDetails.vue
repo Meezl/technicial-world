@@ -80,6 +80,18 @@
                             <i class="fas fa-wallet"></i>
                             Payments
                         </Link>
+                        <!-- A job can be recorded as delivered and not be. The
+                             office needs a way back that is not the database. -->
+                        <button
+                            v-if="canReopenJob"
+                            type="button"
+                            class="btn btn-warning hero-action-btn"
+                            @click="showReopen = true"
+                            title="Put this job back to work"
+                        >
+                            <i class="fas fa-rotate-left"></i>
+                            Reopen Job
+                        </button>
                     </div>
                 </div>
             </section>
@@ -647,6 +659,26 @@
                                     <i class="fas fa-plus"></i>
                                     Add Sub-Task
                                 </button>
+                            </div>
+                        </div>
+
+                        <!-- Adding scope to a job the record calls finished.
+                             Allowed, because the record is sometimes wrong —
+                             but the task cannot be worked until the job is
+                             open, so say so here rather than letting it be
+                             discovered at the assign button. -->
+                        <div v-if="isAdmin && atFinishedStage" class="subtask-stage-notice">
+                            <i class="fas fa-circle-info"></i>
+                            <div>
+                                <strong>This job is at {{ formatStatus(job.status) }}.</strong>
+                                <p>
+                                    You can add and staff tasks here, but work cannot start while the job
+                                    is closed off.
+                                    <template v-if="canReopenJob">
+                                        Use <strong>Reopen Job</strong> at the top of the page when the
+                                        record needs to say the job is still running.
+                                    </template>
+                                </p>
                             </div>
                         </div>
 
@@ -2104,6 +2136,66 @@
             </div>
         </div>
 
+        <!-- Reopening. The confirmation is the point of it: the client's record
+             says this was delivered, and the reason entered here is what
+             somebody reads when they ask why it was not. -->
+        <div v-if="showReopen" class="modal-overlay">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h3>Reopen {{ job.request_id }}</h3>
+                    <button @click="showReopen = false" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="reopen-warning">
+                        <strong>This job is on the client's record as {{ formatStatus(job.status) }}.</strong>
+                        <p>
+                            Reopening undoes the record of completion — the sign-off, the client's
+                            confirmation and the closure stamps — and recomputes the job percentage from
+                            the validated reports, rather than leaving the flat 100% a sign-off writes.
+                        </p>
+                        <p>
+                            <strong>Nothing financial moves.</strong> Payments taken, invoices raised and
+                            technician payouts already made stay exactly as they are, and reports the
+                            client has seen stay released. Unwinding any of those is a separate decision.
+                        </p>
+                    </div>
+
+                    <div class="form-group" style="margin-top:1rem;">
+                        <label>Reopen at</label>
+                        <select v-model="reopenForm.to_status" class="form-control">
+                            <option v-for="option in reopenableStatuses" :key="option.value" :value="option.value">
+                                {{ option.label }}
+                            </option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" style="margin-top:.75rem;">
+                        <label>Why is it being reopened?</label>
+                        <textarea
+                            v-model="reopenForm.reason"
+                            rows="3"
+                            class="form-control"
+                            placeholder="e.g. Varnish Work was never started — the job was signed off on the carpentry report alone."
+                        ></textarea>
+                        <small style="color:var(--text-muted);">
+                            Goes in the audit log against this job. At least 10 characters.
+                        </small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button @click="showReopen = false" class="btn btn-secondary">Cancel</button>
+                    <button
+                        @click="submitReopen"
+                        class="btn btn-warning"
+                        :disabled="reopening || reopenForm.reason.trim().length < 10"
+                    >
+                        <i class="fas fa-rotate-left"></i>
+                        {{ reopening ? 'Reopening…' : 'Reopen job' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div v-if="showApproveCompletion" class="modal-overlay">
             <div class="modal-content" @click.stop>
                 <div class="modal-header">
@@ -3131,6 +3223,16 @@ const props = defineProps({
     }
 })
 
+// Defined here rather than further down, because the stage gates and the
+// reopen control both read it. A computed is lazy enough that order did not
+// break anything, but a const used three hundred lines above where it is
+// declared is a trap for whoever edits this next.
+//
+// Overruling a lead is admin-only; the server refuses it for anyone else, so
+// this only decides whether the control is worth showing.
+const page = usePage()
+const isAdmin = computed(() => page.props.auth?.user?.role === 'admin')
+
 // Photo carousel. Any photo strip on the page hands its full set here so the
 // validator can arrow or swipe through them without going back to the grid.
 const carouselPhotos = ref([])
@@ -3464,8 +3566,25 @@ const commencementBlocker = computed(() => props.gating?.commencement_blocker ??
 const liveAuthorisations = computed(() => props.gating?.live_authorisations ?? [])
 const conversionBlocker = computed(() => props.gating?.conversion_blocker ?? null)
 
+// A job that is finished is not a stage work is handed out at — for anyone
+// following the normal run of the job. An admin is the exception: a job can be
+// recorded as delivered and not be, and the person who has to put that right
+// needs the controls, not an explanation of why they are hidden.
+//
+// Only the page was ever enforcing this. The endpoints gate on the client's
+// approval and the float — questions about money, not about stage — so the
+// server has always allowed both. Reopening the job is still the tidier route
+// and the banner says so; this is for the case where somebody is adding a task
+// to a job they are about to reopen anyway.
+const atFinishedStage = computed(() =>
+    ['completed', 'completed_pending_confirmation', 'awaiting_client_verification',
+     'client_query_raised', 'closed', 'archived'].includes(props.job.status)
+)
+
 const atAssignableStage = computed(() =>
-    assignableStatuses.includes(props.job.status) || preFundingStatuses.includes(props.job.status)
+    assignableStatuses.includes(props.job.status)
+    || preFundingStatuses.includes(props.job.status)
+    || (isAdmin.value && atFinishedStage.value)
 )
 
 const canAssignTechnician = computed(() => atAssignableStage.value && !assignmentBlocker.value)
@@ -3483,9 +3602,10 @@ const canReassignTechnician = computed(() =>
     canAssignTechnician.value && !['completed', 'cancelled'].includes(props.job.status)
 )
 
-const canAddSubTasks = computed(() => {
-    return assignableStatuses.includes(props.job.status)
-})
+const canAddSubTasks = computed(() =>
+    assignableStatuses.includes(props.job.status)
+    || (isAdmin.value && atFinishedStage.value)
+)
 
 const authorisationLabel = (type) => props.gating?.authorisation_types?.[type] || type
 
@@ -4000,11 +4120,6 @@ const milestoneLaborReleasedTotal = computed(() => {
         return sum + Number(milestone.labor_release_amount || 0)
     }, 0)
 })
-// Overruling a lead is admin-only; the server refuses it for anyone else, so
-// this only decides whether the control is worth showing.
-const page = usePage()
-const isAdmin = computed(() => page.props.auth?.user?.role === 'admin')
-
 // This page rendered no flash messages at all, on any action.
 //
 // That is how a blocked release reads as a broken button: releasing throws
@@ -4138,6 +4253,37 @@ const pullReportsFromLead = () => {
         onFinish: () => { pullingReports.value = false },
     })
 }
+// ---- Reopening a finished job ----
+//
+// The record says the work was delivered. Undoing that is a decision somebody
+// has to be able to explain later, so it carries a reason and the dialog is
+// explicit about what does not move with it.
+const reopenableStatuses = [
+    { value: 'in_progress', label: 'In progress — the crew is going back' },
+    { value: 'assigned', label: 'Assigned — staffed, not started again yet' },
+    { value: 'ready_for_assignment', label: 'Ready for assignment — needs staffing' },
+    { value: 'suspended', label: 'Suspended — open but on hold' },
+]
+const showReopen = ref(false)
+const reopening = ref(false)
+const reopenForm = reactive({ reason: '', to_status: 'in_progress' })
+
+const canReopenJob = computed(() => isAdmin.value && atFinishedStage.value)
+
+const submitReopen = () => {
+    if (reopenForm.reason.trim().length < 10) return
+    reopening.value = true
+    router.post(`/admin/jobs/${props.job.id}/reopen`, { ...reopenForm }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            showReopen.value = false
+            reopenForm.reason = ''
+            reopenForm.to_status = 'in_progress'
+        },
+        onFinish: () => { reopening.value = false },
+    })
+}
+
 const releasing = ref(false)
 const releaseReportsToClient = () => {
     const n = releasableReports.value.length
@@ -5354,6 +5500,40 @@ defineOptions({
     margin: 0.5rem 0 0;
     padding-left: 1.1rem;
     font-size: 0.85rem;
+}
+
+.subtask-stage-notice {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    margin: 0 0 1rem;
+    padding: 0.8rem 1rem;
+    border: 1px solid #bfdbfe;
+    border-left: 4px solid #2563eb;
+    border-radius: 12px;
+    background: #eff6ff;
+    color: #1e3a8a;
+}
+
+.subtask-stage-notice p {
+    margin: 0.25rem 0 0;
+    font-size: 0.87rem;
+    line-height: 1.5;
+}
+
+.reopen-warning {
+    padding: 0.9rem 1rem;
+    border: 1px solid #fde68a;
+    border-left: 4px solid #d97706;
+    border-radius: 12px;
+    background: #fffbeb;
+    color: #92400e;
+}
+
+.reopen-warning p {
+    margin: 0.5rem 0 0;
+    font-size: 0.87rem;
+    line-height: 1.5;
 }
 
 .validated-by-note {

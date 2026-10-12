@@ -278,6 +278,10 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     // The office's final word on a job the lead has signed off — the third
     // and last stage of completion.
     Route::post('/jobs/{serviceRequest}/approve-completion', [AdminDashboardController::class, 'approveJobCompletion'])->name('admin.jobs.approve-completion');
+    // Putting a finished job back to work. Admin only, from any status, and
+    // always with a reason — the archive's reopen handles cancellations, this
+    // one is for a job recorded as delivered that is not finished after all.
+    Route::post('/jobs/{serviceRequest}/reopen', [AdminDashboardController::class, 'reopenJob'])->name('admin.jobs.reopen');
     Route::post('/jobs/{serviceRequest}/return-for-rework', [AdminDashboardController::class, 'returnJobForRework'])->name('admin.jobs.return-for-rework');
     // The client never came back, or came back unhappy.
     Route::post('/jobs/{serviceRequest}/close-unverified', [AdminDashboardController::class, 'closeWithoutClientVerification'])->name('admin.jobs.close-unverified');

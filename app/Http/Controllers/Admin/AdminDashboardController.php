@@ -4365,6 +4365,49 @@ class AdminDashboardController extends Controller
      * office has looked at it. Only now does it become terminal, get its
      * completion date, and count towards the crew's records.
      */
+    /**
+     * Put a finished job back to work.
+     *
+     * Admin only, and from any status — including the terminal ones, which is
+     * the whole point of it. The archive's reopen covers cancellations only
+     * and restores a known prior status; this one is for a job that was
+     * delivered, or recorded as delivered, and is not finished after all.
+     *
+     * A reason is required because this is the action that has to be
+     * explicable months later: the client's record says the work was done, and
+     * somebody decided otherwise. JobService::reopen says what is and is not
+     * undone — in particular, no money moves.
+     */
+    public function reopenJob(Request $request, ServiceRequest $serviceRequest)
+    {
+        $data = $request->validate([
+            'reason' => 'required|string|min:10|max:500',
+            'to_status' => 'nullable|string|in:' . implode(',', \App\Services\JobService::REOPENABLE_TO),
+        ], [
+            'reason.required' => 'Say why this job is being reopened — it is on the client\'s record as finished.',
+            'reason.min' => 'A few more words: this is the note somebody reads when they ask why the job was reopened.',
+        ]);
+
+        try {
+            $reopened = app(\App\Services\JobService::class)->reopen(
+                $serviceRequest,
+                $request->user(),
+                $data['reason'],
+                $data['to_status'] ?? ServiceRequest::STATUS_IN_PROGRESS
+            );
+        } catch (\RuntimeException $e) {
+            return back()->with('error', $e->getMessage());
+        }
+
+        return back()->with('success', sprintf(
+            '%s reopened at %s. Progress now reads %d%% from the validated reports. '
+            . 'Payments, invoices and technician payouts are untouched.',
+            $reopened->request_id,
+            ServiceRequest::allStatuses()[$reopened->status] ?? $reopened->status,
+            (int) $reopened->progress_percentage
+        ));
+    }
+
     public function approveJobCompletion(Request $request, ServiceRequest $serviceRequest)
     {
         $request->validate([
@@ -5067,7 +5110,7 @@ class AdminDashboardController extends Controller
 
         $maxOrder = $serviceRequest->subTasks()->max('order') ?? 0;
 
-        ServiceSubTask::create([
+        $subTask = ServiceSubTask::create([
             'service_request_id' => $serviceRequest->id,
             'title' => $request->title,
             'description' => $request->description,
@@ -5079,7 +5122,31 @@ class AdminDashboardController extends Controller
             $serviceRequest->update(['has_sub_tasks' => true]);
         }
 
-        return redirect()->route('admin.jobs.show', $serviceRequest)->with('success', 'Sub-task added successfully!');
+        // Adding scope to a job changes what it is, and on a finished job it
+        // says the record of completion is wrong — which is worth more than
+        // the catch-all entry the middleware would otherwise leave.
+        $onFinishedJob = in_array($serviceRequest->status, ServiceRequest::TERMINAL_STATUSES, true)
+            || $serviceRequest->status === ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION;
+
+        AuditLog::log(AuditLog::ACTION_CREATED, $serviceRequest, null, [
+            'event' => 'sub_task_added',
+            'sub_task_id' => $subTask->id,
+            'title' => $subTask->title,
+            'job_status' => $serviceRequest->status,
+            'added_to_finished_job' => $onFinishedJob,
+            'added_by' => auth()->id(),
+        ]);
+
+        return redirect()->route('admin.jobs.show', $serviceRequest)->with(
+            'success',
+            $onFinishedJob
+                ? sprintf(
+                    '"%s" added. This job is still at %s — reopen it before the task can be worked on.',
+                    $subTask->title,
+                    ServiceRequest::allStatuses()[$serviceRequest->status] ?? $serviceRequest->status
+                )
+                : 'Sub-task added successfully!'
+        );
     }
 
     public function updateSubTask(Request $request, ServiceSubTask $serviceSubTask)
