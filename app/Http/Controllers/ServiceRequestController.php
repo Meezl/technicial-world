@@ -78,6 +78,12 @@ class ServiceRequestController extends Controller
             'submission_mode' => ServiceRequest::SUBMISSION_MODE_CLIENT_SELF,
         ]);
 
+        // What we have just told them to expect, recorded as a fact rather
+        // than recomputed later from whatever the settings say then.
+        $serviceRequest->forceFill([
+            'response_due_at' => \App\Services\ResponseTargetService::make()->dueAtFor($serviceRequest),
+        ])->save();
+
         // Load relationships for notification
         $serviceRequest->load(['serviceCategory', 'user']);
 
