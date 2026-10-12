@@ -34,7 +34,18 @@ use Symfony\Component\HttpFoundation\Response;
 class AuditUserActions
 {
     /** Reads leave no trace worth keeping; the log would be nothing else. */
-    private const IGNORED_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+    private const READ_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+
+    /**
+     * The reads that are an exception, by route name.
+     *
+     * A download is not really a read: a technician's ID, a client revenue
+     * export, an invoice PDF — the data leaves the platform, and whether it
+     * did is a question somebody eventually asks. Matched on the route's name
+     * rather than a list of routes, so the next export added is audited the
+     * day it ships instead of the day somebody remembers this file.
+     */
+    private const SENSITIVE_READ_PATTERN = '/\.(download|export|pdf)$|documents?\.show$/';
 
     /**
      * Routes whose own records are better than anything written here.
@@ -97,22 +108,40 @@ class AuditUserActions
 
     private function record(Request $request, Response $response): void
     {
-        if (in_array($request->method(), self::IGNORED_METHODS, true)) {
+        if ($this->isIgnored($request)) {
             return;
         }
 
         $user = $request->user();
+        $status = $response->getStatusCode();
+        $isRead = in_array($request->method(), self::READ_METHODS, true);
 
-        if (!$user instanceof User) {
+        if ($isRead) {
+            // Only the copies that leave the platform, and only the ones that
+            // succeeded — a download that 404s disclosed nothing.
+            if ($status >= 400 || !$this->isSensitiveRead($request)) {
+                return;
+            }
+
+            $this->write(AuditLog::ACTION_DOWNLOAD, $request, $user);
+
             return;
         }
 
-        // A rejected request changed nothing. Validation failures and 403s are
-        // the bulk of what a portal receives, and recording them would bury
-        // the actions that did take effect. Authentication failures are the
-        // exception worth having, but they belong with the login listener,
-        // which sees the attempt this middleware never does.
-        if ($response->getStatusCode() >= 400) {
+        // Refused. Nothing changed, so it is recorded as an attempt rather
+        // than an action — a separate verb, so it can be filtered out of a
+        // view of what actually happened and found on its own when the
+        // question is who tried.
+        if ($status === 401 || $status === 403) {
+            $this->write(AuditLog::ACTION_DENIED, $request, $user, ['status' => $status]);
+
+            return;
+        }
+
+        // Everything else that failed changed nothing either, and validation
+        // failures are the bulk of what a portal receives. Recording them
+        // would bury the actions that did take effect.
+        if ($status >= 400) {
             return;
         }
 
@@ -120,25 +149,43 @@ class AuditUserActions
             return;
         }
 
-        if ($this->isIgnored($request)) {
-            return;
-        }
+        $this->write(AuditLog::ACTION_REQUEST, $request, $user);
+    }
 
+    /**
+     * One writer for all three, so they cannot describe the same request
+     * differently.
+     *
+     * The actor may be absent. A guest submitting the contact form or an
+     * enquiry is doing something worth keeping, and refusing to record it
+     * because nobody was signed in would leave the public edge of the
+     * platform as the part with no history.
+     */
+    private function write(string $action, Request $request, ?User $user, array $extra = []): void
+    {
         [$type, $id] = $this->subjectOf($request, $user);
 
         AuditLog::record(
-            AuditLog::ACTION_REQUEST,
+            $action,
             $type,
             $id,
             null,
-            array_filter([
+            array_filter(array_merge([
                 'route' => $request->route()?->getName(),
                 'method' => $request->method(),
                 'path' => '/' . ltrim($request->path(), '/'),
-                'role' => $user->role,
+                'role' => $user?->role ?? 'guest',
                 'input' => $this->safeInput($request) ?: null,
-            ], fn ($value) => $value !== null)
+            ], $extra), fn ($value) => $value !== null),
+            $user?->id
         );
+    }
+
+    private function isSensitiveRead(Request $request): bool
+    {
+        $name = $request->route()?->getName();
+
+        return $name !== null && preg_match(self::SENSITIVE_READ_PATTERN, $name) === 1;
     }
 
     private function isIgnored(Request $request): bool
@@ -158,7 +205,7 @@ class AuditUserActions
      * show up alongside that record's own history rather than in a flat list
      * of paths. With no model bound, the actor is the only honest subject.
      */
-    private function subjectOf(Request $request, User $user): array
+    private function subjectOf(Request $request, ?User $user): array
     {
         foreach ($request->route()?->parameters() ?? [] as $parameter) {
             if ($parameter instanceof Model && $parameter->getKey() !== null) {
@@ -166,7 +213,14 @@ class AuditUserActions
             }
         }
 
-        return [User::class, (int) $user->id];
+        if ($user instanceof User) {
+            return [User::class, (int) $user->id];
+        }
+
+        // A guest's submission has no subject the middleware can see — the
+        // record it creates is made after this runs. Left null rather than
+        // pointed at a sentinel.
+        return [null, null];
     }
 
     private function safeInput(Request $request): array

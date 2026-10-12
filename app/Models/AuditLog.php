@@ -52,6 +52,33 @@ class AuditLog extends Model
     const ACTION_REQUEST = 'request';
 
     /**
+     * An action somebody was refused.
+     *
+     * Nothing changed, which is why these were left out at first — a log that
+     * records refusals as though they happened is worse than one that omits
+     * them. But "who tried" is a different question from "what happened", and
+     * it is the one asked after the fact: a run of these against jobs that are
+     * not somebody's is the only trace that anybody looked.
+     */
+    const ACTION_DENIED = 'denied';
+
+    /**
+     * Someone took a copy of something.
+     *
+     * Reads are not recorded, and should not be — the log would be nothing
+     * else. A download is different: a technician's ID, a client revenue
+     * export, an invoice PDF. The data leaves the platform and the only
+     * record that it did is this one.
+     */
+    const ACTION_DOWNLOAD = 'download';
+
+    /** A sign-in that failed, and the address it was tried against. */
+    const ACTION_LOGIN_FAILED = 'login_failed';
+
+    /** Too many failures: the throttle closed the door. */
+    const ACTION_LOCKOUT = 'lockout';
+
+    /**
      * How many entries this request has written.
      *
      * The audit middleware reads it to decide whether a write needs its
@@ -111,10 +138,18 @@ class AuditLog extends Model
      * audit entry that actually settles a dispute, so they go through the same
      * writer rather than a parallel one.
      */
+    /**
+     * Create an audit log entry, with or without a subject.
+     *
+     * The subject is nullable because some of what belongs in here has none:
+     * a sign-in attempt against an address that matches no account, a guest
+     * submitting a public form. Writing a sentinel to keep the column full
+     * would put a falsehood in the one table whose job is being accurate.
+     */
     public static function record(
         string $action,
-        string $auditableType,
-        int $auditableId,
+        ?string $auditableType = null,
+        ?int $auditableId = null,
         ?array $oldValues = null,
         ?array $newValues = null,
         ?int $userId = null
@@ -140,5 +175,15 @@ class AuditLog extends Model
     public static function logForUser(string $action, User $user, ?array $newValues = null): self
     {
         return self::record($action, User::class, (int) $user->id, null, $newValues, $user->id);
+    }
+
+    /**
+     * An event with no account behind it — a failed sign-in, a guest's
+     * submission. Recorded as the platform's own, with whatever identifies
+     * the attempt in the values.
+     */
+    public static function logAnonymous(string $action, ?array $newValues = null): self
+    {
+        return self::record($action, null, null, null, $newValues, null);
     }
 }

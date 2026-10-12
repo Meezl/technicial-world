@@ -448,6 +448,110 @@ class AuditTrailCoverageTest extends TestCase
         $this->assertSame($technician->id, $entry->user_id);
     }
 
+    public function test_a_failed_sign_in_is_recorded_against_the_address_tried(): void
+    {
+        $this->post('/login', [
+            'email' => $this->client->email,
+            'password' => 'not-the-right-password',
+        ]);
+
+        $entry = AuditLog::where('action', AuditLog::ACTION_LOGIN_FAILED)->first();
+
+        $this->assertNotNull($entry, 'A failed sign-in left no audit entry.');
+        $this->assertSame($this->client->email, $entry->new_values['email']);
+        $this->assertTrue($entry->new_values['account_exists']);
+        $this->assertNotNull($entry->ip_address);
+
+        // Not attributed to the account being guessed at. They did not do
+        // this, and a log that says they did accuses the victim of the attempt.
+        $this->assertNull($entry->user_id);
+
+        // Named once, not twice. The listener records it, so the middleware's
+        // catch-all stays out of the way — an unauthenticated POST to /login
+        // would otherwise be logged generically beside it.
+        $this->assertSame(0, AuditLog::where('action', AuditLog::ACTION_REQUEST)->count());
+    }
+
+    public function test_a_failed_sign_in_against_an_unknown_address_is_still_recorded(): void
+    {
+        $this->post('/login', [
+            'email' => 'nobody@example.com',
+            'password' => 'guessing',
+        ]);
+
+        $entry = AuditLog::where('action', AuditLog::ACTION_LOGIN_FAILED)->first();
+
+        $this->assertNotNull($entry, 'A sign-in attempt on an unknown address left no trace.');
+        $this->assertSame('nobody@example.com', $entry->new_values['email']);
+        $this->assertFalse($entry->new_values['account_exists']);
+
+        // No account to point at, and none invented to fill the column.
+        $this->assertNull($entry->auditable_type);
+        $this->assertNull($entry->auditable_id);
+    }
+
+    public function test_a_failed_sign_in_never_records_the_password(): void
+    {
+        $this->post('/login', [
+            'email' => $this->client->email,
+            'password' => 'hunter2-the-real-one',
+        ]);
+
+        foreach (AuditLog::all() as $entry) {
+            $this->assertStringNotContainsString(
+                'hunter2-the-real-one',
+                json_encode([$entry->old_values, $entry->new_values])
+            );
+        }
+    }
+
+    public function test_a_guest_submission_is_recorded_even_with_nobody_signed_in(): void
+    {
+        $category = ServiceCategory::firstOrCreate(['name' => 'Plumbing'], ['is_active' => true]);
+
+        $this->post('/contact', [
+            'filer_name' => 'Jane Visitor',
+            'filer_email' => 'jane@example.com',
+            'category' => $category->name,
+            'urgency' => 'normal',
+            'subject' => 'Quote for a riser replacement',
+            'description' => 'The riser in the back block needs replacing before the rains.',
+        ]);
+
+        $entry = AuditLog::where('action', AuditLog::ACTION_REQUEST)->first();
+
+        $this->assertNotNull($entry, 'A public submission left no audit entry.');
+        $this->assertNull($entry->user_id);
+        $this->assertSame('guest', $entry->new_values['role']);
+        $this->assertSame('/contact', $entry->new_values['path']);
+        $this->assertSame('jane@example.com', $entry->new_values['input']['filer_email']);
+    }
+
+    public function test_taking_a_copy_of_a_report_is_recorded(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN, 'email_verified_at' => now()]);
+
+        $this->actingAs($admin)->get('/admin/reports/client-revenue/export/excel');
+
+        // Reads are not recorded and should not be — the log would be nothing
+        // else. A copy leaving the platform is the exception.
+        $entry = AuditLog::where('action', AuditLog::ACTION_DOWNLOAD)->first();
+
+        $this->assertNotNull($entry, 'An export left no audit entry.');
+        $this->assertSame($admin->id, $entry->user_id);
+        $this->assertSame('admin.reports.client.export', $entry->new_values['route']);
+    }
+
+    public function test_an_ordinary_page_view_is_not_recorded(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN, 'email_verified_at' => now()]);
+
+        $this->actingAs($admin)->get('/admin/audit-logs');
+
+        $this->assertSame(0, AuditLog::where('action', AuditLog::ACTION_DOWNLOAD)->count());
+        $this->assertSame(0, AuditLog::where('action', AuditLog::ACTION_REQUEST)->count());
+    }
+
     public function test_the_viewer_can_be_filtered_to_one_role(): void
     {
         $admin = User::factory()->create(['role' => User::ROLE_ADMIN, 'email_verified_at' => now()]);
@@ -484,7 +588,7 @@ class AuditTrailCoverageTest extends TestCase
             ->assertInertia(fn ($page) => $page->where('actionTypes', ['quotation.signed']));
     }
 
-    public function test_a_rejected_write_is_not_recorded_as_an_action_taken(): void
+    public function test_a_refused_write_is_recorded_as_an_attempt_not_an_action(): void
     {
         $other = User::factory()->create(['role' => User::ROLE_CLIENT, 'email_verified_at' => now()]);
         $serviceRequest = $this->request(['user_id' => $other->id]);
@@ -493,8 +597,19 @@ class AuditTrailCoverageTest extends TestCase
             ->postJson("/client/rfq/{$serviceRequest->id}/decline", ['reason' => 'Not mine.'])
             ->assertForbidden();
 
-        // Nothing changed, so nothing is claimed to have changed. A log that
-        // records refusals as actions reads as though they succeeded.
-        $this->assertSame(0, AuditLog::count());
+        // Nothing changed, so nothing may claim it did — a log that records
+        // refusals as actions reads as though they succeeded.
+        $this->assertSame(0, AuditLog::where('action', AuditLog::ACTION_REQUEST)->count());
+        $this->assertSame(0, AuditLog::where('action', AuditLog::ACTION_STATE_CHANGED)->count());
+
+        // It is still recorded, under its own verb. "Who tried" is a different
+        // question from "what happened", and it is the one asked afterwards:
+        // a run of these against jobs that are not somebody's is the only
+        // trace that anybody went looking.
+        $denied = AuditLog::where('action', AuditLog::ACTION_DENIED)->first();
+
+        $this->assertNotNull($denied, 'A refused action left no trace at all.');
+        $this->assertSame($this->client->id, $denied->user_id);
+        $this->assertSame(403, $denied->new_values['status']);
     }
 }

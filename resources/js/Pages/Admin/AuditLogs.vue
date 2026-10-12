@@ -195,9 +195,10 @@
                                         <div class="user-info">
                                             <div class="user-avatar">{{ getInitials(log.user?.name) }}</div>
                                             <div class="user-details">
-                                                <strong>{{ log.user?.name || 'System' }}</strong>
-                                                <span class="cell-subtext">{{ log.user?.email || 'Automated event' }}</span>
+                                                <strong>{{ actorName(log) }}</strong>
+                                                <span class="cell-subtext">{{ actorDetail(log) }}</span>
                                                 <span v-if="log.user?.role" class="role-tag">{{ formatRole(log.user.role) }}</span>
+                                                <span v-else-if="isGuestEntry(log)" class="role-tag">Not signed in</span>
                                             </div>
                                         </div>
                                     </td>
@@ -207,9 +208,15 @@
                                         </span>
                                     </td>
                                     <td>
+                                        <!-- Some entries have no subject and are
+                                             not meant to: a sign-in attempt
+                                             against an address that matches no
+                                             account, a guest's submission. -->
                                         <div class="log-cell">
-                                            <strong>{{ formatEntityType(log.auditable_type) || 'Unknown entity' }}</strong>
-                                            <span class="cell-subtext">#{{ log.auditable_id || 'N/A' }}</span>
+                                            <strong>{{ formatEntityType(log.auditable_type) || '—' }}</strong>
+                                            <span class="cell-subtext">
+                                                {{ log.auditable_id ? `#${log.auditable_id}` : 'No record attached' }}
+                                            </span>
                                         </div>
                                     </td>
                                     <td>
@@ -239,7 +246,7 @@
                                     <p>{{ formatDateTime(log.created_at) }}</p>
                                 </div>
                                 <span :class="['status-badge', getActionClass(log.action)]">
-                                    {{ formatEntityType(log.auditable_type) || 'Entity' }}
+                                    {{ formatEntityType(log.auditable_type) || 'No record' }}
                                 </span>
                             </div>
 
@@ -323,7 +330,10 @@
                             </div>
                             <div class="modal-meta-card">
                                 <span>Entity</span>
-                                <strong>{{ formatEntityType(selectedLog.auditable_type) || 'Unknown' }} #{{ selectedLog.auditable_id || 'N/A' }}</strong>
+                                <strong v-if="selectedLog.auditable_type">
+                                    {{ formatEntityType(selectedLog.auditable_type) }} #{{ selectedLog.auditable_id }}
+                                </strong>
+                                <strong v-else>No record attached</strong>
                             </div>
                             <div class="modal-meta-card">
                                 <span>IP Address</span>
@@ -524,8 +534,37 @@ const getActionClass = (action) => {
         assignment: 'review',
         reassignment: 'review',
         suspension: 'rejected',
+        // Attempts and copies, not changes. Toned apart from the rest
+        // deliberately: a page where a refused action looks like a completed
+        // one is worse than a page that omits it.
+        denied: 'rejected',
+        login_failed: 'rejected',
+        lockout: 'rejected',
+        download: 'review',
+        request: 'pending',
     }
     return map[action] || 'pending'
+}
+
+/**
+ * Nobody signed in is not the same as the platform acting on its own.
+ *
+ * Every entry without a user read as "System", which put a guest filling in
+ * the contact form and a nightly sweep under one name. The row's own values
+ * say which — anything the middleware recorded carries the path it came in on.
+ */
+const isGuestEntry = (log) => !log?.user && Boolean(log?.new_values?.path || log?.new_values?.email)
+
+const actorName = (log) => {
+    if (log?.user?.name) return log.user.name
+    if (isGuestEntry(log)) return log?.new_values?.email || 'Not signed in'
+    return 'System'
+}
+
+const actorDetail = (log) => {
+    if (log?.user?.email) return log.user.email
+    if (isGuestEntry(log)) return log?.new_values?.path || 'Public request'
+    return 'Automated event'
 }
 
 const getInitials = (name) => {
