@@ -1443,12 +1443,13 @@ class AdminDashboardController extends Controller
             ? Technician::with('user')->find($currentTechnicianId)
             : null;
         $existingAssignment = $this->findActivePrimaryAssignment($serviceRequest, $currentTechnicianId);
+        $incomingPlace = $this->findActivePrimaryAssignment($serviceRequest, (int) $technician->id);
         $isReassignment = $previousTechnician !== null;
 
         $this->ensureLaborBudgetCapacity(
             $serviceRequest,
             (float) $request->agreed_compensation,
-            excludeAssignmentId: $existingAssignment?->id
+            excludeAssignmentId: [$existingAssignment?->id, $incomingPlace?->id]
         );
         $this->ensureTechnicianMilestoneCoverage(
             $serviceRequest,
@@ -1573,12 +1574,19 @@ class AdminDashboardController extends Controller
 
         $technician = Technician::findOrFail($request->technician_id);
         $currentLeadTechnicianId = $serviceRequest->lead_technician_id;
+
+        // Both places the change will consume: the outgoing lead's, and any
+        // the incoming technician already holds — a crew member being handed
+        // the job keeps their row rather than opening a second one, so their
+        // current fee must not be counted against the budget as well as the
+        // new one.
         $existingAssignment = $this->findActivePrimaryAssignment($serviceRequest, $currentLeadTechnicianId);
+        $incomingPlace = $this->findActivePrimaryAssignment($serviceRequest, (int) $technician->id);
 
         $this->ensureLaborBudgetCapacity(
             $serviceRequest,
             (float) $request->agreed_compensation,
-            excludeAssignmentId: $existingAssignment?->id
+            excludeAssignmentId: [$existingAssignment?->id, $incomingPlace?->id]
         );
         $this->ensureTechnicianMilestoneCoverage(
             $serviceRequest,
@@ -1985,26 +1993,47 @@ class AdminDashboardController extends Controller
         return $paid;
     }
 
+    /**
+     * One technician's live place on the job itself, rather than on a task.
+     *
+     * The technician is the whole question, and this used to take the
+     * argument and ignore it: it returned the newest row on the job with no
+     * sub-task against it, whoever that belonged to. A lead's own row and a
+     * crew place are the same shape, so on any job with a right-hand man the
+     * newest such row is not the lead's — and a lead reassignment would
+     * supersede the crew member instead, taking their agreed fee off the job
+     * and leaving the outgoing lead still live beside the incoming one.
+     *
+     * That is also what the "multiple active primary assignments" warning
+     * below was reporting. It read two rows on a slot as corruption, when a
+     * lead and a crew member holding one each is the ordinary shape of a
+     * staffed job. Scoped to one technician, two rows genuinely is wrong.
+     *
+     * With no technician there is no incumbent, so there is nothing to find —
+     * null, rather than somebody else's row to trample.
+     */
     protected function findActivePrimaryAssignment(ServiceRequest $serviceRequest, ?int $technicianId = null): ?JobAssignment
     {
-        $query = $serviceRequest->jobAssignments()
+        if (!$technicianId) {
+            return null;
+        }
+
+        $activeAssignments = $serviceRequest->jobAssignments()
             ->whereNull('service_sub_task_id')
+            ->where('technician_id', $technicianId)
             ->whereIn('status', [
                 JobAssignment::STATUS_PENDING,
                 JobAssignment::STATUS_ACCEPTED,
                 JobAssignment::STATUS_COMPLETED,
-            ]);
+            ])
+            ->orderByDesc('id')
+            ->get();
 
-        $activeAssignments = $query->orderByDesc('id')->get();
-
-        // Belt-and-braces diagnostic: if the slot has multiple active rows,
-        // something snuck in that our sync methods should have caught. Log
-        // it so we can spot recurrences before Layer 3 (DB uniqueness) is
-        // in place, then return the latest so downstream logic still works.
         if ($activeAssignments->count() > 1) {
-            \Illuminate\Support\Facades\Log::warning('Multiple active primary JobAssignments detected on slot', [
+            \Illuminate\Support\Facades\Log::warning('One technician holds several live places on a job', [
                 'service_request_id' => $serviceRequest->id,
                 'request_id'         => $serviceRequest->request_id,
+                'technician_id'      => $technicianId,
                 'assignment_ids'     => $activeAssignments->pluck('id')->all(),
             ]);
         }
@@ -2024,12 +2053,23 @@ class AdminDashboardController extends Controller
             ->first();
     }
 
+    /**
+     * @param int|int[]|null $excludeAssignmentId Rows the pending change will
+     *        consume, so their current fees are not counted against the
+     *        budget the new fee has to fit inside. A reassignment can consume
+     *        two: the place being given up, and a place the incoming
+     *        technician already holds.
+     */
     protected function getLaborAllocationSummary(
         ServiceRequest $serviceRequest,
-        ?int $excludeAssignmentId = null,
+        int|array|null $excludeAssignmentId = null,
         ?int $excludeSubTaskId = null
     ): array {
         $budgeted = (float) ($serviceRequest->budget?->labor_budget ?? 0);
+
+        $excludedIds = array_values(array_filter(
+            is_array($excludeAssignmentId) ? $excludeAssignmentId : [$excludeAssignmentId]
+        ));
 
         $directAllocation = (float) $serviceRequest->jobAssignments()
             ->whereNull('service_sub_task_id')
@@ -2038,7 +2078,7 @@ class AdminDashboardController extends Controller
                 JobAssignment::STATUS_ACCEPTED,
                 JobAssignment::STATUS_COMPLETED,
             ])
-            ->when($excludeAssignmentId, fn ($query) => $query->where('id', '!=', $excludeAssignmentId))
+            ->when($excludedIds, fn ($query) => $query->whereNotIn('id', $excludedIds))
             ->sum('agreed_compensation');
 
         $subTaskAllocation = (float) $serviceRequest->subTasks()
@@ -2055,10 +2095,11 @@ class AdminDashboardController extends Controller
         ];
     }
 
+    /** @param int|int[]|null $excludeAssignmentId See getLaborAllocationSummary. */
     protected function ensureLaborBudgetCapacity(
         ServiceRequest $serviceRequest,
         float $agreedCompensation,
-        ?int $excludeAssignmentId = null,
+        int|array|null $excludeAssignmentId = null,
         ?int $excludeSubTaskId = null
     ): void {
         if (!$serviceRequest->budget) {
@@ -2270,9 +2311,19 @@ class AdminDashboardController extends Controller
         string $reassignmentReason,
         array $attachments = []
     ): JobAssignment {
-        $existingAssignment = $this->findActivePrimaryAssignment($serviceRequest, $currentTechnicianId);
+        // Two separate questions, and they used to be answered by one lookup
+        // that could not tell them apart: whose place is being given up, and
+        // whether the person taking it is already standing somewhere on this
+        // job.
+        $outgoing = $this->findActivePrimaryAssignment($serviceRequest, $currentTechnicianId);
+        $incoming = $this->findActivePrimaryAssignment($serviceRequest, (int) $technician->id);
 
-        if ($existingAssignment && (int) $existingAssignment->technician_id === (int) $technician->id) {
+        // Already here: the same technician on a re-agreed fee, or a crew
+        // member being handed the job. Their row is updated in place rather
+        // than a second one opened beside it — two live places for one person
+        // on one job is double-counted against the labour budget and shows
+        // them twice on the gate list.
+        if ($incoming) {
             $update = [
                 'agreed_compensation' => $agreedCompensation,
                 'compensation_notes' => $compensationNotes,
@@ -2281,20 +2332,19 @@ class AdminDashboardController extends Controller
             ];
             if (!empty($attachments)) {
                 // Merge with any existing attachments rather than overwrite
-                $update['attachments'] = array_merge((array) ($existingAssignment->attachments ?? []), $attachments);
+                $update['attachments'] = array_merge((array) ($incoming->attachments ?? []), $attachments);
             }
-            $existingAssignment->update($update);
+            if ($outgoing && (int) $outgoing->id !== (int) $incoming->id) {
+                $update['reassigned_from'] = $outgoing->technician_id;
+            }
+            $incoming->update($update);
 
-            return $existingAssignment->fresh();
+            $this->supersedePlace($outgoing, $incoming, $reassignmentReason);
+
+            return $incoming->fresh();
         }
 
-        if ($existingAssignment) {
-            $existingAssignment->update([
-                'status' => JobAssignment::STATUS_REASSIGNED,
-                'reassignment_reason' => $reassignmentReason,
-                'actual_end' => now(),
-            ]);
-        }
+        $this->supersedePlace($outgoing, null, $reassignmentReason);
 
         return JobAssignment::create([
             'service_request_id' => $serviceRequest->id,
@@ -2304,7 +2354,28 @@ class AdminDashboardController extends Controller
             'compensation_notes' => $compensationNotes,
             'attachments' => !empty($attachments) ? $attachments : null,
             'status' => JobAssignment::STATUS_PENDING,
-            'reassigned_from' => $existingAssignment?->technician_id,
+            'reassigned_from' => $outgoing?->technician_id,
+        ]);
+    }
+
+    /**
+     * Close the place somebody is giving up, unless it is the one they are
+     * about to keep.
+     */
+    private function supersedePlace(?JobAssignment $outgoing, ?JobAssignment $keeping, string $reason): void
+    {
+        if (!$outgoing) {
+            return;
+        }
+
+        if ($keeping && (int) $keeping->id === (int) $outgoing->id) {
+            return;
+        }
+
+        $outgoing->update([
+            'status' => JobAssignment::STATUS_REASSIGNED,
+            'reassignment_reason' => $reason,
+            'actual_end' => now(),
         ]);
     }
 
