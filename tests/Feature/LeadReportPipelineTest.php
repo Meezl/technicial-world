@@ -820,6 +820,81 @@ class LeadReportPipelineTest extends TestCase
         $this->assertNull($report->fresh()->released_to_client_at);
     }
 
+    public function test_a_report_the_lead_never_posted_is_not_released_to_the_client(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+        $task = $this->makeSubTask($job, $crew, 'Second fix wiring');
+        $service = app(ProgressService::class);
+
+        // Posted and settled by the office — this one is genuinely ready.
+        $posted = $service->submitReport($job, $lead->id, $lead->user->id, ['percent_complete' => 50]);
+        $posted->forceFill(['submitted_to_office_at' => now(), 'lead_reviewed_at' => now()])->save();
+        $service->validate($posted->fresh(), $admin->id, ['validated_percent' => 50], [], validatedAs: ProgressReport::AS_ADMIN);
+
+        // Approved by the lead on site and never posted up. The lead path
+        // validates without submitting, so this is validated and unreleased —
+        // which was the whole of the old test for "releasable", and would have
+        // sent the client work the office has never seen.
+        $held = $service->submitReport($job, $crew->id, $crew->user->id, [
+            'percent_complete' => 70,
+            'service_sub_task_id' => $task->id,
+        ]);
+        $service->validate($held->fresh(), $lead->user->id, ['validated_percent' => 70], [], releaseBilling: false, validatedAs: ProgressReport::AS_LEAD);
+        $this->ratifyByLead($held->fresh());
+
+        $this->assertNull($held->fresh()->submitted_to_office_at, 'Fixture precondition: the lead has not posted it.');
+        $this->assertTrue((bool) $held->fresh()->is_validated, 'Fixture precondition: the lead validated it.');
+
+        $released = $service->releaseToClient($job->fresh(), null, $admin->id);
+        $this->flushDeferredWork();
+
+        $this->assertSame(1, $released, 'Only the posted report is the office\'s to send.');
+        $this->assertNotNull($posted->fresh()->released_to_client_at);
+        $this->assertNull(
+            $held->fresh()->released_to_client_at,
+            'A report the lead never posted reached the client.'
+        );
+    }
+
+    public function test_a_report_held_by_the_lead_is_not_counted_as_the_offices_to_release(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+        $task = $this->makeSubTask($job, $crew, 'Second fix wiring');
+        $service = app(ProgressService::class);
+
+        // A crew sub-task report on a lead-run job: the only kind that waits
+        // for the lead to post it. A lead's own whole-job report goes up on
+        // submission, so it would not exercise this at all.
+        $held = $service->submitReport($job, $crew->id, $crew->user->id, [
+            'percent_complete' => 60,
+            'service_sub_task_id' => $task->id,
+        ]);
+        $service->validate($held->fresh(), $lead->user->id, ['validated_percent' => 60], [], releaseBilling: false, validatedAs: ProgressReport::AS_LEAD);
+        $this->ratifyByLead($held->fresh());
+
+        // The office was told it had work waiting that only the lead could
+        // move. "Awaiting release" has to mean a queue the reader can clear.
+        $this->assertSame(0, ProgressReport::releasableToClient()->count());
+        $this->assertSame(1, ProgressReport::awaitingLeadPost()->count());
+    }
+
     public function test_the_whole_batch_waits_rather_than_going_out_in_halves(): void
     {
         $client = User::factory()->create(['role' => User::ROLE_CLIENT]);

@@ -140,8 +140,8 @@
                                     <span> • {{ formatDate(report.report_date) }}</span>
                                 </p>
                             </div>
-                            <span :class="['status-badge', report.is_validated ? 'tone-green' : 'tone-orange']">
-                                {{ report.is_validated ? 'Validated' : 'Pending' }}
+                            <span :class="['status-badge', report.is_validated ? (isLeadFigure(report) ? 'tone-blue' : 'tone-green') : 'tone-orange']">
+                                {{ report.is_validated ? validatedByLabel(report) : 'Pending' }}
                             </span>
                         </div>
 
@@ -151,7 +151,7 @@
                                 <strong>{{ report.percent_complete }}%</strong>
                             </div>
                             <div class="metric-chip" :class="report.is_validated ? 'validated' : ''">
-                                <span>Validated</span>
+                                <span>{{ validatedByLabel(report) }}</span>
                                 <strong>{{ report.is_validated && report.validated_percent !== null ? `${report.validated_percent}%` : 'Pending' }}</strong>
                             </div>
                         </div>
@@ -344,6 +344,18 @@ const props = defineProps({
     releasableByJob: { type: Array, default: () => [] },
     filters: { type: Object, default: () => ({}) },
 })
+
+// A lead's site figure and an office settlement both set is_validated. The
+// difference decides whether money may move, so the label says which — see
+// the same helper on the job page.
+const isLeadFigure = (report) => Boolean(report.is_validated && report.approved_by_lead_at)
+const validatedByLabel = (report) => {
+    if (!report.is_validated) return 'Validated'
+    if (isLeadFigure(report)) return 'Validated by lead'
+    const by = report.validated_as
+    if (by === 'admin' || by === 'project_manager') return 'Validated by office'
+    return 'Validated'
+}
 
 const pendingOnly = ref(props.filters.pending_only !== false)
 const submitting = ref(false)

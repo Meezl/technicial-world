@@ -157,6 +157,7 @@
                                 <div class="entity-block compact">
                                     <strong>{{ rfq.user?.name || 'N/A' }}</strong>
                                     <span>{{ rfq.user?.email || 'No email available' }}</span>
+                                    <span>{{ rfq.user?.phone || 'No mobile on file' }}</span>
                                     <small>{{ rfq.location || 'No location provided' }}</small>
                                 </div>
                             </td>

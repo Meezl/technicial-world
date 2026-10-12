@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\ScheduleExtension;
 use App\Models\ServiceRequest;
 use Illuminate\Http\Request;
@@ -40,6 +41,23 @@ class ScheduleExtensionController extends Controller
             'status'              => ScheduleExtension::STATUS_PENDING,
         ]);
 
+        // A slipped completion date is the thing a client is most likely to
+        // query months later, and all three steps of the chain — asked for,
+        // approved by the office, agreed by the client — were unrecorded.
+        AuditLog::log(
+            AuditLog::ACTION_CREATED,
+            $serviceRequest,
+            ['target_completion_at' => (string) $currentTarget],
+            [
+                'event' => 'extension_requested',
+                'extension_id' => $extension->id,
+                'additional_days' => $data['additional_days'],
+                'requested_target_at' => $newTarget->toDateTimeString(),
+                'reason' => $data['reason'],
+                'requested_by' => $user->id,
+            ]
+        );
+
         return back()->with('success', "Extension request submitted. Admin will review your reason and forward to the client.");
     }
 
@@ -68,6 +86,19 @@ class ScheduleExtensionController extends Controller
         if ($request->action === 'reject') {
             $updates['status'] = ScheduleExtension::STATUS_ADMIN_REJECTED;
             $scheduleExtension->update($updates);
+
+            AuditLog::log(
+                AuditLog::ACTION_APPROVAL,
+                $scheduleExtension,
+                ['status' => ScheduleExtension::STATUS_PENDING],
+                [
+                    'event' => 'extension_rejected_by_office',
+                    'status' => ScheduleExtension::STATUS_ADMIN_REJECTED,
+                    'admin_note' => $request->admin_note,
+                    'decided_by' => $request->user()->id,
+                ]
+            );
+
             return back()->with('success', 'Extension rejected. Technician has been notified.');
         }
 
@@ -83,7 +114,25 @@ class ScheduleExtensionController extends Controller
         }
 
         $updates['status'] = ScheduleExtension::STATUS_ADMIN_APPROVED;
+        $daysRequested = $scheduleExtension->additional_days;
         $scheduleExtension->update($updates);
+
+        AuditLog::log(
+            AuditLog::ACTION_APPROVAL,
+            $scheduleExtension,
+            ['status' => ScheduleExtension::STATUS_PENDING, 'additional_days' => $daysRequested],
+            [
+                'event' => 'extension_approved_by_office',
+                'status' => ScheduleExtension::STATUS_ADMIN_APPROVED,
+                // The office may shorten what the technician asked for before
+                // it goes to the client, so the figure forwarded is recorded
+                // rather than assumed from the original request.
+                'additional_days' => $scheduleExtension->fresh()->additional_days,
+                'requested_target_at' => (string) $scheduleExtension->fresh()->requested_target_at,
+                'admin_note' => $request->admin_note,
+                'decided_by' => $request->user()->id,
+            ]
+        );
 
         return back()->with('success', 'Extension approved. Forwarded to the client for final approval.');
     }
@@ -113,11 +162,24 @@ class ScheduleExtensionController extends Controller
                 'client_decided_at' => now(),
                 'client_note'       => $request->client_note,
             ]);
+            AuditLog::log(
+                AuditLog::ACTION_APPROVAL,
+                $scheduleExtension,
+                ['status' => ScheduleExtension::STATUS_ADMIN_APPROVED],
+                [
+                    'event' => 'extension_declined_by_client',
+                    'status' => ScheduleExtension::STATUS_CLIENT_REJECTED,
+                    'client_note' => $request->client_note,
+                    'decided_by' => $user->id,
+                ]
+            );
+
             return back()->with('success', 'Extension declined.');
         }
 
         // Approve — apply the new target completion to the service request
         $sr = $scheduleExtension->serviceRequest;
+        $targetBefore = $sr->target_completion_at;
         $sr->update(['target_completion_at' => $scheduleExtension->requested_target_at]);
 
         $scheduleExtension->update([
@@ -125,6 +187,23 @@ class ScheduleExtensionController extends Controller
             'client_decided_at' => now(),
             'client_note'       => $request->client_note,
         ]);
+
+        // Logged against the job, not the extension: moving a completion date
+        // is a change to the contract the client is owed, and it belongs in
+        // the history somebody reads off the job.
+        AuditLog::log(
+            AuditLog::ACTION_APPROVAL,
+            $sr,
+            ['target_completion_at' => (string) $targetBefore],
+            [
+                'event' => 'extension_approved_by_client',
+                'extension_id' => $scheduleExtension->id,
+                'additional_days' => $scheduleExtension->additional_days,
+                'target_completion_at' => (string) $scheduleExtension->requested_target_at,
+                'client_note' => $request->client_note,
+                'decided_by' => $user->id,
+            ]
+        );
 
         return back()->with('success', 'Extension approved. The new target completion date is now in effect.');
     }

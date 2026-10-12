@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AuditLog;
 use App\Models\JobPhoto;
 use App\Jobs\ConvertPhotoToJpeg;
 use App\Support\StoredImage;
@@ -48,6 +49,7 @@ class JobPhotoController extends Controller
         ]);
 
         $clientVisible = $this->defaultVisibilityFor($user);
+        $stored = [];
 
         foreach ($request->file('photos', []) as $file) {
             $path = StoredImage::put($file, 'job-photos/' . $serviceRequest->id);
@@ -68,9 +70,36 @@ class JobPhotoController extends Controller
             // whoever sent it is not kept waiting for a decode — see
             // ConvertPhotoToJpeg. A no-op for everything else.
             ConvertPhotoToJpeg::dispatchIfNeeded($photo);
+
+            $stored[] = $photo;
         }
 
-        $count = count($request->file('photos', []));
+        $count = count($stored);
+
+        // Photo evidence is what a snag dispute is argued from, and this
+        // endpoint takes uploads from every role, so the entry records which
+        // one posted it. Progress-report photos are audited by ProgressService
+        // on submission; these had nothing.
+        if ($count > 0) {
+            AuditLog::log(
+                AuditLog::ACTION_CREATED,
+                $serviceRequest,
+                null,
+                [
+                    'event' => 'job_photos_added',
+                    'count' => $count,
+                    'uploader_role' => $user->role,
+                    'client_visible' => $clientVisible,
+                    'caption' => $request->input('caption'),
+                    'photos' => array_map(fn ($photo) => [
+                        'id' => $photo->id,
+                        'original_filename' => $photo->original_filename,
+                        'size_bytes' => $photo->size_bytes,
+                    ], $stored),
+                    'added_by' => $user->id,
+                ]
+            );
+        }
 
         return back()->with('success', $count . ' photo' . ($count === 1 ? '' : 's') . ' added to this job.');
     }
@@ -102,8 +131,30 @@ class JobPhotoController extends Controller
             return back()->with('error', 'Photos can no longer be changed now that work has started on this job.');
         }
 
+        // Captured before the row goes, and kept against the job rather than
+        // the photo: an entry pointing at a deleted id is unreadable from the
+        // job's own history, which is where somebody will come looking.
+        $removed = $jobPhoto->only([
+            'id', 'file_path', 'original_filename', 'size_bytes', 'uploader_role', 'added_by',
+        ]);
+        $serviceRequest = $jobPhoto->serviceRequest;
+
         Storage::disk('public')->delete($jobPhoto->file_path);
         $jobPhoto->delete();
+
+        if ($serviceRequest) {
+            AuditLog::log(
+                AuditLog::ACTION_DELETED,
+                $serviceRequest,
+                $removed,
+                [
+                    'event' => 'job_photo_removed',
+                    'removed_by' => $user->id,
+                    'removed_by_role' => $user->role,
+                    'as_ops' => $isOps && !$isOwner,
+                ]
+            );
+        }
 
         return back()->with('success', 'Photo removed.');
     }

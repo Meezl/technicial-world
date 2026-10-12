@@ -1463,12 +1463,13 @@ class AdminDashboardController extends Controller
             ? Technician::with('user')->find($currentTechnicianId)
             : null;
         $existingAssignment = $this->findActivePrimaryAssignment($serviceRequest, $currentTechnicianId);
+        $incomingPlace = $this->findActivePrimaryAssignment($serviceRequest, (int) $technician->id);
         $isReassignment = $previousTechnician !== null;
 
         $this->ensureLaborBudgetCapacity(
             $serviceRequest,
             (float) $request->agreed_compensation,
-            excludeAssignmentId: $existingAssignment?->id
+            excludeAssignmentId: [$existingAssignment?->id, $incomingPlace?->id]
         );
         $this->ensureTechnicianMilestoneCoverage(
             $serviceRequest,
@@ -1489,6 +1490,17 @@ class AdminDashboardController extends Controller
         // Update service request
         $serviceRequest->update([
             'technician_id' => $technician->id,
+            // The counterpart of the fix in assignLeadTechnician, which had
+            // the same split the other way round. One technician on a job is
+            // that job's lead — isLeadTechnician() has always said so, falling
+            // back to technician_id when no lead is named — but the column was
+            // left null, so the two disagreed on paper.
+            //
+            // That gap is what let assignSubTaskTechnician hand the job to
+            // somebody else: it asked "is there a lead yet?", read a null, and
+            // took the answer to mean the job was unstaffed. Naming the lead
+            // here closes it at the source as well as at that check.
+            'lead_technician_id' => $technician->id,
             'status' => 'assigned',
             'assigned_at' => now(),
             'commencement_at' => $commencementAt,
@@ -1582,12 +1594,19 @@ class AdminDashboardController extends Controller
 
         $technician = Technician::findOrFail($request->technician_id);
         $currentLeadTechnicianId = $serviceRequest->lead_technician_id;
+
+        // Both places the change will consume: the outgoing lead's, and any
+        // the incoming technician already holds — a crew member being handed
+        // the job keeps their row rather than opening a second one, so their
+        // current fee must not be counted against the budget as well as the
+        // new one.
         $existingAssignment = $this->findActivePrimaryAssignment($serviceRequest, $currentLeadTechnicianId);
+        $incomingPlace = $this->findActivePrimaryAssignment($serviceRequest, (int) $technician->id);
 
         $this->ensureLaborBudgetCapacity(
             $serviceRequest,
             (float) $request->agreed_compensation,
-            excludeAssignmentId: $existingAssignment?->id
+            excludeAssignmentId: [$existingAssignment?->id, $incomingPlace?->id]
         );
         $this->ensureTechnicianMilestoneCoverage(
             $serviceRequest,
@@ -1994,26 +2013,47 @@ class AdminDashboardController extends Controller
         return $paid;
     }
 
+    /**
+     * One technician's live place on the job itself, rather than on a task.
+     *
+     * The technician is the whole question, and this used to take the
+     * argument and ignore it: it returned the newest row on the job with no
+     * sub-task against it, whoever that belonged to. A lead's own row and a
+     * crew place are the same shape, so on any job with a right-hand man the
+     * newest such row is not the lead's — and a lead reassignment would
+     * supersede the crew member instead, taking their agreed fee off the job
+     * and leaving the outgoing lead still live beside the incoming one.
+     *
+     * That is also what the "multiple active primary assignments" warning
+     * below was reporting. It read two rows on a slot as corruption, when a
+     * lead and a crew member holding one each is the ordinary shape of a
+     * staffed job. Scoped to one technician, two rows genuinely is wrong.
+     *
+     * With no technician there is no incumbent, so there is nothing to find —
+     * null, rather than somebody else's row to trample.
+     */
     protected function findActivePrimaryAssignment(ServiceRequest $serviceRequest, ?int $technicianId = null): ?JobAssignment
     {
-        $query = $serviceRequest->jobAssignments()
+        if (!$technicianId) {
+            return null;
+        }
+
+        $activeAssignments = $serviceRequest->jobAssignments()
             ->whereNull('service_sub_task_id')
+            ->where('technician_id', $technicianId)
             ->whereIn('status', [
                 JobAssignment::STATUS_PENDING,
                 JobAssignment::STATUS_ACCEPTED,
                 JobAssignment::STATUS_COMPLETED,
-            ]);
+            ])
+            ->orderByDesc('id')
+            ->get();
 
-        $activeAssignments = $query->orderByDesc('id')->get();
-
-        // Belt-and-braces diagnostic: if the slot has multiple active rows,
-        // something snuck in that our sync methods should have caught. Log
-        // it so we can spot recurrences before Layer 3 (DB uniqueness) is
-        // in place, then return the latest so downstream logic still works.
         if ($activeAssignments->count() > 1) {
-            \Illuminate\Support\Facades\Log::warning('Multiple active primary JobAssignments detected on slot', [
+            \Illuminate\Support\Facades\Log::warning('One technician holds several live places on a job', [
                 'service_request_id' => $serviceRequest->id,
                 'request_id'         => $serviceRequest->request_id,
+                'technician_id'      => $technicianId,
                 'assignment_ids'     => $activeAssignments->pluck('id')->all(),
             ]);
         }
@@ -2033,12 +2073,23 @@ class AdminDashboardController extends Controller
             ->first();
     }
 
+    /**
+     * @param int|int[]|null $excludeAssignmentId Rows the pending change will
+     *        consume, so their current fees are not counted against the
+     *        budget the new fee has to fit inside. A reassignment can consume
+     *        two: the place being given up, and a place the incoming
+     *        technician already holds.
+     */
     protected function getLaborAllocationSummary(
         ServiceRequest $serviceRequest,
-        ?int $excludeAssignmentId = null,
+        int|array|null $excludeAssignmentId = null,
         ?int $excludeSubTaskId = null
     ): array {
         $budgeted = (float) ($serviceRequest->budget?->labor_budget ?? 0);
+
+        $excludedIds = array_values(array_filter(
+            is_array($excludeAssignmentId) ? $excludeAssignmentId : [$excludeAssignmentId]
+        ));
 
         $directAllocation = (float) $serviceRequest->jobAssignments()
             ->whereNull('service_sub_task_id')
@@ -2047,7 +2098,7 @@ class AdminDashboardController extends Controller
                 JobAssignment::STATUS_ACCEPTED,
                 JobAssignment::STATUS_COMPLETED,
             ])
-            ->when($excludeAssignmentId, fn ($query) => $query->where('id', '!=', $excludeAssignmentId))
+            ->when($excludedIds, fn ($query) => $query->whereNotIn('id', $excludedIds))
             ->sum('agreed_compensation');
 
         $subTaskAllocation = (float) $serviceRequest->subTasks()
@@ -2064,10 +2115,11 @@ class AdminDashboardController extends Controller
         ];
     }
 
+    /** @param int|int[]|null $excludeAssignmentId See getLaborAllocationSummary. */
     protected function ensureLaborBudgetCapacity(
         ServiceRequest $serviceRequest,
         float $agreedCompensation,
-        ?int $excludeAssignmentId = null,
+        int|array|null $excludeAssignmentId = null,
         ?int $excludeSubTaskId = null
     ): void {
         if (!$serviceRequest->budget) {
@@ -2279,9 +2331,19 @@ class AdminDashboardController extends Controller
         string $reassignmentReason,
         array $attachments = []
     ): JobAssignment {
-        $existingAssignment = $this->findActivePrimaryAssignment($serviceRequest, $currentTechnicianId);
+        // Two separate questions, and they used to be answered by one lookup
+        // that could not tell them apart: whose place is being given up, and
+        // whether the person taking it is already standing somewhere on this
+        // job.
+        $outgoing = $this->findActivePrimaryAssignment($serviceRequest, $currentTechnicianId);
+        $incoming = $this->findActivePrimaryAssignment($serviceRequest, (int) $technician->id);
 
-        if ($existingAssignment && (int) $existingAssignment->technician_id === (int) $technician->id) {
+        // Already here: the same technician on a re-agreed fee, or a crew
+        // member being handed the job. Their row is updated in place rather
+        // than a second one opened beside it — two live places for one person
+        // on one job is double-counted against the labour budget and shows
+        // them twice on the gate list.
+        if ($incoming) {
             $update = [
                 'agreed_compensation' => $agreedCompensation,
                 'compensation_notes' => $compensationNotes,
@@ -2290,20 +2352,19 @@ class AdminDashboardController extends Controller
             ];
             if (!empty($attachments)) {
                 // Merge with any existing attachments rather than overwrite
-                $update['attachments'] = array_merge((array) ($existingAssignment->attachments ?? []), $attachments);
+                $update['attachments'] = array_merge((array) ($incoming->attachments ?? []), $attachments);
             }
-            $existingAssignment->update($update);
+            if ($outgoing && (int) $outgoing->id !== (int) $incoming->id) {
+                $update['reassigned_from'] = $outgoing->technician_id;
+            }
+            $incoming->update($update);
 
-            return $existingAssignment->fresh();
+            $this->supersedePlace($outgoing, $incoming, $reassignmentReason);
+
+            return $incoming->fresh();
         }
 
-        if ($existingAssignment) {
-            $existingAssignment->update([
-                'status' => JobAssignment::STATUS_REASSIGNED,
-                'reassignment_reason' => $reassignmentReason,
-                'actual_end' => now(),
-            ]);
-        }
+        $this->supersedePlace($outgoing, null, $reassignmentReason);
 
         return JobAssignment::create([
             'service_request_id' => $serviceRequest->id,
@@ -2313,7 +2374,28 @@ class AdminDashboardController extends Controller
             'compensation_notes' => $compensationNotes,
             'attachments' => !empty($attachments) ? $attachments : null,
             'status' => JobAssignment::STATUS_PENDING,
-            'reassigned_from' => $existingAssignment?->technician_id,
+            'reassigned_from' => $outgoing?->technician_id,
+        ]);
+    }
+
+    /**
+     * Close the place somebody is giving up, unless it is the one they are
+     * about to keep.
+     */
+    private function supersedePlace(?JobAssignment $outgoing, ?JobAssignment $keeping, string $reason): void
+    {
+        if (!$outgoing) {
+            return;
+        }
+
+        if ($keeping && (int) $keeping->id === (int) $outgoing->id) {
+            return;
+        }
+
+        $outgoing->update([
+            'status' => JobAssignment::STATUS_REASSIGNED,
+            'reassignment_reason' => $reason,
+            'actual_end' => now(),
         ]);
     }
 
@@ -3328,11 +3410,18 @@ class AdminDashboardController extends Controller
 
         $serviceRequest = ServiceRequest::findOrFail($request->service_request_id);
 
+        // Stored names were keyed on time() alone, so a revision submitted in
+        // the same second as the previous one wrote to the same filename and
+        // overwrote the document it was supposed to be superseding — the
+        // history the revision trail depends on. A random suffix makes every
+        // upload its own file.
+        $uniqueSuffix = fn () => time() . '_' . \Illuminate\Support\Str::random(8);
+
         // Legacy single-file path (backward compat with older clients).
         $filePath = null;
         if ($request->hasFile('materials_file')) {
             $file = $request->file('materials_file');
-            $fileName = 'quote_materials_' . $serviceRequest->request_id . '_' . time() . '.' . $file->getClientOriginalExtension();
+            $fileName = 'quote_materials_' . $serviceRequest->request_id . '_' . $uniqueSuffix() . '.' . $file->getClientOriginalExtension();
             $filePath = $file->storeAs('quotes', $fileName, 'public');
         }
 
@@ -3343,7 +3432,7 @@ class AdminDashboardController extends Controller
             foreach ($request->file('materials_files') as $idx => $upload) {
                 if (!$upload) continue;
                 $ext = $upload->getClientOriginalExtension();
-                $filename = 'quote_materials_' . $serviceRequest->request_id . '_' . time() . '_' . $idx . '.' . $ext;
+                $filename = 'quote_materials_' . $serviceRequest->request_id . '_' . $uniqueSuffix() . '_' . $idx . '.' . $ext;
                 $newFilePaths[] = $upload->storeAs('quotes', $filename, 'public');
             }
         }
@@ -3409,6 +3498,30 @@ class AdminDashboardController extends Controller
                 ->all();
         }
 
+        // Stamp the documents uploaded by THIS submission with the revision
+        // they belong to. Earlier batches keep the number they were stamped
+        // with, so the history stays readable and the quotation email can
+        // attach the current batch alone instead of every version at once —
+        // which is what left clients holding three breakdowns for one job.
+        //
+        // The map is keyed by stored path, so it survives the array being
+        // appended to and never needs to stay index-aligned.
+        $attachmentRevision = $isRevision
+            ? (int) ($serviceRequest->quote_revision_count ?? 0) + 1
+            : (int) ($serviceRequest->quote_revision_count ?? 0);
+
+        $fileRevisions = (array) ($serviceRequest->quote_materials_file_revisions ?? []);
+        foreach (array_filter(array_merge($newFilePaths, [$filePath])) as $uploadedPath) {
+            $fileRevisions[$uploadedPath] = $attachmentRevision;
+        }
+
+        // Drop entries for files no longer on the request so the map cannot
+        // drift into holding paths nothing references.
+        $knownPaths = array_filter(array_merge($mergedFilePaths, [
+            $filePath ?? $serviceRequest->quote_materials_file_path,
+        ]));
+        $fileRevisions = array_intersect_key($fileRevisions, array_flip($knownPaths));
+
         $updateData = [
             'rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED,
             'quote_amount' => $totalAmount,
@@ -3422,6 +3535,7 @@ class AdminDashboardController extends Controller
             'quote_notes' => $request->notes,
             'quote_materials_file_path' => $filePath ?? $serviceRequest->quote_materials_file_path,
             'quote_materials_file_paths' => !empty($mergedFilePaths) ? $mergedFilePaths : null,
+            'quote_materials_file_revisions' => !empty($fileRevisions) ? $fileRevisions : null,
         ];
 
         if ($isRevision) {
@@ -4353,6 +4467,49 @@ class AdminDashboardController extends Controller
      * office has looked at it. Only now does it become terminal, get its
      * completion date, and count towards the crew's records.
      */
+    /**
+     * Put a finished job back to work.
+     *
+     * Admin only, and from any status — including the terminal ones, which is
+     * the whole point of it. The archive's reopen covers cancellations only
+     * and restores a known prior status; this one is for a job that was
+     * delivered, or recorded as delivered, and is not finished after all.
+     *
+     * A reason is required because this is the action that has to be
+     * explicable months later: the client's record says the work was done, and
+     * somebody decided otherwise. JobService::reopen says what is and is not
+     * undone — in particular, no money moves.
+     */
+    public function reopenJob(Request $request, ServiceRequest $serviceRequest)
+    {
+        $data = $request->validate([
+            'reason' => 'required|string|min:10|max:500',
+            'to_status' => 'nullable|string|in:' . implode(',', \App\Services\JobService::REOPENABLE_TO),
+        ], [
+            'reason.required' => 'Say why this job is being reopened — it is on the client\'s record as finished.',
+            'reason.min' => 'A few more words: this is the note somebody reads when they ask why the job was reopened.',
+        ]);
+
+        try {
+            $reopened = app(\App\Services\JobService::class)->reopen(
+                $serviceRequest,
+                $request->user(),
+                $data['reason'],
+                $data['to_status'] ?? ServiceRequest::STATUS_IN_PROGRESS
+            );
+        } catch (\RuntimeException $e) {
+            return back()->with('error', $e->getMessage());
+        }
+
+        return back()->with('success', sprintf(
+            '%s reopened at %s. Progress now reads %d%% from the validated reports. '
+            . 'Payments, invoices and technician payouts are untouched.',
+            $reopened->request_id,
+            ServiceRequest::allStatuses()[$reopened->status] ?? $reopened->status,
+            (int) $reopened->progress_percentage
+        ));
+    }
+
     public function approveJobCompletion(Request $request, ServiceRequest $serviceRequest)
     {
         $request->validate([
@@ -5055,7 +5212,7 @@ class AdminDashboardController extends Controller
 
         $maxOrder = $serviceRequest->subTasks()->max('order') ?? 0;
 
-        ServiceSubTask::create([
+        $subTask = ServiceSubTask::create([
             'service_request_id' => $serviceRequest->id,
             'title' => $request->title,
             'description' => $request->description,
@@ -5067,7 +5224,31 @@ class AdminDashboardController extends Controller
             $serviceRequest->update(['has_sub_tasks' => true]);
         }
 
-        return redirect()->route('admin.jobs.show', $serviceRequest)->with('success', 'Sub-task added successfully!');
+        // Adding scope to a job changes what it is, and on a finished job it
+        // says the record of completion is wrong — which is worth more than
+        // the catch-all entry the middleware would otherwise leave.
+        $onFinishedJob = in_array($serviceRequest->status, ServiceRequest::TERMINAL_STATUSES, true)
+            || $serviceRequest->status === ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION;
+
+        AuditLog::log(AuditLog::ACTION_CREATED, $serviceRequest, null, [
+            'event' => 'sub_task_added',
+            'sub_task_id' => $subTask->id,
+            'title' => $subTask->title,
+            'job_status' => $serviceRequest->status,
+            'added_to_finished_job' => $onFinishedJob,
+            'added_by' => auth()->id(),
+        ]);
+
+        return redirect()->route('admin.jobs.show', $serviceRequest)->with(
+            'success',
+            $onFinishedJob
+                ? sprintf(
+                    '"%s" added. This job is still at %s — reopen it before the task can be worked on.',
+                    $subTask->title,
+                    ServiceRequest::allStatuses()[$serviceRequest->status] ?? $serviceRequest->status
+                )
+                : 'Sub-task added successfully!'
+        );
     }
 
     public function updateSubTask(Request $request, ServiceSubTask $serviceSubTask)
@@ -5238,8 +5419,21 @@ class AdminDashboardController extends Controller
 
         $this->absorbBareCrewPlace($serviceRequest, $technician, $assignment);
 
-        // Determine if this is the first assigned technician (becomes lead)
-        $isFirstAssignment = !$serviceRequest->lead_technician_id;
+        // Is anybody already carrying this job?
+        //
+        // This asked only whether lead_technician_id was set, and a job staffed
+        // through the single-technician route has a technician_id and no named
+        // lead. So the first sub-task assignment on such a job read "no lead",
+        // decided it was the first assignment, and wrote BOTH columns to the
+        // sub-task's technician — handing the whole job to a crew member who
+        // had been given one task on it. The technician who had been running
+        // it was displaced, and their dues went with them: the assignment row
+        // survives, but nothing on the job points at them any more, so the
+        // fee the office agreed simply stops being shown.
+        //
+        // The test is now the one ServiceRequest::isLeadTechnician() uses —
+        // either column means somebody holds this job.
+        $isFirstAssignment = !$serviceRequest->lead_technician_id && !$serviceRequest->technician_id;
 
         if ($isFirstAssignment) {
             $serviceRequest->update([
@@ -5256,6 +5450,14 @@ class AdminDashboardController extends Controller
             if ($serviceRequest->user && $serviceRequest->user->email) {
                 Mail::to($serviceRequest->user->email)->send(new TechnicianAssigned($serviceRequest, $technician));
             }
+        } elseif (!$serviceRequest->lead_technician_id && $serviceRequest->technician_id) {
+            // Somebody holds the job without being named its lead — a job
+            // staffed before it was broken into tasks. Say so, rather than
+            // leaving a project whose lead the page reports as nobody. The
+            // office reading "No lead technician assigned yet" on a job that
+            // plainly has one is how the lead came to be reassigned by hand in
+            // the first place.
+            $serviceRequest->update(['lead_technician_id' => $serviceRequest->technician_id]);
         }
 
         // Update technician availability
@@ -5378,15 +5580,37 @@ class AdminDashboardController extends Controller
      */
     public function auditLogs(Request $request)
     {
-        $logs = \App\Models\AuditLog::with('user')
+        $logs = \App\Models\AuditLog::with('user:id,name,email,role')
             ->when($request->action, fn($q, $a) => $q->where('action', $a))
             ->when($request->user_id, fn($q, $u) => $q->where('user_id', $u))
+            // Who acted, not what they acted on. The trail now covers every
+            // role, which makes "show me what the clients did" the question
+            // this page is most often opened to answer, and it could only be
+            // asked one named user at a time.
+            ->when($request->role, fn($q, $role) => $q->whereHas(
+                'user',
+                fn($u) => $u->where('role', $role)
+            ))
+            ->when($request->from, fn($q, $from) => $q->where('created_at', '>=', \Carbon\Carbon::parse($from)->startOfDay()))
+            ->when($request->to, fn($q, $to) => $q->where('created_at', '<=', \Carbon\Carbon::parse($to)->endOfDay()))
             ->orderBy('created_at', 'desc')
-            ->paginate(50);
+            ->paginate(50)
+            ->withQueryString();
 
         return Inertia::render('Admin/AuditLogs', [
             'logs' => $logs,
-            'filters' => $request->only(['action', 'user_id']),
+            'filters' => $request->only(['action', 'user_id', 'role', 'from', 'to']),
+            // Taken from the table rather than hardcoded in the page. The
+            // frontend listed the eleven constants on the model, so the dotted
+            // actions the services write — deposit.opened, quotation.signed,
+            // and everything added since — were unfilterable and invisible as
+            // options even though the rows were right there.
+            'actionTypes' => \App\Models\AuditLog::query()
+                ->select('action')
+                ->distinct()
+                ->orderBy('action')
+                ->pluck('action'),
+            'roles' => \App\Models\User::ROLES,
         ]);
     }
 

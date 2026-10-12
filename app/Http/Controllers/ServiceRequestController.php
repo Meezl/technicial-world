@@ -95,6 +95,25 @@ class ServiceRequestController extends Controller
             $serviceRequest->update(['files' => $uploadedFiles]);
         }
 
+        // The first entry in a job's history, and until now the only step of a
+        // request's life that wrote none. Every later transition is audited by
+        // JobService::transitionState, so a trail would open mid-pipeline on a
+        // request whose own creation was unrecorded.
+        \App\Models\AuditLog::log(
+            \App\Models\AuditLog::ACTION_CREATED,
+            $serviceRequest,
+            null,
+            [
+                'request_id' => $serviceRequest->request_id,
+                'service_category_id' => $validated['service_category_id'],
+                'urgency' => $validated['urgency'],
+                'location' => $validated['location'],
+                'submission_mode' => ServiceRequest::SUBMISSION_MODE_CLIENT_SELF,
+                'attachments' => count($serviceRequest->files ?? []),
+                'raised_by' => auth()->id(),
+            ]
+        );
+
         // Defer the client confirmation and office alerts to AFTER the response is sent so the
         // user doesn't sit waiting on SMTP roundtrips. This eliminates the
         // 30s timeout that happened when several admins / PMs needed

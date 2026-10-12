@@ -38,6 +38,10 @@
                             <strong>{{ selectedAction ? formatAction(selectedAction) : 'All actions' }}</strong>
                         </div>
                         <div class="hero-action-tile">
+                            <span>Actor role</span>
+                            <strong>{{ selectedRole ? formatRole(selectedRole) : 'All roles' }}</strong>
+                        </div>
+                        <div class="hero-action-tile">
                             <span>Page range</span>
                             <strong>{{ logs.from || 0 }}-{{ logs.to || 0 }}</strong>
                         </div>
@@ -98,7 +102,7 @@
                         <div>
                             <span class="section-kicker">Filters</span>
                             <h3>Find the right event faster</h3>
-                            <p>Filter by action on the server, then use local search to narrow the current page by user, entity, IP, or action.</p>
+                            <p>Filter by action, actor role, and date range on the server, then use local search to narrow the current page by user, entity, IP, or action.</p>
                         </div>
                     </div>
 
@@ -111,6 +115,26 @@
                                     {{ formatAction(action) }}
                                 </option>
                             </select>
+                        </label>
+
+                        <label class="filter-field">
+                            <span>Actor Role</span>
+                            <select v-model="selectedRole" @change="applyFilters" class="filter-input">
+                                <option value="">All Roles</option>
+                                <option v-for="role in roles" :key="role" :value="role">
+                                    {{ formatRole(role) }}
+                                </option>
+                            </select>
+                        </label>
+
+                        <label class="filter-field">
+                            <span>From</span>
+                            <input v-model="fromDate" @change="applyFilters" type="date" class="filter-input">
+                        </label>
+
+                        <label class="filter-field">
+                            <span>To</span>
+                            <input v-model="toDate" @change="applyFilters" type="date" class="filter-input">
                         </label>
 
                         <label class="filter-field filter-field-wide">
@@ -171,8 +195,10 @@
                                         <div class="user-info">
                                             <div class="user-avatar">{{ getInitials(log.user?.name) }}</div>
                                             <div class="user-details">
-                                                <strong>{{ log.user?.name || 'System' }}</strong>
-                                                <span class="cell-subtext">{{ log.user?.email || 'Automated event' }}</span>
+                                                <strong>{{ actorName(log) }}</strong>
+                                                <span class="cell-subtext">{{ actorDetail(log) }}</span>
+                                                <span v-if="log.user?.role" class="role-tag">{{ formatRole(log.user.role) }}</span>
+                                                <span v-else-if="isGuestEntry(log)" class="role-tag">Not signed in</span>
                                             </div>
                                         </div>
                                     </td>
@@ -182,9 +208,15 @@
                                         </span>
                                     </td>
                                     <td>
+                                        <!-- Some entries have no subject and are
+                                             not meant to: a sign-in attempt
+                                             against an address that matches no
+                                             account, a guest's submission. -->
                                         <div class="log-cell">
-                                            <strong>{{ formatEntityType(log.auditable_type) || 'Unknown entity' }}</strong>
-                                            <span class="cell-subtext">#{{ log.auditable_id || 'N/A' }}</span>
+                                            <strong>{{ formatEntityType(log.auditable_type) || '—' }}</strong>
+                                            <span class="cell-subtext">
+                                                {{ log.auditable_id ? `#${log.auditable_id}` : 'No record attached' }}
+                                            </span>
                                         </div>
                                     </td>
                                     <td>
@@ -214,7 +246,7 @@
                                     <p>{{ formatDateTime(log.created_at) }}</p>
                                 </div>
                                 <span :class="['status-badge', getActionClass(log.action)]">
-                                    {{ formatEntityType(log.auditable_type) || 'Entity' }}
+                                    {{ formatEntityType(log.auditable_type) || 'No record' }}
                                 </span>
                             </div>
 
@@ -222,6 +254,7 @@
                                 <div>
                                     <span>User</span>
                                     <strong>{{ log.user?.name || 'System' }}</strong>
+                                    <span v-if="log.user?.role" class="role-tag">{{ formatRole(log.user.role) }}</span>
                                 </div>
                                 <div>
                                     <span>Entity ID</span>
@@ -293,10 +326,14 @@
                             <div class="modal-meta-card">
                                 <span>User</span>
                                 <strong>{{ selectedLog.user?.name || 'System' }}</strong>
+                                <span v-if="selectedLog.user?.role" class="role-tag">{{ formatRole(selectedLog.user.role) }}</span>
                             </div>
                             <div class="modal-meta-card">
                                 <span>Entity</span>
-                                <strong>{{ formatEntityType(selectedLog.auditable_type) || 'Unknown' }} #{{ selectedLog.auditable_id || 'N/A' }}</strong>
+                                <strong v-if="selectedLog.auditable_type">
+                                    {{ formatEntityType(selectedLog.auditable_type) }} #{{ selectedLog.auditable_id }}
+                                </strong>
+                                <strong v-else>No record attached</strong>
                             </div>
                             <div class="modal-meta-card">
                                 <span>IP Address</span>
@@ -334,18 +371,22 @@ import { Link, router } from '@inertiajs/vue3'
 const props = defineProps({
     logs: { type: Object, default: () => ({ data: [], links: [], total: 0, from: 0, to: 0 }) },
     filters: { type: Object, default: () => ({}) },
+    // Both come from the server: the action list is the distinct set actually
+    // present in the table, so a new action name is filterable the day it is
+    // first written rather than whenever this page is next edited.
+    actionTypes: { type: Array, default: () => [] },
+    roles: { type: Array, default: () => [] },
 })
 
 const selectedAction = ref(props.filters.action || '')
+const selectedRole = ref(props.filters.role || '')
+const fromDate = ref(props.filters.from || '')
+const toDate = ref(props.filters.to || '')
 const searchQuery = ref('')
 const showDetailModal = ref(false)
 const selectedLog = ref(null)
 
-const actionTypes = [
-    'created', 'updated', 'deleted', 'state_changed',
-    'login', 'logout', 'payment', 'approval',
-    'assignment', 'reassignment', 'suspension'
-]
+const actionTypes = computed(() => props.actionTypes)
 
 const displayedLogs = computed(() => {
     const entries = props.logs.data || []
@@ -357,6 +398,7 @@ const displayedLogs = computed(() => {
         const haystack = [
             log.user?.name,
             log.user?.email,
+            log.user?.role,
             log.action,
             formatEntityType(log.auditable_type),
             log.auditable_id,
@@ -378,6 +420,9 @@ const detailCount = computed(() => (props.logs.data || []).filter(log => hasDeta
 const activeFilterChips = computed(() => {
     const chips = []
     if (selectedAction.value) chips.push(`Action: ${formatAction(selectedAction.value)}`)
+    if (selectedRole.value) chips.push(`Role: ${formatRole(selectedRole.value)}`)
+    if (fromDate.value) chips.push(`From: ${fromDate.value}`)
+    if (toDate.value) chips.push(`To: ${toDate.value}`)
     if (searchQuery.value) chips.push(`Search: ${searchQuery.value}`)
     return chips
 })
@@ -405,6 +450,9 @@ const pageSummary = computed(() => {
 const applyFilters = () => {
     router.get('/admin/audit-logs', {
         action: selectedAction.value || undefined,
+        role: selectedRole.value || undefined,
+        from: fromDate.value || undefined,
+        to: toDate.value || undefined,
     }, {
         preserveState: true,
         preserveScroll: true,
@@ -413,12 +461,26 @@ const applyFilters = () => {
 }
 
 const clearFilters = () => {
-    searchQuery.value = ''
+    const hadServerFilter = Boolean(
+        selectedAction.value || selectedRole.value || fromDate.value || toDate.value
+    )
 
-    if (selectedAction.value) {
-        selectedAction.value = ''
+    searchQuery.value = ''
+    selectedAction.value = ''
+    selectedRole.value = ''
+    fromDate.value = ''
+    toDate.value = ''
+
+    // Only round-trip if something the server was filtering on has changed;
+    // clearing a local search alone should not reload the page.
+    if (hadServerFilter) {
         applyFilters()
     }
+}
+
+const formatRole = (role) => {
+    if (!role) return ''
+    return role.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
 }
 
 const formatDateTime = (date) => {
@@ -472,8 +534,37 @@ const getActionClass = (action) => {
         assignment: 'review',
         reassignment: 'review',
         suspension: 'rejected',
+        // Attempts and copies, not changes. Toned apart from the rest
+        // deliberately: a page where a refused action looks like a completed
+        // one is worse than a page that omits it.
+        denied: 'rejected',
+        login_failed: 'rejected',
+        lockout: 'rejected',
+        download: 'review',
+        request: 'pending',
     }
     return map[action] || 'pending'
+}
+
+/**
+ * Nobody signed in is not the same as the platform acting on its own.
+ *
+ * Every entry without a user read as "System", which put a guest filling in
+ * the contact form and a nightly sweep under one name. The row's own values
+ * say which — anything the middleware recorded carries the path it came in on.
+ */
+const isGuestEntry = (log) => !log?.user && Boolean(log?.new_values?.path || log?.new_values?.email)
+
+const actorName = (log) => {
+    if (log?.user?.name) return log.user.name
+    if (isGuestEntry(log)) return log?.new_values?.email || 'Not signed in'
+    return 'System'
+}
+
+const actorDetail = (log) => {
+    if (log?.user?.email) return log.user.email
+    if (isGuestEntry(log)) return log?.new_values?.path || 'Public request'
+    return 'Automated event'
 }
 
 const getInitials = (name) => {
@@ -652,6 +743,13 @@ defineOptions({ layout: null })
     font-size: 0.8rem;
 }
 
+/* Beats the two rules above, which are specific enough to recolour the tag. */
+.modal-meta-card .role-tag,
+.mobile-log-grid .role-tag {
+    color: #475569;
+    font-size: 0.7rem;
+}
+
 .hero-action-tile strong,
 .hero-action-note strong,
 .modal-meta-card strong,
@@ -755,8 +853,13 @@ defineOptions({ layout: null })
     margin-bottom: 1.5rem;
 }
 
+/*
+ * Was a fixed two columns, which fitted the one filter and one search box the
+ * page shipped with. Role and the date range take it to five controls, so it
+ * flows instead of wrapping them into the wrong widths.
+ */
 .filter-grid {
-    grid-template-columns: 0.9fr 1.5fr;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     margin-top: 1rem;
 }
 
@@ -769,6 +872,8 @@ defineOptions({ layout: null })
 }
 
 .filter-field-wide {
+    /* Search gets its own row under the filters, at full width. */
+    grid-column: 1 / -1;
     min-width: 0;
 }
 
@@ -886,6 +991,24 @@ defineOptions({ layout: null })
 .log-cell strong,
 .user-details strong {
     color: #0f172a;
+}
+
+/*
+ * The actor's role, next to their name. Deliberately quiet — the question it
+ * answers is "was this a client or the office?", which only needs to be
+ * readable at a glance down the column, not to compete with the action badge.
+ */
+.role-tag {
+    align-self: flex-start;
+    margin-top: 0.1rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    background: #f1f5f9;
+    color: #475569;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
 }
 
 .user-info {

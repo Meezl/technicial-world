@@ -120,11 +120,29 @@ class ProgressReport extends Model
             ->whereNull('rejected_at');
     }
 
-    /** Validated by the office but not yet released to the client. */
+    /**
+     * Settled, unsent, and actually the office's to send.
+     *
+     * The third condition was missing. "Validated and not yet released" is
+     * true of a report a lead approved on site and never posted up — the lead
+     * path validates without submitting — so the release swept those in and
+     * sent the client work the office had never seen. Nothing had gone out
+     * that way in practice, but only because the batch happened to be held
+     * for other reasons; nothing in the code prevented it.
+     *
+     * It also made every count built on this scope wrong in the same
+     * direction: a report sitting on a lead's desk was reported to the office
+     * as "awaiting release", which is a queue they cannot clear — the lead
+     * has to post it, or somebody has to pull it in.
+     *
+     * Held by the lead is a different state with a different owner, and
+     * scopeAwaitingLeadPost is where it belongs.
+     */
     public function scopeReleasableToClient($query)
     {
         return $query->where('is_validated', true)
-            ->whereNull('released_to_client_at');
+            ->whereNull('released_to_client_at')
+            ->whereNotNull('submitted_to_office_at');
     }
 
     /**

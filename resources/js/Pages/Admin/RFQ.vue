@@ -573,6 +573,13 @@
                                     <span>{{ selectedRFQ?.user?.email }}</span>
                                 </div>
                                 <div class="info-item">
+                                    <label>Mobile:</label>
+                                    <span>
+                                        <a v-if="selectedRFQ?.user?.phone" :href="`tel:${selectedRFQ.user.phone}`">{{ selectedRFQ.user.phone }}</a>
+                                        <template v-else>Not provided</template>
+                                    </span>
+                                </div>
+                                <div class="info-item">
                                     <label>Service Category:</label>
                                     <span>{{ selectedRFQ?.service_category?.name }}</span>
                                 </div>
@@ -660,9 +667,26 @@
                                             <span class="details">{{ material.quantity }} x KSH {{ formatCurrency(material.unit_price) }} = KSH {{ formatCurrency(material.quantity * material.unit_price) }}</span>
                                         </div>
                                     </div>
-                                    <div v-if="quotationAttachmentUrls.length" style="margin-top: 0.75rem; display:flex; flex-direction:column; gap:0.35rem;">
-                                        <a v-for="(url, i) in quotationAttachmentUrls" :key="i" :href="url.href" target="_blank" style="display: inline-flex; align-items: center; gap: 0.5rem; color: var(--primary-color); text-decoration: none; font-weight: 500;">
-                                            <i class="fas fa-paperclip"></i> {{ url.label }}
+                                    <div v-if="currentQuotationAttachments.length" style="margin-top: 0.75rem; display:flex; flex-direction:column; gap:0.35rem;">
+                                        <span style="font-size:0.78rem; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:#047857;">
+                                            Current version — use these
+                                        </span>
+                                        <a v-for="att in currentQuotationAttachments" :key="att.path" :href="att.url" target="_blank" rel="noopener" style="display: inline-flex; align-items: center; gap: 0.5rem; color: var(--primary-color); text-decoration: none; font-weight: 500;">
+                                            <i class="fas fa-paperclip"></i> {{ att.name }}
+                                            <span v-if="att.revision !== null" style="font-size:0.72rem; font-weight:600; padding:0.1rem 0.4rem; border-radius:999px; background:#d1fae5; color:#065f46;">
+                                                Revision #{{ att.revision }}
+                                            </span>
+                                        </a>
+                                    </div>
+                                    <div v-if="supersededQuotationAttachments.length" style="margin-top: 0.6rem; display:flex; flex-direction:column; gap:0.35rem;">
+                                        <span style="font-size:0.78rem; font-weight:600; text-transform:uppercase; letter-spacing:0.03em; color:#6b7280;">
+                                            Superseded — kept for the record, not sent to the client
+                                        </span>
+                                        <a v-for="att in supersededQuotationAttachments" :key="att.path" :href="att.url" target="_blank" rel="noopener" style="display: inline-flex; align-items: center; gap: 0.5rem; color: #6b7280; text-decoration: line-through; font-weight: 400;">
+                                            <i class="fas fa-paperclip"></i> {{ att.name }}
+                                            <span v-if="att.revision !== null" style="font-size:0.72rem; font-weight:600; padding:0.1rem 0.4rem; border-radius:999px; background:#f3f4f6; color:#6b7280; text-decoration:none;">
+                                                Revision #{{ att.revision }}
+                                            </span>
                                         </a>
                                     </div>
                                 </div>
@@ -2321,26 +2345,14 @@ const removeMaterialsFile = (index) => {
     quotationForm.value.materials_files.splice(index, 1)
 }
 
-// Merge legacy single-file path with the new array so the "view attached"
-// list surfaces every document regardless of when it was uploaded.
-const quotationAttachmentUrls = computed(() => {
-    const out = []
-    const single = selectedRFQ.value?.quote_materials_file_path
-    if (single) out.push({ href: `/storage/${single}`, label: fileNameFromPath(single) || 'Attached materials list' })
-    const many = selectedRFQ.value?.quote_materials_file_paths
-    if (Array.isArray(many)) {
-        many.forEach((p, i) => {
-            if (p) out.push({ href: `/storage/${p}`, label: fileNameFromPath(p) || `Attachment ${i + 1}` })
-        })
-    }
-    return out
-})
-const fileNameFromPath = (path) => {
-    if (typeof path !== 'string') return ''
-    const parts = path.split('/')
-    return parts[parts.length - 1] || path
-}
-
+// The office's quotation documents, already classified server-side into the
+// batch belonging to the current revision and the batches a later revision
+// superseded (ServiceRequest::$quotation_attachments). Revisions append rather
+// than replace, so without this split an admin looking at the modal had no way
+// to tell which of five identically-named breakdowns the client was quoted on.
+const quotationAttachments = computed(() => selectedRFQ.value?.quotation_attachments || [])
+const currentQuotationAttachments = computed(() => quotationAttachments.value.filter(a => a.is_current))
+const supersededQuotationAttachments = computed(() => quotationAttachments.value.filter(a => !a.is_current))
 const isSubmittingQuote = ref(false)
 
 const submitQuote = () => {

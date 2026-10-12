@@ -3,6 +3,28 @@
         <AdminSidebar current-page="jobs" />
 
         <main class="main-content job-details-page">
+            <!-- Pinned, because every action on this page preserves scroll and
+                 the reader is never at the top when one lands. -->
+            <transition name="job-flash">
+                <div
+                    v-if="activeFlash"
+                    :class="['job-flash', `job-flash-${activeFlash.tone}`]"
+                    role="status"
+                    aria-live="polite"
+                >
+                    <i
+                        :class="[
+                            'fas',
+                            activeFlash.tone === 'error' ? 'fa-circle-exclamation'
+                                : activeFlash.tone === 'warning' ? 'fa-triangle-exclamation'
+                                : 'fa-circle-check',
+                        ]"
+                    ></i>
+                    <p>{{ activeFlash.text }}</p>
+                    <button type="button" class="job-flash-close" @click="dismissFlash" aria-label="Dismiss">&times;</button>
+                </div>
+            </transition>
+
             <section class="job-details-hero">
                 <div class="hero-copy">
                     <div class="hero-topline">
@@ -58,6 +80,18 @@
                             <i class="fas fa-wallet"></i>
                             Payments
                         </Link>
+                        <!-- A job can be recorded as delivered and not be. The
+                             office needs a way back that is not the database. -->
+                        <button
+                            v-if="canReopenJob"
+                            type="button"
+                            class="btn btn-warning hero-action-btn"
+                            @click="showReopen = true"
+                            title="Put this job back to work"
+                        >
+                            <i class="fas fa-rotate-left"></i>
+                            Reopen Job
+                        </button>
                     </div>
                 </div>
             </section>
@@ -116,6 +150,7 @@
                                 <span>Client</span>
                                 <strong>{{ job.user.name }}</strong>
                                 <p>{{ job.user.email }}</p>
+                                <p>{{ job.user.phone || 'No mobile on file' }}</p>
                             </div>
                             <div class="overview-item">
                                 <span>Service category</span>
@@ -627,6 +662,26 @@
                             </div>
                         </div>
 
+                        <!-- Adding scope to a job the record calls finished.
+                             Allowed, because the record is sometimes wrong —
+                             but the task cannot be worked until the job is
+                             open, so say so here rather than letting it be
+                             discovered at the assign button. -->
+                        <div v-if="isAdmin && atFinishedStage" class="subtask-stage-notice">
+                            <i class="fas fa-circle-info"></i>
+                            <div>
+                                <strong>This job is at {{ formatStatus(job.status) }}.</strong>
+                                <p>
+                                    You can add and staff tasks here, but work cannot start while the job
+                                    is closed off.
+                                    <template v-if="canReopenJob">
+                                        Use <strong>Reopen Job</strong> at the top of the page when the
+                                        record needs to say the job is still running.
+                                    </template>
+                                </p>
+                            </div>
+                        </div>
+
                         <div v-if="job.sub_tasks?.length" class="subtask-summary-grid">
                             <div class="subtask-summary-card">
                                 <span>Total</span>
@@ -991,20 +1046,62 @@
                             </div>
                             <div class="header-actions-row">
                                 <span class="sub-task-count">{{ progressReports.length }} report{{ progressReports.length === 1 ? '' : 's' }}</span>
+                                <!-- How many of them the client already has. The page
+                                     showed only a total, so "which ones went out" had
+                                     no answer anywhere on screen. -->
+                                <span v-if="releasedReports.length" class="sub-task-count release-count-sent">
+                                    {{ releasedReports.length }} sent
+                                </span>
                                 <!-- Release the settled batch to the client as one
                                      collective update — a single report and a single
                                      email, in place of one per technician. -->
                                 <button
                                     v-if="releasableReports.length"
                                     type="button"
-                                    class="btn btn-primary btn-sm"
+                                    class="btn btn-sm"
+                                    :class="releaseBlocked ? 'btn-secondary' : 'btn-primary'"
                                     @click="releaseReportsToClient"
                                     :disabled="releasing"
-                                    title="Send one collective progress update to the client"
+                                    :title="releaseBlocked
+                                        ? `${reportsNeedingSignOff.length} report(s) need the office's sign-off before any can go`
+                                        : 'Send one collective progress update to the client'"
                                 >
-                                    <i class="fas fa-paper-plane"></i>
-                                    {{ releasing ? 'Releasing…' : `Release ${releasableReports.length} to client` }}
+                                    <i :class="['fas', releaseBlocked ? 'fa-lock' : 'fa-paper-plane']"></i>
+                                    {{ releasing
+                                        ? 'Releasing…'
+                                        : releaseBlocked
+                                            ? `Release held — ${reportsNeedingSignOff.length} need sign-off`
+                                            : `Release ${releasableReports.length} to client` }}
                                 </button>
+                            </div>
+                        </div>
+
+                        <!-- Why the release is held. The server refuses the whole
+                             batch when any settled report has been read by nobody
+                             but its author, and said so in a flash message this
+                             page never rendered — so the office saw an unchanged
+                             button and clicked it again. -->
+                        <div v-if="releaseBlocked" class="release-blocked-banner">
+                            <i class="fas fa-lock"></i>
+                            <div>
+                                <strong>
+                                    Release held — {{ reportsNeedingSignOff.length }}
+                                    {{ reportsNeedingSignOff.length === 1 ? 'report has' : 'reports have' }}
+                                    been read by nobody but the author
+                                </strong>
+                                <p>
+                                    Nothing goes to the client until {{ reportsNeedingSignOff.length === 1 ? 'it is' : 'they are' }}
+                                    signed off — the batch is held as a whole, so the client gets one
+                                    coherent update rather than two for the same stretch of work.
+                                    Use <strong>Sign off</strong> on the {{ reportsNeedingSignOff.length === 1 ? 'card' : 'cards' }} below.
+                                </p>
+                                <ul class="release-blocked-list">
+                                    <li v-for="r in reportsNeedingSignOff" :key="r.id">
+                                        {{ r.sub_task?.title || 'Whole job' }} —
+                                        {{ r.validated_percent ?? r.percent_complete }}%,
+                                        {{ r.submitter?.name || r.technician?.user?.name || 'Unknown' }}
+                                    </li>
+                                </ul>
                             </div>
                         </div>
 
@@ -1107,7 +1204,12 @@
                             <article v-for="report in progressReports" :key="report.id" class="admin-report-card">
                                 <div class="admin-report-top">
                                     <div>
-                                        <strong>{{ report.service_sub_task ? `Sub-task: ${report.service_sub_task.title || report.service_sub_task.name}` : 'Whole job update' }}</strong>
+                                        <!-- `service_sub_task` is not a key on the payload — the
+                                             relation is subTask, so Inertia sends `sub_task`.
+                                             Every card therefore read "Whole job update",
+                                             sub-task reports included, which is a large part
+                                             of why a job's reports cannot be told apart. -->
+                                        <strong>{{ report.sub_task ? `Sub-task: ${report.sub_task.title}` : 'Whole job update' }}</strong>
                                         <p>
                                             Submitted by {{ report.submitter?.name || report.technician?.user?.name || 'Unknown' }}
                                             on {{ formatDateTime(report.created_at) }}
@@ -1141,9 +1243,21 @@
                                         <span>Reported</span>
                                         <strong>{{ report.percent_complete }}%</strong>
                                     </div>
+                                    <!-- Who settled it, not just that something did.
+                                         A lead's site figure and an office
+                                         settlement both set is_validated, so this
+                                         tile read "Validated 95%" beside a state
+                                         saying the office had not settled it — two
+                                         true statements that read as a contradiction
+                                         and left ops not trusting either. -->
                                     <div class="subtask-summary-card">
-                                        <span>Validated</span>
+                                        <span>{{ validatedByLabel(report) }}</span>
                                         <strong>{{ report.is_validated ? `${report.validated_percent ?? report.percent_complete}%` : 'Pending' }}</strong>
+                                        <small v-if="report.is_validated" class="validated-by-note">
+                                            {{ isLeadFigure(report)
+                                                ? 'Site figure — not settled for payment'
+                                                : 'Settled by the office' }}
+                                        </small>
                                     </div>
                                     <div class="subtask-summary-card">
                                         <span>Photos</span>
@@ -1387,6 +1501,32 @@
                                     <span v-else class="paid-progress-note">
                                         Already paid up to this approved progress level.
                                     </span>
+                                </div>
+
+                                <!-- Where this one actually stands with the client.
+                                     released_to_client_at was in the payload all
+                                     along and shown nowhere. -->
+                                <div class="report-release-row">
+                                    <span v-if="report.released_to_client_at" class="report-sent-stamp">
+                                        <i class="fas fa-paper-plane"></i>
+                                        Sent to client · {{ formatDateTime(report.released_to_client_at) }}
+                                    </span>
+                                    <span v-else-if="report.is_validated && !isHeldByLead(report)" class="report-unsent-stamp">
+                                        <i class="fas fa-clock"></i>
+                                        Not yet sent to client
+                                    </span>
+
+                                    <button
+                                        v-if="reportsNeedingSignOff.some(r => r.id === report.id)"
+                                        type="button"
+                                        class="btn btn-warning btn-sm"
+                                        @click="signOffReport(report)"
+                                        :disabled="signingOffId === report.id"
+                                        title="The office's own check, standing in for the on-site review this report never had"
+                                    >
+                                        <i class="fas fa-user-check"></i>
+                                        {{ signingOffId === report.id ? 'Signing off…' : 'Sign off' }}
+                                    </button>
                                 </div>
 
                                 <ProgressReportActions :report="report" :is-admin="isAdmin" />
@@ -1821,6 +1961,13 @@
                                 <strong>{{ job.user.email }}</strong>
                             </div>
                             <div class="sidebar-detail-item">
+                                <span>Mobile</span>
+                                <strong>
+                                    <a v-if="job.user.phone" :href="`tel:${job.user.phone}`">{{ job.user.phone }}</a>
+                                    <template v-else>Not provided</template>
+                                </strong>
+                            </div>
+                            <div class="sidebar-detail-item">
                                 <span>Request type</span>
                                 <strong>{{ workflowLabel }}</strong>
                             </div>
@@ -2080,6 +2227,66 @@
                     <button @click="closeUnverified" class="btn btn-primary"
                         :disabled="closeUnverifiedReason.trim().length < 10 || savingSignOff">
                         {{ savingSignOff ? 'Closing…' : 'Close the job' }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Reopening. The confirmation is the point of it: the client's record
+             says this was delivered, and the reason entered here is what
+             somebody reads when they ask why it was not. -->
+        <div v-if="showReopen" class="modal-overlay">
+            <div class="modal-content" @click.stop>
+                <div class="modal-header">
+                    <h3>Reopen {{ job.request_id }}</h3>
+                    <button @click="showReopen = false" class="close-btn">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="reopen-warning">
+                        <strong>This job is on the client's record as {{ formatStatus(job.status) }}.</strong>
+                        <p>
+                            Reopening undoes the record of completion — the sign-off, the client's
+                            confirmation and the closure stamps — and recomputes the job percentage from
+                            the validated reports, rather than leaving the flat 100% a sign-off writes.
+                        </p>
+                        <p>
+                            <strong>Nothing financial moves.</strong> Payments taken, invoices raised and
+                            technician payouts already made stay exactly as they are, and reports the
+                            client has seen stay released. Unwinding any of those is a separate decision.
+                        </p>
+                    </div>
+
+                    <div class="form-group" style="margin-top:1rem;">
+                        <label>Reopen at</label>
+                        <select v-model="reopenForm.to_status" class="form-control">
+                            <option v-for="option in reopenableStatuses" :key="option.value" :value="option.value">
+                                {{ option.label }}
+                            </option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" style="margin-top:.75rem;">
+                        <label>Why is it being reopened?</label>
+                        <textarea
+                            v-model="reopenForm.reason"
+                            rows="3"
+                            class="form-control"
+                            placeholder="e.g. Varnish Work was never started — the job was signed off on the carpentry report alone."
+                        ></textarea>
+                        <small style="color:var(--text-muted);">
+                            Goes in the audit log against this job. At least 10 characters.
+                        </small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button @click="showReopen = false" class="btn btn-secondary">Cancel</button>
+                    <button
+                        @click="submitReopen"
+                        class="btn btn-warning"
+                        :disabled="reopening || reopenForm.reason.trim().length < 10"
+                    >
+                        <i class="fas fa-rotate-left"></i>
+                        {{ reopening ? 'Reopening…' : 'Reopen job' }}
                     </button>
                 </div>
             </div>
@@ -3118,6 +3325,16 @@ const props = defineProps({
     }
 })
 
+// Defined here rather than further down, because the stage gates and the
+// reopen control both read it. A computed is lazy enough that order did not
+// break anything, but a const used three hundred lines above where it is
+// declared is a trap for whoever edits this next.
+//
+// Overruling a lead is admin-only; the server refuses it for anyone else, so
+// this only decides whether the control is worth showing.
+const page = usePage()
+const isAdmin = computed(() => page.props.auth?.user?.role === 'admin')
+
 // Photo carousel. Any photo strip on the page hands its full set here so the
 // validator can arrow or swipe through them without going back to the grid.
 const carouselPhotos = ref([])
@@ -3451,8 +3668,25 @@ const commencementBlocker = computed(() => props.gating?.commencement_blocker ??
 const liveAuthorisations = computed(() => props.gating?.live_authorisations ?? [])
 const conversionBlocker = computed(() => props.gating?.conversion_blocker ?? null)
 
+// A job that is finished is not a stage work is handed out at — for anyone
+// following the normal run of the job. An admin is the exception: a job can be
+// recorded as delivered and not be, and the person who has to put that right
+// needs the controls, not an explanation of why they are hidden.
+//
+// Only the page was ever enforcing this. The endpoints gate on the client's
+// approval and the float — questions about money, not about stage — so the
+// server has always allowed both. Reopening the job is still the tidier route
+// and the banner says so; this is for the case where somebody is adding a task
+// to a job they are about to reopen anyway.
+const atFinishedStage = computed(() =>
+    ['completed', 'completed_pending_confirmation', 'awaiting_client_verification',
+     'client_query_raised', 'closed', 'archived'].includes(props.job.status)
+)
+
 const atAssignableStage = computed(() =>
-    assignableStatuses.includes(props.job.status) || preFundingStatuses.includes(props.job.status)
+    assignableStatuses.includes(props.job.status)
+    || preFundingStatuses.includes(props.job.status)
+    || (isAdmin.value && atFinishedStage.value)
 )
 
 const canAssignTechnician = computed(() => atAssignableStage.value && !assignmentBlocker.value)
@@ -3470,9 +3704,10 @@ const canReassignTechnician = computed(() =>
     canAssignTechnician.value && !['completed', 'cancelled'].includes(props.job.status)
 )
 
-const canAddSubTasks = computed(() => {
-    return assignableStatuses.includes(props.job.status)
-})
+const canAddSubTasks = computed(() =>
+    assignableStatuses.includes(props.job.status)
+    || (isAdmin.value && atFinishedStage.value)
+)
 
 const authorisationLabel = (type) => props.gating?.authorisation_types?.[type] || type
 
@@ -4062,10 +4297,44 @@ const milestoneLaborReleasedTotal = computed(() => {
         return sum + Number(milestone.labor_release_amount || 0)
     }, 0)
 })
-// Overruling a lead is admin-only; the server refuses it for anyone else, so
-// this only decides whether the control is worth showing.
-const page = usePage()
-const isAdmin = computed(() => page.props.auth?.user?.role === 'admin')
+// This page rendered no flash messages at all, on any action.
+//
+// That is how a blocked release reads as a broken button: releasing throws
+// when reports on the job still need the office's own sign-off, the server
+// says so in as many words, and the message was dropped on the floor. The
+// office saw an unchanged page with the same count on the button, clicked
+// again, and got the same silence. Nothing was ever released and nothing
+// ever said why.
+//
+// Pinned rather than placed at the top of the page. Every action here uses
+// preserveScroll, so the reader is wherever they clicked — usually far down
+// at the reports panel — and a banner in the hero would be a message
+// delivered off screen, which is what we already had.
+const flash = computed(() => page.props.flash || {})
+const dismissedFlash = ref(null)
+const activeFlash = computed(() => {
+    const f = flash.value
+    const current = f.error
+        ? { tone: 'error', text: f.error }
+        : f.warning
+            ? { tone: 'warning', text: f.warning }
+            : f.success
+                ? { tone: 'success', text: f.success }
+                : null
+
+    if (!current || current.text === dismissedFlash.value) return null
+    return current
+})
+const dismissFlash = () => { dismissedFlash.value = activeFlash.value?.text ?? null }
+
+// A success can go on its own; an error is the one the reader has to act on,
+// so it stays until dismissed.
+watch(activeFlash, (f) => {
+    if (f && f.tone === 'success') {
+        const text = f.text
+        setTimeout(() => { if (dismissedFlash.value !== text) dismissedFlash.value = text }, 6000)
+    }
+})
 
 const progressReports = computed(() => props.job.progress_reports || [])
 const jobPhotos = computed(() => props.job.photos || [])
@@ -4089,6 +4358,68 @@ const pullableReports = computed(() =>
 const releasableReports = computed(() =>
     progressReports.value.filter(r => r.is_validated && !r.released_to_client_at && !isHeldByLead(r))
 )
+
+// Already with the client. Nothing on this page said so, which is how a job
+// with nine reports gives no answer to "which ones went out, and when".
+// A lead's sign-off and an office settlement both set is_validated, and the
+// tile that reported it said only "Validated". The difference is the whole
+// point of the two steps: the lead's figure moves the work and the job
+// percentage, the office's releases the money. `approved_by_lead_at` is the
+// marker — validate() clears it when the office settles, so a lingering one
+// means the figure still stands on the site's word alone.
+const isLeadFigure = (report) =>
+    Boolean(report.is_validated && report.approved_by_lead_at)
+
+const validatedByLabel = (report) => {
+    if (!report.is_validated) return 'Validated'
+    if (isLeadFigure(report)) return 'Validated by lead'
+    const by = report.validated_as
+    if (by === 'admin' || by === 'project_manager') return 'Validated by office'
+    return 'Validated'
+}
+
+const releasedReports = computed(() =>
+    progressReports.value.filter(r => r.released_to_client_at)
+)
+
+// What will stop a release before it starts.
+//
+// Mirrors ProgressService::releaseToClient, which refuses the whole batch when
+// any settled report on the job has been read by nobody but its author — the
+// office standing in for the on-site review a single-technician job never had.
+// Held as a whole on purpose: letting the reviewed half go would hand the
+// client two updates for one stretch of work.
+//
+// Kept to the same raw columns as the server's scope rather than the pipeline
+// state, so what the button says and what the server does cannot drift apart.
+const reportsNeedingSignOff = computed(() =>
+    progressReports.value.filter(r =>
+        r.is_validated
+        && !r.released_to_client_at
+        && !r.is_pm_authored
+        && !r.lead_reviewed_at
+        && !r.ops_verified_at
+    )
+)
+const releaseBlocked = computed(() => reportsNeedingSignOff.value.length > 0)
+
+// The office putting its own name to a report no lead reviewed. The route has
+// existed since the pipeline shipped, but the only control for it was on the
+// cross-job queue — so an office blocked here was told to do something with no
+// way to do it from the page they were on.
+const signingOffId = ref(null)
+const signOffReport = (report) => {
+    if (!confirm(
+        'Sign off this report as checked by the office?\n\n'
+        + 'Nobody but its author has read it. Signing off says you are satisfied with '
+        + 'the evidence — it is what the client\'s copy rests on.'
+    )) return
+    signingOffId.value = report.id
+    router.post(`/admin/progress-reports/${report.id}/verify`, {}, {
+        preserveScroll: true,
+        onFinish: () => { signingOffId.value = null },
+    })
+}
 const pullingReports = ref(false)
 const pullReportsFromLead = () => {
     const n = pullableReports.value.length
@@ -4099,9 +4430,53 @@ const pullReportsFromLead = () => {
         onFinish: () => { pullingReports.value = false },
     })
 }
+// ---- Reopening a finished job ----
+//
+// The record says the work was delivered. Undoing that is a decision somebody
+// has to be able to explain later, so it carries a reason and the dialog is
+// explicit about what does not move with it.
+const reopenableStatuses = [
+    { value: 'in_progress', label: 'In progress — the crew is going back' },
+    { value: 'assigned', label: 'Assigned — staffed, not started again yet' },
+    { value: 'ready_for_assignment', label: 'Ready for assignment — needs staffing' },
+    { value: 'suspended', label: 'Suspended — open but on hold' },
+]
+const showReopen = ref(false)
+const reopening = ref(false)
+const reopenForm = reactive({ reason: '', to_status: 'in_progress' })
+
+const canReopenJob = computed(() => isAdmin.value && atFinishedStage.value)
+
+const submitReopen = () => {
+    if (reopenForm.reason.trim().length < 10) return
+    reopening.value = true
+    router.post(`/admin/jobs/${props.job.id}/reopen`, { ...reopenForm }, {
+        preserveScroll: true,
+        onSuccess: () => {
+            showReopen.value = false
+            reopenForm.reason = ''
+            reopenForm.to_status = 'in_progress'
+        },
+        onFinish: () => { reopening.value = false },
+    })
+}
+
 const releasing = ref(false)
 const releaseReportsToClient = () => {
     const n = releasableReports.value.length
+
+    // Refused here as well as on the server, so the reader is told before the
+    // click rather than by an error afterwards.
+    if (releaseBlocked.value) {
+        const blocked = reportsNeedingSignOff.value.length
+        alert(
+            `${blocked} ${blocked === 1 ? 'report' : 'reports'} on this job ${blocked === 1 ? 'has' : 'have'} `
+            + 'been read by nobody but the person who wrote it, so the whole batch is held.\n\n'
+            + 'Sign them off on their cards below, then release.'
+        )
+        return
+    }
+
     if (!confirm(`Release ${n} settled ${n === 1 ? 'report' : 'reports'} to the client as one update? The client receives a single collective report and one email.`)) return
     releasing.value = true
     router.post(`/admin/jobs/${props.job.id}/release-reports`, {}, {
@@ -5187,6 +5562,198 @@ defineOptions({
 </script>
 
 <style>
+
+/*
+ * Flash messages for this page. Pinned to the viewport rather than placed in
+ * the document, because every action here preserves scroll: a banner in the
+ * hero is a message the reader never sees.
+ */
+.job-flash {
+    position: fixed;
+    top: 1.25rem;
+    right: 1.25rem;
+    z-index: 2000;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    max-width: min(32rem, calc(100vw - 2.5rem));
+    padding: 0.9rem 1rem;
+    border-radius: 14px;
+    border: 1px solid transparent;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+    font-size: 0.9rem;
+    line-height: 1.45;
+}
+
+.job-flash p {
+    margin: 0;
+    flex: 1;
+}
+
+.job-flash i {
+    margin-top: 0.1rem;
+    font-size: 1rem;
+}
+
+.job-flash-close {
+    border: 0;
+    background: none;
+    cursor: pointer;
+    font-size: 1.25rem;
+    line-height: 1;
+    padding: 0;
+    color: inherit;
+    opacity: 0.6;
+}
+
+.job-flash-close:hover {
+    opacity: 1;
+}
+
+.job-flash-success {
+    background: #ecfdf5;
+    border-color: #a7f3d0;
+    color: #065f46;
+}
+
+.job-flash-warning {
+    background: #fffbeb;
+    border-color: #fde68a;
+    color: #92400e;
+}
+
+.job-flash-error {
+    background: #fef2f2;
+    border-color: #fecaca;
+    color: #991b1b;
+}
+
+.job-flash-enter-active,
+.job-flash-leave-active {
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.job-flash-enter-from,
+.job-flash-leave-to {
+    opacity: 0;
+    transform: translateY(-0.5rem);
+}
+
+@media (max-width: 640px) {
+    .job-flash {
+        top: 0.75rem;
+        right: 0.75rem;
+        left: 0.75rem;
+        max-width: none;
+    }
+}
+
+/* Why a release is held, and what each report's standing with the client is. */
+.release-blocked-banner {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    margin: 0 0 1rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid #fde68a;
+    border-left: 4px solid #d97706;
+    border-radius: 12px;
+    background: #fffbeb;
+    color: #92400e;
+}
+
+.release-blocked-banner strong {
+    display: block;
+    margin-bottom: 0.25rem;
+}
+
+.release-blocked-banner p {
+    margin: 0;
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+
+.release-blocked-list {
+    margin: 0.5rem 0 0;
+    padding-left: 1.1rem;
+    font-size: 0.85rem;
+}
+
+.subtask-stage-notice {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    margin: 0 0 1rem;
+    padding: 0.8rem 1rem;
+    border: 1px solid #bfdbfe;
+    border-left: 4px solid #2563eb;
+    border-radius: 12px;
+    background: #eff6ff;
+    color: #1e3a8a;
+}
+
+.subtask-stage-notice p {
+    margin: 0.25rem 0 0;
+    font-size: 0.87rem;
+    line-height: 1.5;
+}
+
+.reopen-warning {
+    padding: 0.9rem 1rem;
+    border: 1px solid #fde68a;
+    border-left: 4px solid #d97706;
+    border-radius: 12px;
+    background: #fffbeb;
+    color: #92400e;
+}
+
+.reopen-warning p {
+    margin: 0.5rem 0 0;
+    font-size: 0.87rem;
+    line-height: 1.5;
+}
+
+.validated-by-note {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    line-height: 1.3;
+    color: #64748b;
+}
+
+.release-count-sent {
+    background: #ecfdf5;
+    color: #065f46;
+}
+
+.report-release-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px dashed #e2e8f0;
+}
+
+.report-sent-stamp,
+.report-unsent-stamp {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+
+.report-sent-stamp {
+    color: #047857;
+}
+
+.report-unsent-stamp {
+    color: #64748b;
+}
 
 .job-details-page {
     background:

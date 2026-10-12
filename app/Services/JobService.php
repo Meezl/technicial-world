@@ -13,6 +13,20 @@ use Illuminate\Support\Facades\DB;
 class JobService
 {
     /**
+     * Where a reopened job may land.
+     *
+     * Working states only. Reopening into a stage that is itself an ending —
+     * or into the approval stages the job has long since passed — would be a
+     * different operation wearing this one's name.
+     */
+    public const REOPENABLE_TO = [
+        ServiceRequest::STATUS_IN_PROGRESS,
+        ServiceRequest::STATUS_ASSIGNED,
+        ServiceRequest::STATUS_READY_FOR_ASSIGNMENT,
+        ServiceRequest::STATUS_SUSPENDED,
+    ];
+
+    /**
      * Transition a service request to a new status with validation and logging.
      */
     public function transitionState(
@@ -391,6 +405,117 @@ class JobService
                 ServiceRequest::STATUS_CLOSED,
                 'Closed without client verification: ' . $reason
             );
+        });
+    }
+
+    /**
+     * Put a finished job back to work.
+     *
+     * The archive has had a reopen since it shipped, but only for cancelled
+     * requests and only back to the status they were cancelled from, with a
+     * comment saying completed and closed jobs were deliberately out of scope
+     * because undoing a delivered job touches billing, technician payments and
+     * the client's own record.
+     *
+     * That reasoning was sound and the conclusion was wrong. Jobs do get
+     * closed in error — three of them reached a completed status with a trade
+     * sitting at 0%, because the completion guard read a sub-task report's
+     * percentage as the job's — and an office with no way back had to choose
+     * between leaving a wrong record standing and editing the database. So the
+     * answer is not to refuse it but to make it deliberate: admin only, a
+     * reason that goes in the audit log, and nothing silently undone.
+     *
+     * What it does NOT do, and must not:
+     *
+     *  · it does not reverse a payment, a client invoice or a technician
+     *    payout. Money that has moved has moved, and unwinding it is a
+     *    separate decision with its own paperwork. A reopened job that gets
+     *    closed again does not bill twice — milestones never re-trigger.
+     *  · it does not revive progress reports that were removed, or un-release
+     *    anything the client has already been sent. They saw what they saw.
+     *  · it does not restore sub-task states. The work either happened or it
+     *    did not, and the reports say which.
+     *
+     * What it does undo is the record of completion itself: the stamps that
+     * say the work was delivered, verified and closed, which are untrue the
+     * moment the job is open again. The headline percentage is recomputed
+     * from the reports rather than left at the flat 100 markCompleted writes,
+     * because a reopened job showing 100% is the same lie in a new place.
+     */
+    public function reopen(
+        ServiceRequest $serviceRequest,
+        User $reopenedBy,
+        string $reason,
+        string $toStatus = ServiceRequest::STATUS_IN_PROGRESS
+    ): ServiceRequest {
+        if (trim($reason) === '') {
+            throw new \RuntimeException('Reopening a job needs a reason.');
+        }
+
+        if (!in_array($toStatus, self::REOPENABLE_TO, true)) {
+            throw new \RuntimeException('A job cannot be reopened into "' . $toStatus . '".');
+        }
+
+        if ($serviceRequest->status === $toStatus) {
+            throw new \RuntimeException('This job is already at "' . $toStatus . '".');
+        }
+
+        return DB::transaction(function () use ($serviceRequest, $reopenedBy, $reason, $toStatus) {
+            $before = $serviceRequest->only([
+                'status',
+                'progress_percentage',
+                'completed_date',
+                'client_confirmed_completion',
+                'client_confirmation_date',
+                'closed_by',
+                'closed_without_client',
+            ]);
+
+            // The completion record, cleared. Each of these asserts something
+            // about a finished job and would otherwise go on asserting it
+            // while the crew is back on site — the client verification window
+            // in particular, which a sweep would act on.
+            $serviceRequest->update([
+                'completed_date' => null,
+                'client_confirmed_completion' => false,
+                'client_confirmation_date' => null,
+                'client_verification_sent_at' => null,
+                'closed_by' => null,
+                'closed_without_client' => false,
+                'lead_completion_note' => null,
+                // A concern the client raised against the old closure is
+                // answered by the reopening itself.
+                'client_concern' => null,
+                'client_concern_raised_at' => null,
+            ]);
+
+            $reopened = $this->transitionState(
+                $serviceRequest,
+                $toStatus,
+                'Reopened by ' . $reopenedBy->name . ': ' . $reason,
+                ['reopened_by' => $reopenedBy->id, 'from_status' => $before['status']]
+            );
+
+            // Status first, figure second. refreshHeadlinePercent writes only
+            // the percentage — recalculate() would move the status too and
+            // walk a job with a validated 100% whole-job report straight back
+            // to where it came from.
+            app(ProgressService::class)->refreshHeadlinePercent($reopened);
+
+            AuditLog::log(
+                AuditLog::ACTION_STATE_CHANGED,
+                $reopened,
+                $before,
+                [
+                    'event' => 'job_reopened',
+                    'status' => $toStatus,
+                    'reopened_by' => $reopenedBy->id,
+                    'reason' => $reason,
+                    'progress_percentage' => $reopened->fresh()->progress_percentage,
+                ]
+            );
+
+            return $reopened->fresh();
         });
     }
 

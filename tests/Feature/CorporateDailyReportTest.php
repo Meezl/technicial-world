@@ -104,6 +104,10 @@ class CorporateDailyReportTest extends TestCase
             // needs no second pair of eyes — see lacksPriorReview().
             'is_pm_authored' => true,
             'is_validated' => true,
+            // Stamped because createOnBehalf stamps it: a report the office
+            // wrote never waits on a lead to post it up. Without this the
+            // fixture describes a state the application cannot produce.
+            'submitted_to_office_at' => now(),
             'client_visible_notes' => $notes ?? 'First fix complete on both units.',
             'released_to_client_at' => now(),
         ]);
@@ -157,6 +161,7 @@ class CorporateDailyReportTest extends TestCase
             // needs no second pair of eyes — see lacksPriorReview().
             'is_pm_authored' => true,
             'is_validated' => true,
+            'submitted_to_office_at' => now(),
         ]);
 
         $this->actingAs($this->admin);
@@ -184,6 +189,7 @@ class CorporateDailyReportTest extends TestCase
             'report_date' => now()->toDateString(),
             'percent_complete' => 50, 'validated_percent' => 50,
             'is_pm_authored' => true, 'is_validated' => true,
+            'submitted_to_office_at' => now(),
         ]);
 
         $this->actingAs($this->admin);

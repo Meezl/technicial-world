@@ -68,8 +68,10 @@ class QuotationRevised extends Mailable
     }
 
     /**
-     * A revision carries the same attachments as the first quotation — the
-     * regenerated PDF and every attached file — not an empty set as before.
+     * A revision carries the same shape of attachments as the first quotation —
+     * the regenerated PDF and the office documents belonging to THIS revision,
+     * not an empty set as before and not every superseded version stacked
+     * together, which is what made revision emails confusing to read.
      */
     public function attachments(): array
     {

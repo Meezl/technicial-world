@@ -254,11 +254,16 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             'has_sub_tasks' => true,
         ]);
 
+        // Finished. This test is about who may close a job, not about
+        // whether an unfinished one can be closed — that rule has its own
+        // test below. Left at 0% it used to close anyway, which is the
+        // defect that let jobs reach "Completed" with a trade never started.
         ServiceSubTask::create([
             'service_request_id' => $job->id,
             'title' => 'Second fix wiring',
             'technician_id' => $crew->id,
-            'status' => ServiceSubTask::STATUS_IN_PROGRESS,
+            'status' => ServiceSubTask::STATUS_COMPLETED,
+            'progress_percentage' => 100,
         ]);
 
         ProgressReport::create([
@@ -284,6 +289,86 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             ->assertRedirect();
         // The lead can close their part of it; the office deems it complete.
         $this->assertSame('completed_pending_confirmation', $job->fresh()->status);
+    }
+
+    public function test_a_split_job_cannot_be_closed_while_a_task_is_outstanding(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+        $crew = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        // One trade finished, one never started — the shape of the jobs that
+        // reached "Completed" with a second trade sitting at 0%.
+        $finished = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Carpentry Work',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_COMPLETED,
+            'progress_percentage' => 100,
+        ]);
+        ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Varnish Work',
+            'technician_id' => $crew->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+            'progress_percentage' => 0,
+        ]);
+
+        // A validated 100% report against the finished sub-task. The guard
+        // used to read the most recent validated report of any kind and take
+        // its percentage as the job's, so this one report closed the lot.
+        ProgressReport::create([
+            'service_request_id' => $job->id,
+            'service_sub_task_id' => $finished->id,
+            'technician_id' => $crew->id,
+            'submitted_by' => $crew->user->id,
+            'report_date' => now()->toDateString(),
+            'percent_complete' => 100,
+            'is_validated' => true,
+            'validated_percent' => 100,
+            'validated_at' => now(),
+        ]);
+
+        $this->actingAs($lead->user)
+            ->post(route('technician.jobs.status', $job), ['action' => 'completed'])
+            ->assertRedirect();
+
+        $this->assertNotSame('completed', $job->fresh()->status);
+        $this->assertNotSame('completed_pending_confirmation', $job->fresh()->status);
+    }
+
+    public function test_the_refusal_names_the_task_that_is_not_finished(): void
+    {
+        $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
+        $lead = $this->makeTechnician();
+
+        $job = $this->makeJob($client, [
+            'technician_id' => $lead->id,
+            'lead_technician_id' => $lead->id,
+            'has_sub_tasks' => true,
+        ]);
+
+        ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Varnish Work',
+            'technician_id' => $lead->id,
+            'status' => ServiceSubTask::STATUS_ASSIGNED,
+            'progress_percentage' => 0,
+        ]);
+
+        // "Submit a 100% progress report first" sent the lead to look for a
+        // report, when what was actually missing was a whole trade. The
+        // refusal has to name it or it sends them to the wrong place.
+        $this->actingAs($lead->user)
+            ->post(route('technician.jobs.status', $job), ['action' => 'completed'])
+            ->assertSessionHas('error', fn ($error) =>
+                str_contains($error, 'Varnish Work') && str_contains($error, '0%'));
     }
 
     public function test_client_sees_the_sub_task_breakdown_and_validated_daily_reports(): void

@@ -161,6 +161,7 @@
                                 <div class="entity-block compact">
                                     <strong>{{ job.user?.name || 'N/A' }}</strong>
                                     <span>{{ job.user?.email || 'No email available' }}</span>
+                                    <span>{{ job.user?.phone || 'No mobile on file' }}</span>
                                     <small>{{ formatDate(job.created_at) }}</small>
                                 </div>
                             </td>

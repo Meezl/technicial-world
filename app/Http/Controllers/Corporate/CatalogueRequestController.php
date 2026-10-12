@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Corporate;
 
 use App\Http\Controllers\Controller;
 use App\Models\OrganisationMember;
+use App\Models\AuditLog;
 use App\Models\RateItem;
 use App\Models\RateSchedule;
 use App\Models\ServiceRequest;
@@ -84,7 +85,7 @@ class CatalogueRequestController extends Controller
 
         $rateItem = RateItem::findOrFail($data['rate_item_id']);
 
-        $serviceRequest->items()->create([
+        $item = $serviceRequest->items()->create([
             'rate_item_id' => $rateItem->id,
             'kind' => ServiceRequestItem::KIND_CATALOGUE,
             'code' => $rateItem->code,
@@ -98,6 +99,27 @@ class CatalogueRequestController extends Controller
             'sort_order' => ((int) $serviceRequest->items()->max('sort_order')) + 1,
         ]);
 
+        // What the caretaker actually asked to be priced. The quote built
+        // from these lines is audited when it is composed and again when it is
+        // signed, but the lines themselves were not, so a disputed quantity
+        // could not be traced back to who entered it.
+        AuditLog::log(
+            AuditLog::ACTION_CREATED,
+            $serviceRequest,
+            null,
+            [
+                'event' => 'catalogue_line_added',
+                'item_id' => $item->id,
+                'code' => $rateItem->code,
+                'description' => $rateItem->description,
+                'unit' => $rateItem->unit,
+                'quantity' => (string) $data['quantity'],
+                'urgency' => $data['urgency'],
+                'location_detail' => $data['location_detail'] ?? null,
+                'added_by' => $member->name_on_documents,
+            ]
+        );
+
         return back()->with('success', "{$rateItem->description} added.");
     }
 
@@ -110,7 +132,19 @@ class CatalogueRequestController extends Controller
             return back()->with('error', 'This request has already been quoted.');
         }
 
+        $removed = $item->only(['id', 'code', 'description', 'unit', 'quantity', 'urgency']);
+
         $item->delete();
+
+        AuditLog::log(
+            AuditLog::ACTION_DELETED,
+            $serviceRequest,
+            $removed,
+            [
+                'event' => 'catalogue_line_removed',
+                'removed_by' => $request->user()->id,
+            ]
+        );
 
         return back()->with('success', 'Line removed.');
     }

@@ -25,5 +25,8 @@ class AppServiceProvider extends ServiceProvider
         // Currently discovered:
         //   MessageSent -> LogSentEmail   (audit copy of every email, #5)
         //   Verified    -> SendWelcomeEmail (welcome email, post-verification)
+        //   Login       -> LogUserLogin      (audit trail: session opened)
+        //   Logout      -> LogUserLogout     (audit trail: session closed)
+        //   Registered  -> LogUserRegistered (audit trail: account created)
     }
 }

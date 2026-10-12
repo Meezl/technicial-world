@@ -72,6 +72,7 @@
                                 <td>
                                     {{ job.user.name }}
                                     <span class="sub-text">{{ job.user.email }}</span>
+                                    <span class="sub-text">{{ job.user.phone || 'No mobile on file' }}</span>
                                 </td>
                                 <td>{{ job.service_category?.name || 'N/A' }}</td>
                                 <td>
