@@ -185,7 +185,16 @@
                 <div class="submission-banner-copy">
                     <span class="submission-banner-tag">Request Received</span>
                     <h2>{{ flash.success }}</h2>
-                    <p v-if="submittedRequest">
+                    <!-- The same promise the confirmation email makes. The
+                         screen said "routed for review" while the email named
+                         a time, so the client was told two different things
+                         about one request within a second of each other. -->
+                    <p v-if="submittedRequest && submittedRequest.respond_by">
+                        {{ submittedRequest.request_id }} is in your active requests. You marked it
+                        <strong>{{ submittedRequest.urgency }}</strong> urgency, so we will come back to you
+                        <strong>{{ submittedRequest.respond_by }}</strong>.
+                    </p>
+                    <p v-else-if="submittedRequest">
                         {{ submittedRequest.request_id }} is now in your active requests and has been routed for review.
                     </p>
                     <p v-else>

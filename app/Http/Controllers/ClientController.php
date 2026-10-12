@@ -317,6 +317,7 @@ class ClientController extends Controller
                 // the moment the quote is revised again.
                 'client_quote_approved_by' => Auth::id(),
                 'client_quote_approved_at' => now(),
+                'quote_approval_channel' => 'client_portal',
                 'approved_quote_revision' => $currentRevision,
                 'approved_quote_amount' => $serviceRequest->quote_amount,
             ];
@@ -363,6 +364,28 @@ class ClientController extends Controller
             // that has been and gone. A no-op in the usual order of events.
             app(\App\Services\JobConversionService::class)
                 ->tryConvert($serviceRequest->fresh(), Auth::user(), 'client_quote_approval');
+
+            $channel = 'client_portal';
+            // Their proof, in their own inbox. Deferred so the client is not kept
+            // waiting on SMTP, and never allowed to take the approval down with
+            // it: a receipt that fails to send is worth a log line, not a client
+            // told their approval did not go through when it did.
+            $srId = $serviceRequest->id;
+            app()->terminating(function () use ($srId, $channel) {
+                try {
+                    $sr = \App\Models\ServiceRequest::with(['user', 'serviceCategory'])->find($srId);
+                    if (!$sr?->user?->email) {
+                        return;
+                    }
+                    \Illuminate\Support\Facades\Mail::to($sr->user->email)
+                        ->send(new \App\Mail\QuotationApprovalReceipt($sr, $channel));
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('Approval receipt failed', [
+                        'service_request_id' => $srId,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            });
 
             return response()->json(['success' => true, 'message' => 'Quotation approved successfully']);
         } catch (\Throwable $e) {

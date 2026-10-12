@@ -44,9 +44,32 @@
                         </button>
                     </div>
                 </div>
-                <div v-else class="assignment-response-actions">
-                    <button class="btn btn-outline" :disabled="responding" @click="startDecline(assignment)">Decline</button>
-                    <button class="btn btn-primary" :disabled="responding" @click="acceptAssignment(assignment)">Accept</button>
+                <!-- Sized like the decision it is. These were two ordinary
+                     buttons at the top of a long job page, read on a phone on
+                     site — the same mistake the client portal made, where the
+                     thing the page exists to ask was the quietest element on
+                     it. Accept leads; declining stays available and calmer,
+                     because it is the harder one to undo. -->
+                <div v-else class="assignment-decision">
+                    <button
+                        class="btn-decision btn-decision-accept"
+                        :disabled="responding"
+                        @click="acceptAssignment(assignment)"
+                    >
+                        <i class="fas fa-check-circle"></i>
+                        <span>{{ responding ? 'Accepting…' : 'Accept this job' }}</span>
+                        <span v-if="!responding && assignment.agreed_compensation" class="btn-decision-amount">
+                            KSH {{ Number(assignment.agreed_compensation).toLocaleString() }}
+                        </span>
+                    </button>
+                    <button
+                        class="btn-decision btn-decision-refuse"
+                        :disabled="responding"
+                        @click="startDecline(assignment)"
+                    >
+                        <i class="fas fa-comment-dots"></i>
+                        Decline — I can't take this
+                    </button>
                 </div>
             </section>
 
@@ -450,22 +473,35 @@
                             </template>
                         </div>
 
-                        <div v-if="canSignOffClaim(pendingClaimFor(task))" class="signoff-actions">
+                        <!-- The lead's sign-off on a crew member's claim. It
+                             moves the work and the job percentage and is what
+                             the office settles payment against, so it gets the
+                             same weight as accepting the job — read on a phone,
+                             on site, between other things. -->
+                        <div v-if="canSignOffClaim(pendingClaimFor(task))" class="assignment-decision">
                             <button
-                                class="btn btn-primary"
+                                class="btn-decision btn-decision-accept"
                                 :disabled="busyReportId === pendingClaimFor(task).id"
                                 @click="approveClaim(pendingClaimFor(task))"
                             >
-                                <i class="fas fa-check"></i>
-                                {{ busyReportId === pendingClaimFor(task).id ? 'Working…' : 'Approve' }}
+                                <i class="fas fa-check-circle"></i>
+                                <span>
+                                    {{ busyReportId === pendingClaimFor(task).id ? 'Working…' : 'Approve this claim' }}
+                                </span>
+                                <span
+                                    v-if="busyReportId !== pendingClaimFor(task).id"
+                                    class="btn-decision-amount"
+                                >
+                                    {{ pendingClaimFor(task).percent_complete }}%
+                                </span>
                             </button>
                             <button
-                                class="btn btn-outline btn-reject"
+                                class="btn-decision btn-decision-refuse"
                                 :disabled="busyReportId === pendingClaimFor(task).id"
                                 @click="openReject(pendingClaimFor(task))"
                             >
                                 <i class="fas fa-rotate-left"></i>
-                                Send back
+                                Send back with a reason
                             </button>
                         </div>
 
@@ -1246,6 +1282,74 @@ defineOptions({ layout: null })
 </script>
 
 <style scoped>
+/*
+ * Decisions, sized like decisions.
+ *
+ * Accepting a job and signing off a crew member's claim are the two things a
+ * technician is actually asked to decide, and both were ordinary buttons on a
+ * long page read one-handed on site. Same treatment as the client's quotation
+ * decision, for the same reason: the thing the screen exists to ask should be
+ * the thing you cannot miss.
+ */
+.assignment-decision {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin-top: 0.9rem;
+}
+
+.btn-decision {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
+    width: 100%;
+    padding: 0.95rem 1.25rem;
+    border: 2px solid transparent;
+    border-radius: 12px;
+    font-size: 1.02rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.12s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.btn-decision:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+.btn-decision-accept {
+    background: #16a34a;
+    color: #ffffff;
+    box-shadow: 0 6px 16px rgba(22, 163, 74, 0.28);
+}
+
+.btn-decision-accept:hover:not(:disabled) {
+    background: #15803d;
+    transform: translateY(-1px);
+}
+
+.btn-decision-amount {
+    padding: 0.12rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.22);
+    font-size: 0.92rem;
+}
+
+/* Quieter than Accept, and never the easier of the two to press. */
+.btn-decision-refuse {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #b91c1c;
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+.btn-decision-refuse:hover:not(:disabled) {
+    border-color: #fca5a5;
+    background: #fef2f2;
+}
+
 
 .job-page {
     display: grid;

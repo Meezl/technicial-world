@@ -34,6 +34,7 @@ class ServiceRequest extends Model
         'proxy_quote_approval_note',
         'client_quote_approved_by',
         'client_quote_approved_at',
+        'quote_approval_channel',
         'approved_quote_revision',
         'approved_quote_amount',
         'rfq_status',
@@ -60,6 +61,7 @@ class ServiceRequest extends Model
         'contact_time_minutes',
         'office_alerted_at',
         'office_reminder_count',
+        'response_due_at',
         'quote_materials_file_path',
         'quote_materials_file_paths',
         'quote_materials_file_revisions',
@@ -119,6 +121,7 @@ class ServiceRequest extends Model
         'quote_transport_cost' => 'decimal:2',
         'quote_down_payment' => 'decimal:2',
         'down_payment_requested' => 'boolean',
+        'response_due_at' => 'datetime',
         'scheduled_date' => 'datetime',
         'started_at' => 'datetime',
         'converted_to_job_at' => 'datetime',
@@ -539,7 +542,10 @@ class ServiceRequest extends Model
         if ($this->client_quote_approved_by) {
             return [
                 'approved' => true,
-                'channel' => 'client_portal',
+                // How they agreed, not merely that they did. Rows written
+                // before the column existed read as client_portal, which is
+                // what they were — nothing else could set that column then.
+                'channel' => $this->quote_approval_channel ?: 'client_portal',
                 'approver_id' => $this->client_quote_approved_by,
                 'approved_at' => $this->client_quote_approved_at,
                 'revision' => $this->approved_quote_revision,

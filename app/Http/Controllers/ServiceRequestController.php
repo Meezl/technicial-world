@@ -78,6 +78,12 @@ class ServiceRequestController extends Controller
             'submission_mode' => ServiceRequest::SUBMISSION_MODE_CLIENT_SELF,
         ]);
 
+        // What we have just told them to expect, recorded as a fact rather
+        // than recomputed later from whatever the settings say then.
+        $serviceRequest->forceFill([
+            'response_due_at' => \App\Services\ResponseTargetService::make()->dueAtFor($serviceRequest),
+        ])->save();
+
         // Load relationships for notification
         $serviceRequest->load(['serviceCategory', 'user']);
 
@@ -138,6 +144,15 @@ class ServiceRequestController extends Controller
                 'id' => $serviceRequest->id,
                 'request_id' => $serviceRequest->request_id,
                 'service_category' => $serviceRequest->serviceCategory?->name,
+                // The same promise the confirmation email makes. The screen
+                // said "routed for review" while the email named a time, so
+                // the client was told two different things about the same
+                // request within a second of each other.
+                'urgency' => $serviceRequest->urgency,
+                'respond_by' => $serviceRequest->response_due_at
+                    ? \App\Services\ResponseTargetService::make()
+                        ->phrase($serviceRequest->response_due_at)
+                    : null,
             ]);
     }
 

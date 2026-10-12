@@ -110,6 +110,7 @@ class QuotationService
                 'status' => ServiceRequest::STATUS_AWAITING_PAYMENT,
                 'client_quote_approved_by' => $approver?->id,
                 'client_quote_approved_at' => $approver ? now() : null,
+                'quote_approval_channel' => $approver ? 'client_portal' : null,
                 'approved_quote_amount' => $quotation->grand_total,
                 // The version stands in for the revision counter the flat
                 // quote path uses: it is the record of which figures were on
@@ -129,7 +130,37 @@ class QuotationService
             app(JobConversionService::class)
                 ->tryConvert($quotation->serviceRequest->fresh(), $approver, 'client_quote_approval');
 
+            $this->sendApprovalReceipt($quotation->serviceRequest, 'client_portal');
+
             return $quotation;
+        });
+    }
+
+    /**
+     * The client's proof that their approval landed.
+     *
+     * Deferred so nobody waits on SMTP, and never allowed to take the
+     * approval down with it: a receipt that fails to send is worth a log
+     * line, not a client told their approval did not go through when it did.
+     */
+    private function sendApprovalReceipt(ServiceRequest $serviceRequest, string $channel): void
+    {
+        $srId = $serviceRequest->id;
+
+        app()->terminating(function () use ($srId, $channel) {
+            try {
+                $sr = ServiceRequest::with(['user', 'serviceCategory'])->find($srId);
+                if (!$sr?->user?->email) {
+                    return;
+                }
+                \Illuminate\Support\Facades\Mail::to($sr->user->email)
+                    ->send(new \App\Mail\QuotationApprovalReceipt($sr, $channel));
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Approval receipt failed', [
+                    'service_request_id' => $srId,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         });
     }
 

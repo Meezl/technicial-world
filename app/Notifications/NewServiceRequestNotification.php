@@ -4,6 +4,7 @@ namespace App\Notifications;
 
 use App\Models\ServiceRequest;
 use App\Models\User;
+use App\Services\ResponseTargetService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\AnonymousNotifiable;
@@ -40,32 +41,51 @@ class NewServiceRequestNotification extends Notification implements ShouldQueue
     {
         $sr = $this->serviceRequest;
 
+        $urgency = ucfirst((string) $sr->urgency);
+        $targets = ResponseTargetService::make();
+        $due = $sr->response_due_at;
+        $overdue = $due && now()->gt($due);
+        $escalated = $this->reminder >= (int) config('service_levels.escalate_after', 3);
+
+        // The deadline leads, not the elapsed time. "Waiting 16 hours" only
+        // tells somebody off; "due by 10:00, 1h 20m left" tells them when to
+        // do it — and on a low-urgency job raised overnight those two
+        // sentences disagree, because nothing was late at all.
         $message = (new MailMessage)
-            ->subject($this->isReminder()
-                ? "Reminder: {$sr->request_id} has not been acted on — waiting {$this->waitingFor()}"
-                : "New Service Request - {$sr->request_id}")
+            ->subject($this->subjectLine($sr, $urgency, $due, $overdue, $escalated))
             ->greeting($notifiable instanceof User ? "Hello {$notifiable->name}," : 'Hello Team,');
 
-        if ($this->isReminder()) {
-            $message->line("**{$sr->request_id}** was submitted {$this->waitingFor()} ago and nobody has acted on it yet. The client was told it would be acted on within 2 hours.");
+        if ($due) {
+            $window = $targets->phrase($due);
+            $message->line($overdue
+                ? "**{$sr->request_id}** ({$urgency} urgency) is past the response we promised the client — it was due {$window}."
+                : "**{$sr->request_id}** ({$urgency} urgency) is waiting on the office. The client was told we would come back to them **{$window}**.");
         } else {
-            $message->line('A new service request has been submitted and requires your attention. The client has been told it will be acted on within 2 hours.');
+            $message->line("**{$sr->request_id}** ({$urgency} urgency) is waiting on the office.");
+        }
+
+        if ($escalated) {
+            $message->line('This is the ' . $this->ordinal($this->reminder)
+                . ' reminder. If it cannot be actioned, decline it so the client stops waiting on an answer that is not coming.');
         }
 
         $message
             ->line('**Request Details:**')
             ->line('Request ID: ' . $sr->request_id)
+            ->line('Urgency: ' . $urgency)
             ->line('Service Category: ' . ($sr->serviceCategory->name ?? 'Not specified'))
             ->line('Client: ' . ($sr->user->name ?? 'Unknown'))
             ->line('Location: ' . $sr->location)
-            ->line('Urgency: ' . ucfirst((string) $sr->urgency))
             ->line('Description: ' . $sr->description);
 
-        return $message
-            ->action('View Request', $this->link($notifiable))
-            ->line($this->isReminder()
-                ? 'Assign a PM, quote it or decline it to stop these reminders.'
-                : 'Please review and assign it as soon as possible.');
+        // Straight to the thing that needs doing. One "View Request" button
+        // meant open the email, click, sign in, land on a list, find the row,
+        // then find the control — every time, for every reminder.
+        $message
+            ->action('Open ' . $sr->request_id, $this->link($notifiable))
+            ->line('Quote it, assign a PM or decline it — any of the three stops these reminders.');
+
+        return $message;
     }
 
     public function toDatabase(object $notifiable): array
@@ -98,6 +118,47 @@ class NewServiceRequestNotification extends Notification implements ShouldQueue
     private function isReminder(): bool
     {
         return $this->reminder > 0;
+    }
+
+    /** "3rd", not "3th". */
+    private function ordinal(int $n): string
+    {
+        $suffix = match (true) {
+            in_array($n % 100, [11, 12, 13], true) => 'th',
+            $n % 10 === 1 => 'st',
+            $n % 10 === 2 => 'nd',
+            $n % 10 === 3 => 'rd',
+            default => 'th',
+        };
+
+        return $n . $suffix;
+    }
+
+    /**
+     * Says what is actually true, in the subject, where it is read.
+     */
+    private function subjectLine(
+        ServiceRequest $sr,
+        string $urgency,
+        ?\Carbon\CarbonInterface $due,
+        bool $overdue,
+        bool $escalated
+    ): string {
+        if (!$this->isReminder()) {
+            return "New {$urgency} request — {$sr->request_id}";
+        }
+
+        if ($overdue && $escalated) {
+            return "Still unanswered: {$sr->request_id} ({$urgency}) is past its response time";
+        }
+
+        if ($overdue) {
+            return "Overdue: {$sr->request_id} ({$urgency}) is past its response time";
+        }
+
+        return $due
+            ? "{$sr->request_id} ({$urgency}) — response due " . $due->format('g:ia D')
+            : "Reminder: {$sr->request_id} is waiting on the office";
     }
 
     private function waitingFor(): string

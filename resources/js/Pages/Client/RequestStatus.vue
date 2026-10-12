@@ -64,9 +64,32 @@
 
                     <!-- Pending RFQ -->
                     <div v-else-if="serviceRequest.rfq_status === 'pending'" class="rfq-pending">
+                        <!-- The promise, where a client checks back for it.
+                             "Shortly" told them nothing and agreed with
+                             nothing: the confirmation email named a time, and
+                             a client wondering whether to chase us had no way
+                             to know what it was. -->
                         <div class="info-message">
                             <i class="fas fa-clock"></i>
-                            <p>Your service request is being reviewed by our team. We will send you a quotation shortly.</p>
+                            <p v-if="respondByPhrase">
+                                Your request is with our team. You marked it
+                                <strong>{{ serviceRequest.urgency }}</strong> urgency, so we will come back to you
+                                <strong>{{ respondByPhrase }}</strong>.
+                            </p>
+                            <p v-else>Your service request is being reviewed by our team. We will send you a quotation shortly.</p>
+                        </div>
+
+                        <!-- Said plainly rather than left for them to work
+                             out. A client who can see we are late is a client
+                             who does not have to wonder whether they were
+                             forgotten. -->
+                        <div v-if="responseOverdue" class="info-message info-message-late">
+                            <i class="fas fa-triangle-exclamation"></i>
+                            <p>
+                                We are past the time we gave you, and we are sorry. Your request is still open
+                                and the office has been alerted — if you would like to chase it, reply to your
+                                confirmation email or call us on 0117 962 395.
+                            </p>
                         </div>
                     </div>
 
@@ -195,14 +218,57 @@
                                 </table>
                             </div>
 
-                            <!-- Approval Actions -->
-                            <div class="quote-actions">
-                                <button @click="approveQuote" class="btn btn-success" :disabled="processingQuote">
-                                    <i class="fas fa-check"></i> {{ processingQuote ? 'Processing...' : 'Approve Quotation' }}
+                            <!-- The decision. This is where the email lands:
+                                 the id is what #quotation-decision scrolls to,
+                                 and the highlight is what tells somebody who
+                                 arrived from an inbox that this is the thing
+                                 they came to do. -->
+                            <div
+                                id="quotation-decision"
+                                class="quote-decision"
+                                :class="{ 'quote-decision-flagged': decisionHighlighted }"
+                            >
+                                <p class="quote-decision-lead">
+                                    This quotation is waiting on you.
+                                </p>
+
+                                <!-- The amount is on the button, not only in
+                                     the table above it. "I never agreed to that
+                                     figure" is the argument this prevents:
+                                     whatever else is on screen, the number they
+                                     pressed is the number they agreed to. -->
+                                <button
+                                    @click="approveQuote"
+                                    class="btn-decision btn-decision-approve"
+                                    :disabled="processingQuote"
+                                >
+                                    <i class="fas fa-check-circle"></i>
+                                    <span class="btn-decision-label">
+                                        {{ processingQuote ? 'Approving…' : 'Approve' }}
+                                    </span>
+                                    <span v-if="!processingQuote" class="btn-decision-amount">
+                                        KSH {{ formatCurrency(serviceRequest.quote_amount) }}
+                                    </span>
                                 </button>
-                                <button @click="showDeclineModal = true" class="btn btn-danger">
-                                    <i class="fas fa-times"></i> Decline Quotation
+
+                                <!-- Deliberately quieter than Approve. Equal
+                                     weight implies the two are equally expected
+                                     and makes an accidental decline as easy as
+                                     an approval — and a declined quote with no
+                                     reason is a lost job rather than a
+                                     negotiation. -->
+                                <button
+                                    @click="showDeclineModal = true"
+                                    class="btn-decision btn-decision-decline"
+                                    :disabled="processingQuote"
+                                >
+                                    <i class="fas fa-comment-dots"></i>
+                                    Decline or request changes
                                 </button>
+
+                                <p class="quote-decision-note">
+                                    Nothing is charged by approving. We will tell you what to pay and when.
+                                </p>
                             </div>
                         </div>
                     </div>
@@ -1657,8 +1723,65 @@ const jumpToPaymentForm = () => {
 // On mount, if there's a pending payment OR the URL was deep-linked
 // with #payment, glide the client straight to the payment form. Uses
 // nextTick to wait for the DOM to settle after Inertia's render.
+// Somebody who arrived from the quotation email came here to decide, and the
+// decision can sit well below the fold on a long quote. Landing them on the
+// page and leaving them to find it is most of the distance between "I clicked
+// approve" and an approval the office actually received.
+// The same promise the confirmation email made, phrased the same way. Built
+// here rather than passed through, so it stays true as the day moves on.
+const respondByPhrase = computed(() => {
+    const due = props.serviceRequest.response_due_at
+    if (!due) return null
+
+    const at = new Date(due)
+    if (Number.isNaN(at.getTime())) return null
+
+    const time = at.toLocaleTimeString('en-KE', { hour: 'numeric', minute: '2-digit' }).toLowerCase()
+    const today = new Date()
+    const sameDay = (a, b) => a.toDateString() === b.toDateString()
+
+    if (sameDay(at, today)) return `by ${time} today`
+
+    const tomorrow = new Date(today)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    if (sameDay(at, tomorrow)) return `by ${time} tomorrow`
+
+    const within7 = (at - today) / 86400000 < 7
+    return within7
+        ? `by ${at.toLocaleDateString('en-KE', { weekday: 'long' })} at ${time}`
+        : `by ${at.toLocaleDateString('en-KE', { day: 'numeric', month: 'short' })} at ${time}`
+})
+
+const responseOverdue = computed(() => {
+    const due = props.serviceRequest.response_due_at
+    if (!due || props.serviceRequest.rfq_status !== 'pending') return false
+
+    const at = new Date(due)
+    return !Number.isNaN(at.getTime()) && at < new Date()
+})
+
+const decisionHighlighted = ref(false)
+
+const jumpToDecision = () => {
+    const target = document.getElementById('quotation-decision')
+    if (!target) return
+
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+    // A brief flag rather than a permanent one: it answers "where am I meant
+    // to look" and then gets out of the way.
+    decisionHighlighted.value = true
+    setTimeout(() => { decisionHighlighted.value = false }, 2600)
+}
+
 onMounted(async () => {
     await nextTick()
+
+    if (typeof window !== 'undefined' && window.location.hash === '#quotation-decision') {
+        setTimeout(() => jumpToDecision(), 150)
+        return
+    }
+
     const hasPending = props.serviceRequest.payment_requests?.some(pr => pr.status === 'pending')
     const wantsPayment = typeof window !== 'undefined' && window.location.hash === '#payment'
     if (hasPending && (wantsPayment || document.referrer.includes('/client/payments') || document.referrer.includes('/client/dashboard'))) {
@@ -2518,6 +2641,114 @@ defineOptions({
 .quote-notes h5 {
     color: var(--info-color);
     margin-bottom: 0.5rem;
+}
+
+/*
+ * The decision block.
+ *
+ * Sized to be the obvious thing on the page: the client arrived from an email
+ * to do exactly this, and the old pair of ordinary buttons was quieter than
+ * the green tick they had already pressed in their inbox.
+ */
+.info-message-late {
+    margin-top: 0.75rem;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #9a3412;
+}
+
+.quote-decision {
+    margin-top: 1.5rem;
+    padding: 1.25rem;
+    border-top: 1px solid var(--border-color);
+    border-radius: 14px;
+    background: #f8fafc;
+    text-align: center;
+    transition: box-shadow 0.3s ease, background 0.3s ease;
+}
+
+.quote-decision-flagged {
+    background: #ecfdf5;
+    box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.35);
+}
+
+.quote-decision-lead {
+    margin: 0 0 1rem;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #0f172a;
+}
+
+.quote-decision-note {
+    margin: 0.9rem 0 0;
+    font-size: 0.82rem;
+    color: #64748b;
+}
+
+.btn-decision {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.6rem;
+    width: 100%;
+    max-width: 26rem;
+    margin: 0 auto;
+    padding: 1rem 1.5rem;
+    border: 2px solid transparent;
+    border-radius: 12px;
+    font-size: 1.05rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.12s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.btn-decision:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+.btn-decision-approve {
+    background: #16a34a;
+    color: #ffffff;
+    box-shadow: 0 6px 16px rgba(22, 163, 74, 0.3);
+}
+
+.btn-decision-approve:hover:not(:disabled) {
+    background: #15803d;
+    transform: translateY(-1px);
+}
+
+.btn-decision-amount {
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.22);
+    font-size: 0.95rem;
+}
+
+/*
+ * Quieter on purpose. Equal weight with Approve implies the two are equally
+ * expected, which makes an accidental decline as easy as an approval — and a
+ * decline is the harder one to undo.
+ */
+.btn-decision-decline {
+    margin-top: 0.75rem;
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #b91c1c;
+    font-size: 0.95rem;
+    font-weight: 600;
+    box-shadow: none;
+}
+
+.btn-decision-decline:hover:not(:disabled) {
+    border-color: #fca5a5;
+    background: #fef2f2;
+}
+
+@media (max-width: 640px) {
+    .btn-decision {
+        max-width: none;
+    }
 }
 
 .quote-actions {

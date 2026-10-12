@@ -27,9 +27,20 @@ class ServiceRequestReceived extends Mailable
 
     public function content(): Content
     {
+        $targets = \App\Services\ResponseTargetService::make();
+        $due = $this->serviceRequest->response_due_at
+            ?? $targets->dueAtFor($this->serviceRequest);
+
         return new Content(
             view: 'emails.service-request-received',
-            with: ['serviceRequest' => $this->serviceRequest],
+            with: [
+                'serviceRequest' => $this->serviceRequest,
+                // A moment, not a countdown. "Within 2 hours" is false three
+                // hours later; "by 10:00 tomorrow" is still true at 3am and
+                // is something the client can hold us to.
+                'respondBy' => $due,
+                'respondByPhrase' => $targets->phrase($due),
+            ],
         );
     }
 

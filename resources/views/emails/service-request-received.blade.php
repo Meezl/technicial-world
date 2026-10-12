@@ -38,7 +38,19 @@
         </table>
 
         <p><strong>What happens next?</strong></p>
-        <p>Your request will be acted on within 2 hours. A member of our team will get in touch with you by email or phone.</p>
+        {{-- The promise used to be "within 2 hours", sent at every urgency and
+             at every hour of the night. This is the office clock: a time the
+             client can hold us to, that never falls while everyone is
+             asleep. --}}
+        <p>
+            You marked this <strong>{{ ucfirst($serviceRequest->urgency) }}</strong> urgency, so a member of
+            our team will come back to you <strong>{{ $respondByPhrase }}</strong>
+            by email or phone.
+        </p>
+        <p style="font-size:13px;color:#64748b;">
+            Our office is open 8:00am to 5:00pm. If this is more urgent than you first thought,
+            reply to this email and tell us — we would rather know.
+        </p>
 
         <p>Please quote your reference number <strong>{{ $serviceRequest->request_id }}</strong> in any follow-up communication.</p>
     </div>

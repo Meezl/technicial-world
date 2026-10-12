@@ -359,14 +359,23 @@
         </div>
         @endif
 
+        {{-- One button, and it does what it says.
+             This was a green "Approve Quotation" beside a red "Decline
+             Quotation", both pointing at the same page and neither deciding
+             anything. A green tick reads as a completed action, so clients
+             clicked it and told us they had approved — they had read the
+             interface correctly and it was wrong.
+             The decision stays in the portal deliberately. Mail scanners
+             follow every link in an email, so a link that approved would be
+             pressed by software before the client ever saw it. --}}
         <div class="actions">
-            <p><strong>Ready to proceed? Review and respond above, or use these buttons.</strong></p>
-            <a href="{{ url('/client/request-status/' . $serviceRequest->id) }}" class="btn btn-success">
-                Approve Quotation
+            <p><strong>Review the quotation and let us know your decision.</strong></p>
+            <a href="{{ url('/client/request-status/' . $serviceRequest->id) }}#quotation-decision" class="btn btn-success">
+                Review the quotation &rarr;
             </a>
-            <a href="{{ url('/client/request-status/' . $serviceRequest->id) }}" class="btn btn-danger">
-                Decline Quotation
-            </a>
+            <p style="margin:12px 0 0;font-size:13px;color:#666;">
+                Opens your portal, where you can approve it or ask for changes.
+            </p>
         </div>
 
         <div class="footer">
