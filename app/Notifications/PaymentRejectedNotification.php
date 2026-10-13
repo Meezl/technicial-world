@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\PaymentRequest;
+use App\Notifications\Concerns\RecordsEmailSubject;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -24,6 +25,7 @@ use Illuminate\Notifications\Notification;
 class PaymentRejectedNotification extends Notification implements ShouldQueue
 {
     use Queueable;
+    use RecordsEmailSubject;
 
     public function __construct(
         protected PaymentRequest $paymentRequest,
@@ -59,13 +61,16 @@ class PaymentRejectedNotification extends Notification implements ShouldQueue
                  ->line('Your service request remains open — you can submit a fresh proof of payment from your portal at any time.');
         }
 
-        return $mail
-            ->line('**Reason from our team:**')
-            ->line($this->reason)
-            ->action('Open Request', url('/client/request-status/' . $serviceRequest->id))
-            ->line('If you have any questions or would like to discuss this further, please reply to this email or contact us via the portal.')
-            ->line('Thank you,')
-            ->salutation('Technician World');
+        return $this->recordSubject(
+            $mail
+                ->line('**Reason from our team:**')
+                ->line($this->reason)
+                ->action('Open Request', url('/client/request-status/' . $serviceRequest->id))
+                ->line('If you have any questions or would like to discuss this further, please reply to this email or contact us via the portal.')
+                ->line('Thank you,')
+                ->salutation('Technician World'),
+            $this->paymentRequest
+        );
     }
 
     public function toDatabase(object $notifiable): array

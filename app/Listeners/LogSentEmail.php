@@ -6,7 +6,7 @@ use App\Models\EmailLog;
 use App\Models\ServiceRequest;
 use App\Models\PaymentRequest;
 use App\Models\User;
-use Illuminate\Mail\Events\MessageSending;
+use Symfony\Component\Mime\Email;
 use Illuminate\Mail\Events\MessageSent;
 
 class LogSentEmail
@@ -14,6 +14,12 @@ class LogSentEmail
     /**
      * Persist a full copy of every email Laravel sends so the admin can
      * retrieve the exact content that hit the recipient's inbox (#5).
+     *
+     * Everything the application sends passes through here — Mailables and
+     * notifications alike, queued or not, because the worker fires the same
+     * event the web process does. What was missing was not the rows but what
+     * they said about themselves: see the notes on the class name and the
+     * subject below.
      */
     public function handle(MessageSent $event): void
     {
@@ -59,10 +65,19 @@ class LogSentEmail
 
             // Try to resolve a related model from $data (Mailables typically
             // share their context, including `serviceRequest`, `paymentRequest`, etc.)
-            [$relatedType, $relatedId, $userId] = $this->resolveRelated($data, $to);
+            [$relatedType, $relatedId, $userId] = $this->resolveRelated($data, $to, $message);
 
             EmailLog::create([
-                'mailable_class' => isset($data['mailable_class']) ? $data['mailable_class'] : (isset($data['__mailable_class']) ? $data['__mailable_class'] : null),
+                // Laravel calls these `__laravel_mailable` and
+                // `__laravel_notification`; the keys looked for here were
+                // `mailable_class` and `__mailable_class`, which it has never
+                // set. Every row in the archive carried a null class, so there
+                // was no way to ask it a question — "did the approval receipts
+                // go out", "what did we send this client" — without reading
+                // subjects by eye.
+                'mailable_class' => $data['__laravel_mailable']
+                    ?? $data['__laravel_notification']
+                    ?? null,
                 'subject'        => $message->getSubject() ?? '(no subject)',
                 'to'             => $to,
                 'cc'             => $addressList($message->getCc()),
@@ -79,14 +94,62 @@ class LogSentEmail
                 'status'         => 'sent',
             ]);
         } catch (\Throwable $e) {
-            // Never let logging break delivery
-            \Illuminate\Support\Facades\Log::warning('EmailLog persistence failed', [
-                'error' => $e->getMessage(),
+            // Never let logging break delivery — but never let it lose the
+            // email either. This catch is how a broken archive stays quiet:
+            // the envelope bug swallowed every row for as long as it lived,
+            // and a NOT NULL on related_type swallowed every email the
+            // resolver could not place. Both times the send succeeded and the
+            // record simply was not there.
+            //
+            // So a failure falls back to the least that is still useful — who
+            // it went to, what it said on the tin, and when — with the reason
+            // the full row could not be written kept beside it.
+            $this->archiveWhatWeCan($event, $e);
+        }
+    }
+
+    /**
+     * The stub written when the full row cannot be.
+     *
+     * Deliberately touches as little as possible: no body, no attachments, no
+     * resolved subject, because any of those may be what failed.
+     */
+    private function archiveWhatWeCan(MessageSent $event, \Throwable $original): void
+    {
+        try {
+            $message = $event->message;
+
+            EmailLog::create([
+                'subject' => $message->getSubject() ?: '(no subject)',
+                'to' => collect($message->getTo())
+                    ->map(fn ($a) => ['address' => $a->getAddress(), 'name' => $a->getName()])
+                    ->all(),
+                'body_html' => '',
+                'sent_at' => now(),
+                // The email did go out. It is the archiving that degraded,
+                // and saying otherwise would make the row lie about delivery.
+                'status' => 'sent',
+                'error_message' => 'Archived without detail: ' . $original->getMessage(),
+            ]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('EmailLog persistence failed entirely', [
+                'original' => $original->getMessage(),
+                'fallback' => $e->getMessage(),
             ]);
         }
     }
 
-    private function resolveRelated(array $data, array $recipients): array
+    /**
+     * What this email was about.
+     *
+     * A Mailable shares its context, so the model is sitting in $data. A
+     * notification does not: its view data is the rendered lines, and nothing
+     * in it says which job the email concerns — so every notification in the
+     * archive was filed against whoever received it, which answers "who did we
+     * email" and not "what did we send about this job". Notifications that
+     * know their subject now say so in a header; see RecordsEmailSubject.
+     */
+    private function resolveRelated(array $data, array $recipients, Email $message): array
     {
         $userId = null;
         if (!empty($recipients[0]['address'])) {
@@ -101,6 +164,36 @@ class LogSentEmail
                 return [PaymentRequest::class, $val->id, $val->user_id ?? $userId];
             }
         }
-        return [User::class, $userId ?? 0, $userId];
+
+        if ($tagged = $this->taggedSubject($message)) {
+            return [$tagged[0], $tagged[1], $userId];
+        }
+
+        // Nothing to point at. Left null rather than filed against User #0 —
+        // a row that was neither about that user nor about any user, and a
+        // foreign key to a record that does not exist.
+        return [null, null, $userId];
+    }
+
+    /**
+     * The subject a notification named for itself.
+     *
+     * @return array{0:string,1:int}|null
+     */
+    private function taggedSubject(Email $message): ?array
+    {
+        $header = $message->getHeaders()->get(EmailLog::SUBJECT_HEADER);
+
+        if (!$header) {
+            return null;
+        }
+
+        [$class, $id] = array_pad(explode(':', (string) $header->getBodyAsString(), 2), 2, null);
+
+        if (!$class || !$id || !class_exists($class)) {
+            return null;
+        }
+
+        return [$class, (int) $id];
     }
 }

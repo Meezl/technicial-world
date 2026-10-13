@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\PaymentRequest;
+use App\Notifications\Concerns\RecordsEmailSubject;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -11,6 +12,7 @@ use Illuminate\Notifications\Notification;
 class PaymentRequestNotification extends Notification implements ShouldQueue
 {
     use Queueable;
+    use RecordsEmailSubject;
 
     protected PaymentRequest $paymentRequest;
 
@@ -70,10 +72,10 @@ class PaymentRequestNotification extends Notification implements ShouldQueue
             }
         }
 
-        return $message
+        return $this->recordSubject($message
             ->action('Make Payment Now', url('/client/request-status/' . $serviceRequest->id))
             ->line('Please complete the payment to proceed with your service request.')
-            ->line('Thank you for choosing Technician World!');
+            ->line('Thank you for choosing Technician World!'), $this->paymentRequest);
     }
 
     /**

@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\PaymentRequest;
+use App\Notifications\Concerns\RecordsEmailSubject;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -21,6 +22,7 @@ use Illuminate\Notifications\Notification;
 class DepositRequestNotification extends Notification implements ShouldQueue
 {
     use Queueable;
+    use RecordsEmailSubject;
 
     public function __construct(protected PaymentRequest $paymentRequest)
     {
@@ -64,10 +66,10 @@ class DepositRequestNotification extends Notification implements ShouldQueue
             }
         }
 
-        return $message
+        return $this->recordSubject($message
             ->action('Pay Deposit', url('/client/request-status/' . $serviceRequest->id))
             ->line('Once the deposit is received your request becomes a scheduled job and we will assign a technician.')
-            ->line('Thank you for choosing Technician World!');
+            ->line('Thank you for choosing Technician World!'), $this->paymentRequest);
     }
 
     /** @return array<string, mixed> */
