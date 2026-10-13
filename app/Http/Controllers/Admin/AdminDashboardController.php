@@ -463,7 +463,79 @@ class AdminDashboardController extends Controller
             // notice email and the client's own page use.
             'attendanceRoster' => $serviceRequest->attendanceRoster(),
             'attendanceWindow' => $serviceRequest->attendanceWindow(),
+            // The outbox, and whether what is on screen is still what the
+            // client is holding. Sending left a flash that vanished on the
+            // next load and nothing else, so neither question had an answer.
+            'attendanceNotices' => $serviceRequest->attendanceNotices()
+                ->with('sender:id,name')
+                ->limit(10)
+                ->get()
+                ->map(fn ($notice) => [
+                    'id' => $notice->id,
+                    'sent_to' => $notice->sent_to,
+                    'sent_by' => $notice->sender?->name,
+                    'crew_count' => $notice->crew_count,
+                    'notes' => $notice->notes,
+                    'sent_at' => $notice->created_at,
+                    'email_log_id' => $notice->email_log_id,
+                ]),
+            'attendanceNoticeState' => $this->attendanceNoticeState($serviceRequest),
         ]);
+    }
+
+    /**
+     * Whether the list on screen is still the list the client is holding.
+     *
+     * Three states, and the button says which: never sent, sent and unchanged,
+     * or changed since it last went. The third is the one that matters —
+     * somebody added or removed a technician and the client is still working
+     * from the old names.
+     */
+    private function attendanceNoticeState(ServiceRequest $serviceRequest): array
+    {
+        $roster = $serviceRequest->attendanceRoster();
+        $last = $serviceRequest->attendanceNotices()->with('sender:id,name')->first();
+
+        if (empty($roster)) {
+            return ['status' => 'no_roster', 'last' => null, 'changes' => []];
+        }
+
+        if (!$last) {
+            return ['status' => 'never_sent', 'last' => null, 'changes' => []];
+        }
+
+        $unchanged = $last->roster_fingerprint === \App\Models\AttendanceNotice::fingerprint($roster);
+
+        return [
+            'status' => $unchanged ? 'unchanged' : 'changed',
+            'last' => [
+                'sent_to' => $last->sent_to,
+                'sent_by' => $last->sender?->name,
+                'sent_at' => $last->created_at,
+                'crew_count' => $last->crew_count,
+            ],
+            'changes' => $unchanged ? [] : $this->rosterChangesSince($last, $roster),
+        ];
+    }
+
+    /**
+     * What moved since the client was last told, in names.
+     *
+     * "The list has changed" is not actionable; "Gordon Ochieng was added,
+     * Lisa Painter came off" is. Compared on name and ID because that is what
+     * the client's copy prints and what the gate checks.
+     */
+    private function rosterChangesSince(\App\Models\AttendanceNotice $last, array $roster): array
+    {
+        $key = fn ($member) => trim(($member['name'] ?? '') . ' (' . ($member['national_id'] ?? 'no ID') . ')');
+
+        $before = collect($last->roster_snapshot ?? [])->map($key);
+        $now = collect($roster)->map($key);
+
+        return [
+            'added' => $now->diff($before)->values()->all(),
+            'removed' => $before->diff($now)->values()->all(),
+        ];
     }
 
     public function validateProgress(Request $request, ProgressReport $progressReport)
@@ -5007,6 +5079,9 @@ class AdminDashboardController extends Controller
     {
         $request->validate([
             'notes' => 'nullable|string|max:1000',
+            // Set when the office has been shown that this exact list has
+            // already gone and has said to send it anyway.
+            'confirm_resend' => 'nullable|boolean',
         ]);
 
         $serviceRequest->loadMissing('user');
@@ -5018,6 +5093,32 @@ class AdminDashboardController extends Controller
         $roster = $serviceRequest->attendanceRoster();
         if (empty($roster)) {
             return back()->with('error', 'Assign at least one technician before sending an attendance notice.');
+        }
+
+        $fingerprint = \App\Models\AttendanceNotice::fingerprint($roster);
+        $last = $serviceRequest->attendanceNotices()->latest('id')->with('sender')->first();
+
+        // The same names going out twice.
+        //
+        // Nothing stopped this: no record of a send survived the page, so a
+        // colleague had no way of knowing it had already gone, and neither did
+        // whoever sent it the first time once they had navigated away. A
+        // client receiving the same list three times has to work out which one
+        // to act on.
+        //
+        // Refused rather than silently deduplicated, because there are good
+        // reasons to send again — the client lost it, the gate never got it —
+        // and the office is the one who knows. They are told what they are
+        // repeating and asked to say so.
+        if ($last && $last->roster_fingerprint === $fingerprint && !$request->boolean('confirm_resend')) {
+            return back()->with('warning', sprintf(
+                'This exact list already went to %s %s%s. Nothing has changed on it since. Use "Send anyway" if you mean to send it again.',
+                $last->sent_to,
+                $last->created_at->diffForHumans(),
+                $last->sender && $last->sender->id !== auth()->id()
+                    ? ', sent by ' . $last->sender->name
+                    : ''
+            ));
         }
 
         try {
@@ -5032,15 +5133,45 @@ class AdminDashboardController extends Controller
             return back()->with('error', 'Could not send the attendance notice. The client has not been told.');
         }
 
-        // Recorded so "did we tell the client?" has an answer that is not
-        // somebody's memory of sending an email.
+        // The outbox. "Did we tell the client?" now has an answer that is not
+        // somebody's memory of sending an email, and the snapshot means a
+        // later change can be described rather than merely suspected.
+        $notice = $serviceRequest->attendanceNotices()->create([
+            'sent_by' => auth()->id(),
+            'sent_to' => $serviceRequest->user->email,
+            'roster_fingerprint' => $fingerprint,
+            'crew_count' => count($roster),
+            'roster_snapshot' => collect($roster)->map(fn ($m) => [
+                'name' => $m['name'] ?? null,
+                'national_id' => $m['national_id'] ?? null,
+                'role' => $m['role'] ?? null,
+                'attendance' => $m['attendance'] ?? null,
+            ])->all(),
+            'notes' => $request->input('notes'),
+            // Linked after the fact: the archive row is written by the
+            // MessageSent listener, which has run by the time we get here.
+            'email_log_id' => \App\Models\EmailLog::where('related_type', ServiceRequest::class)
+                ->where('related_id', $serviceRequest->id)
+                ->where('mailable_class', \App\Mail\TechnicianAttendanceNotice::class)
+                ->latest('id')
+                ->value('id'),
+        ]);
+
         AuditLog::log(AuditLog::ACTION_UPDATED, $serviceRequest, null, [
+            'event' => 'attendance_notice_sent',
             'attendance_notice_sent_to' => $serviceRequest->user->email,
             'crew_size' => count($roster),
             'sent_by' => auth()->id(),
+            'resend' => $last && $last->roster_fingerprint === $fingerprint,
+            'notice_id' => $notice->id,
         ]);
 
-        return back()->with('success', 'Attendance notice sent to ' . $serviceRequest->user->email . '.');
+        return back()->with('success', sprintf(
+            'Attendance notice sent to %s — %d %s on the list.',
+            $serviceRequest->user->email,
+            count($roster),
+            count($roster) === 1 ? 'person' : 'people'
+        ));
     }
 
     /**
