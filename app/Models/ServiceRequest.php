@@ -669,6 +669,12 @@ class ServiceRequest extends Model
         return $this->hasMany(ScheduleExtension::class)->orderByDesc('created_at');
     }
 
+    /** Every attendance list the office has sent this client, newest first. */
+    public function attendanceNotices()
+    {
+        return $this->hasMany(AttendanceNotice::class)->orderByDesc('id');
+    }
+
     /**
      * Estimated end of the priority window — based on `urgency` and
      * created_at. Used for the soft warning when admin assigns a

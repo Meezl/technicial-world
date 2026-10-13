@@ -532,10 +532,11 @@
                                 </button>
                                 <button
                                     v-if="attendanceRoster.length"
-                                    class="btn btn-primary btn-sm"
+                                    class="btn btn-sm"
+                                    :class="noticeRosterChanged ? 'btn-warning' : 'btn-primary'"
                                     @click="showNoticeModal = true"
                                 >
-                                    <i class="fas fa-envelope"></i> Send attendance notice
+                                    <i class="fas fa-envelope"></i> {{ noticeButtonLabel }}
                                 </button>
                             </div>
                         </div>
@@ -627,6 +628,57 @@
                                     </tr>
                                 </tbody>
                             </table>
+                        </div>
+
+                        <!-- Has it gone, and is what the client holds still
+                             what is on this screen? Neither question had an
+                             answer anywhere before: the send left a flash that
+                             vanished on the next load. -->
+                        <div v-if="attendanceRoster.length" class="notice-outbox">
+                            <div v-if="noticeState.status === 'never_sent'" class="notice-state notice-state-new">
+                                <i class="fas fa-circle-info"></i>
+                                <span>The client has not been sent this list yet. Site security turns away anybody not on it.</span>
+                            </div>
+
+                            <div v-else-if="noticeRosterChanged" class="notice-state notice-state-changed">
+                                <i class="fas fa-triangle-exclamation"></i>
+                                <div>
+                                    <strong>The client is holding an older list.</strong>
+                                    <p v-if="noticeChanges.added?.length">
+                                        Added since: {{ noticeChanges.added.join(', ') }}
+                                    </p>
+                                    <p v-if="noticeChanges.removed?.length">
+                                        Taken off since: {{ noticeChanges.removed.join(', ') }}
+                                    </p>
+                                    <p class="notice-state-foot">
+                                        Last sent {{ formatNoticeTime(noticeState.last?.sent_at) }}
+                                        <template v-if="noticeState.last?.sent_by"> by {{ noticeState.last.sent_by }}</template>.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div v-else class="notice-state notice-state-sent">
+                                <i class="fas fa-circle-check"></i>
+                                <span>
+                                    The client has this list — sent {{ formatNoticeTime(noticeState.last?.sent_at) }}
+                                    <template v-if="noticeState.last?.sent_by"> by {{ noticeState.last.sent_by }}</template>
+                                    to {{ noticeState.last?.sent_to }}. Nothing has changed on it since.
+                                </span>
+                            </div>
+
+                            <details v-if="attendanceNotices.length" class="notice-history">
+                                <summary>
+                                    {{ attendanceNotices.length }} notice{{ attendanceNotices.length === 1 ? '' : 's' }} sent
+                                </summary>
+                                <ul>
+                                    <li v-for="notice in attendanceNotices" :key="notice.id">
+                                        <strong>{{ formatNoticeTime(notice.sent_at) }}</strong>
+                                        — {{ notice.crew_count }} {{ notice.crew_count === 1 ? 'person' : 'people' }}
+                                        to {{ notice.sent_to }}
+                                        <template v-if="notice.sent_by"> · {{ notice.sent_by }}</template>
+                                    </li>
+                                </ul>
+                            </details>
                         </div>
 
                         <p v-if="!attendanceRoster.length" class="roster-empty">
@@ -2633,6 +2685,28 @@
                         and the days to expect them.
                     </p>
 
+                    <!-- Said before the click, not after. A colleague had no
+                         way of knowing this had already gone, and neither did
+                         whoever sent it once they had navigated away. -->
+                    <div v-if="noticeState.status === 'unchanged'" class="notice-state notice-state-sent" style="margin-bottom:0.75rem;">
+                        <i class="fas fa-circle-check"></i>
+                        <span>
+                            This exact list already went to {{ noticeState.last?.sent_to }}
+                            {{ formatNoticeTime(noticeState.last?.sent_at) }}
+                            <template v-if="noticeState.last?.sent_by"> by {{ noticeState.last.sent_by }}</template>.
+                            Nothing has changed on it since — send again only if they need another copy.
+                        </span>
+                    </div>
+
+                    <div v-else-if="noticeRosterChanged" class="notice-state notice-state-changed" style="margin-bottom:0.75rem;">
+                        <i class="fas fa-triangle-exclamation"></i>
+                        <div>
+                            <strong>This replaces the list they are holding.</strong>
+                            <p v-if="noticeChanges.added?.length">Added: {{ noticeChanges.added.join(', ') }}</p>
+                            <p v-if="noticeChanges.removed?.length">Taken off: {{ noticeChanges.removed.join(', ') }}</p>
+                        </div>
+                    </div>
+
                     <ul class="roster-preview">
                         <li v-for="member in attendanceRoster" :key="member.assignment_id">
                             <strong>{{ member.name }}</strong>
@@ -2650,9 +2724,18 @@
                 </div>
                 <div class="modal-footer">
                     <button @click="showNoticeModal = false" class="btn btn-secondary">Cancel</button>
-                    <button @click="sendAttendanceNotice" class="btn btn-primary" :disabled="sendingNotice">
+                    <button
+                        @click="sendAttendanceNotice(noticeState.status === 'unchanged')"
+                        class="btn"
+                        :class="noticeState.status === 'unchanged' ? 'btn-secondary' : 'btn-primary'"
+                        :disabled="sendingNotice"
+                    >
                         <i class="fas fa-paper-plane"></i>
-                        {{ sendingNotice ? 'Sending…' : 'Send to ' + (job.user?.email || 'client') }}
+                        <template v-if="sendingNotice">Sending…</template>
+                        <template v-else-if="noticeState.status === 'unchanged'">
+                            Send anyway to {{ job.user?.email || 'client' }}
+                        </template>
+                        <template v-else>Send to {{ job.user?.email || 'client' }}</template>
                     </button>
                 </div>
             </div>
@@ -3306,6 +3389,16 @@ const props = defineProps({
     attendanceWindow: {
         type: Object,
         default: () => ({ start: null, end: null })
+    },
+    // The outbox, and whether the list on screen is still the one the client
+    // is holding.
+    attendanceNotices: {
+        type: Array,
+        default: () => []
+    },
+    attendanceNoticeState: {
+        type: Object,
+        default: () => ({ status: 'never_sent', last: null, changes: {} })
     },
     gating: {
         type: Object,
@@ -4090,14 +4183,41 @@ const saveRosterEntry = () => {
     }
 }
 
-const sendAttendanceNotice = () => {
+// What the button says, and what it is about to do. Sending used to leave a
+// flash that vanished on the next load, so neither "has this gone" nor "is the
+// client holding the current list" had an answer anywhere on the page.
+const noticeState = computed(() => props.attendanceNoticeState || {})
+const noticeAlreadySent = computed(() => ['unchanged', 'changed'].includes(noticeState.value.status))
+const noticeRosterChanged = computed(() => noticeState.value.status === 'changed')
+const noticeChanges = computed(() => noticeState.value.changes || {})
+
+const noticeButtonLabel = computed(() => {
+    if (sendingNotice.value) return 'Sending…'
+    if (noticeRosterChanged.value) return 'Send updated list'
+    if (noticeState.value.status === 'unchanged') return 'Resend attendance notice'
+    return 'Send attendance notice'
+})
+
+const sendAttendanceNotice = (confirmResend = false) => {
     if (sendingNotice.value) return
     sendingNotice.value = true
 
-    router.post(`/admin/jobs/${props.job.id}/attendance-notice`, { notes: noticeNotes.value || null }, {
+    router.post(`/admin/jobs/${props.job.id}/attendance-notice`, {
+        notes: noticeNotes.value || null,
+        // Only ever true because somebody was shown that this exact list has
+        // already gone and said to send it again.
+        confirm_resend: confirmResend,
+    }, {
         preserveScroll: true,
         onSuccess: () => { showNoticeModal.value = false; noticeNotes.value = '' },
         onFinish: () => { sendingNotice.value = false },
+    })
+}
+
+const formatNoticeTime = (value) => {
+    if (!value) return ''
+    return new Date(value).toLocaleString('en-KE', {
+        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
     })
 }
 
@@ -5677,6 +5797,70 @@ defineOptions({
     margin: 0.5rem 0 0;
     padding-left: 1.1rem;
     font-size: 0.85rem;
+}
+
+/* The outbox: what has gone, to whom, and whether it is still current. */
+.notice-outbox {
+    margin: 1rem 0 0;
+}
+
+.notice-state {
+    display: flex;
+    gap: 0.7rem;
+    align-items: flex-start;
+    padding: 0.8rem 1rem;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+
+.notice-state p {
+    margin: 0.3rem 0 0;
+}
+
+.notice-state-sent {
+    background: #ecfdf5;
+    border-color: #a7f3d0;
+    color: #065f46;
+}
+
+.notice-state-new {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    color: #1e3a8a;
+}
+
+/* The one that matters: the client is working from names that have moved. */
+.notice-state-changed {
+    background: #fffbeb;
+    border-color: #fde68a;
+    color: #92400e;
+}
+
+.notice-state-foot {
+    font-size: 0.82rem;
+    opacity: 0.85;
+}
+
+.notice-history {
+    margin-top: 0.6rem;
+    font-size: 0.85rem;
+    color: #475569;
+}
+
+.notice-history summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.notice-history ul {
+    margin: 0.5rem 0 0;
+    padding-left: 1.1rem;
+}
+
+.notice-history li {
+    margin-bottom: 0.25rem;
 }
 
 .subtask-stage-notice {

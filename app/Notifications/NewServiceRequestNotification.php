@@ -4,6 +4,7 @@ namespace App\Notifications;
 
 use App\Models\ServiceRequest;
 use App\Models\User;
+use App\Notifications\Concerns\RecordsEmailSubject;
 use App\Services\ResponseTargetService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -20,6 +21,7 @@ use Illuminate\Notifications\Notification;
 class NewServiceRequestNotification extends Notification implements ShouldQueue
 {
     use Queueable;
+    use RecordsEmailSubject;
 
     public function __construct(
         protected ServiceRequest $serviceRequest,
@@ -85,7 +87,9 @@ class NewServiceRequestNotification extends Notification implements ShouldQueue
             ->action('Open ' . $sr->request_id, $this->link($notifiable))
             ->line('Quote it, assign a PM or decline it — any of the three stops these reminders.');
 
-        return $message;
+        // So the archive files this against the job rather than against
+        // whichever admin happened to receive it.
+        return $this->recordSubject($message, $sr);
     }
 
     public function toDatabase(object $notifiable): array

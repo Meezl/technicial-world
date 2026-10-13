@@ -8,6 +8,17 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 class EmailLog extends Model
 {
+    /**
+     * Header a notification uses to say what it is about.
+     *
+     * A Mailable passes its models through the view data and the archive can
+     * read them there. A notification's data is only the rendered lines, so
+     * one that knows its subject says so here — see RecordsEmailSubject. The
+     * value is a class and a key, which carries no more about the job than
+     * the reference already printed in the subject line.
+     */
+    public const SUBJECT_HEADER = 'X-TW-Subject';
+
     protected $fillable = [
         'mailable_class', 'subject', 'to', 'cc', 'bcc',
         'from_address', 'from_name',
