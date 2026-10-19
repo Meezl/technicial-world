@@ -658,16 +658,16 @@ class ProgressService
     /**
      * The job's headline percentage.
      *
-     * Two things go into it, and the higher one wins:
+     * On a job split into sub-tasks the figure is the average across those
+     * sub-tasks and nothing else. The lead's whole-job report is their reading
+     * of the site, not a substitute for it: taking the higher of the two let a
+     * lead's 100% stand on a job whose sub-tasks had not been started, so the
+     * client saw "Work is fully complete" above two tasks sitting at 0%. The
+     * lead moves the number by ratifying their crew's sub-task reports and
+     * filing their own — which is the average, arrived at honestly.
      *
-     *  · the lead's view of the whole job — the highest validated report that
-     *    covers the job rather than one sub-task
-     *  · where the job is split, the average across its sub-tasks
-     *
-     * Taking the higher of the two fixes a job that had genuinely reached 85%
-     * on the lead's own report showing 20%, because the average of its single
-     * sub-task was all that counted and the lead's whole-job report was
-     * discarded.
+     * A job with no sub-tasks has nothing to average, so there the whole-job
+     * report is still the only reading there is.
      *
      * Highest rather than most-recently-validated, because validating an
      * older 20% report after an 85% one used to drag the job backwards — the
@@ -745,13 +745,11 @@ class ProgressService
      */
     private function headlinePercent(ServiceRequest $serviceRequest): ?int
     {
-        $wholeJob = $this->highestValidatedWholeJobPercent($serviceRequest);
-
         if (!$serviceRequest->isSplitIntoSubTasks()) {
-            return $wholeJob;
+            return $this->highestValidatedWholeJobPercent($serviceRequest);
         }
 
-        return max($this->aggregateSubTaskProgress($serviceRequest), $wholeJob ?? 0);
+        return $this->aggregateSubTaskProgress($serviceRequest);
     }
 
     /**
@@ -760,6 +758,12 @@ class ProgressService
      * A whole-job report is already the lead's to file — a sub-technician on
      * a split job cannot submit one — so a validated 100% here is the lead's
      * sign-off, or an admin's on their behalf.
+     *
+     * On a split job the claim has to survive contact with the work: a lead
+     * calling the job finished while a sub-task is still open is a claim
+     * about somebody else's work that that person has not made. The sign-off
+     * only lands once every sub-task reads 100% as well — the lead's job is
+     * to get them there and confirm it, not to declare it over their heads.
      */
     /**
      * Live variation work still to do.
@@ -780,11 +784,18 @@ class ProgressService
 
     private function hasLeadSignOff(ServiceRequest $serviceRequest): bool
     {
-        return $serviceRequest->progressReports()
+        $claimed = $serviceRequest->progressReports()
             ->where('is_validated', true)
             ->whereNull('service_sub_task_id')
             ->get(['validated_percent', 'percent_complete'])
             ->contains(fn ($report) => (int) ($report->validated_percent ?? $report->percent_complete) >= 100);
+
+        if (!$claimed) {
+            return false;
+        }
+
+        return !$serviceRequest->isSplitIntoSubTasks()
+            || !$serviceRequest->subTasks()->where('progress_percentage', '<', 100)->exists();
     }
 
     /**

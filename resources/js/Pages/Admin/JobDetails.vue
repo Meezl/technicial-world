@@ -312,7 +312,7 @@
                                     <div class="assignment-fee-info">
                                         <span class="assignment-fee-label">Agreed compensation</span>
                                         <strong class="assignment-fee-value">
-                                            KSH {{ formatCurrency(job.has_sub_tasks ? (currentLeadAssignment?.agreed_compensation || 0) : (currentSingleAssignment?.agreed_compensation || 0)) }}
+                                            KSH {{ formatCurrency(job.has_sub_tasks ? leadAgreedCompensation : (currentSingleAssignment?.agreed_compensation || 0)) }}
                                         </strong>
                                     </div>
                                     <button
@@ -3267,7 +3267,25 @@
                         </div>
                     </div>
 
-                    <div class="form-row assignment-finance-row">
+                    <!-- What the change will actually do to the money, before
+                         it is made. Both halves used to be silent: the outgoing
+                         lead disappeared off the job, and the incoming one
+                         arrived on the outgoing one's fee. -->
+                    <p v-if="leadPromotionFromOwnTask" class="lead-notice">
+                        <i class="fas fa-circle-info"></i>
+                        {{ selectedTechnician?.user?.name }} already holds
+                        "{{ selectedLeadCandidateSubTask?.title }}" on this job and keeps that fee of
+                        KSH {{ formatCurrency(selectedLeadCandidateSubTask?.agreed_compensation || 0) }}.
+                        Leading is a role, not a second fee, so nothing more is committed.
+                    </p>
+                    <p v-if="job.lead_technician && selectedTechnician && selectedTechnician.id !== job.lead_technician_id" class="lead-notice">
+                        <i class="fas fa-user-minus"></i>
+                        {{ job.lead_technician.user?.name }} stays on the job as an ordinary technician and
+                        keeps their agreed fee of KSH {{ formatCurrency(leadAgreedCompensation) }}. Take them
+                        off the job separately if they are leaving it.
+                    </p>
+
+                    <div class="form-row assignment-finance-row" v-if="!leadPromotionFromOwnTask">
                         <div class="form-group">
                             <label>Lead Technician Dues (KSH)</label>
                             <input
@@ -3294,7 +3312,7 @@
                         </div>
                     </div>
 
-                    <p v-if="assignmentOverBudget" class="assignment-inline-error">
+                    <p v-if="assignmentOverBudget && !leadPromotionFromOwnTask" class="assignment-inline-error">
                         This amount is above the remaining labor budget for the current assignment mix.
                     </p>
                 </div>
@@ -4675,6 +4693,48 @@ const currentLeadAssignment = computed(() => {
         .find((assignment) => Number(assignment.technician_id) === Number(props.job.lead_technician_id)) || null
 })
 
+// A lead promoted off one of the job's own tasks holds no separate lead
+// place — the role moved, the money did not — so the card reads their fee off
+// the task they are still doing. Without this it showed KSH 0 beside a man
+// who is being paid, which reads as an unpaid lead rather than as one paid
+// through his task.
+const leadSubTask = computed(() => {
+    const leadId = Number(props.job.lead_technician_id)
+    if (!leadId) return null
+    return (props.job.sub_tasks || []).find((subTask) => Number(subTask.technician_id) === leadId) || null
+})
+const leadAgreedCompensation = computed(() => {
+    if (currentLeadAssignment.value) {
+        return Number(currentLeadAssignment.value.agreed_compensation || 0)
+    }
+    return Number(leadSubTask.value?.agreed_compensation || 0)
+})
+
+// Where the technician picked in the Change Lead modal already stands on this
+// job. The fee the modal offers comes from here rather than from the outgoing
+// lead: a man being moved up brings his own figure with him, and seeding the
+// field with the previous lead's was how somebody arrived in the role on
+// another man's money.
+const selectedLeadCandidatePlace = computed(() => {
+    const id = Number(selectedTechnician.value?.id)
+    if (!id) return null
+    return [...activePrimaryAssignments.value]
+        .reverse()
+        .find((assignment) => Number(assignment.technician_id) === id) || null
+})
+const selectedLeadCandidateSubTask = computed(() => {
+    const id = Number(selectedTechnician.value?.id)
+    if (!id) return null
+    return (props.job.sub_tasks || []).find((subTask) => Number(subTask.technician_id) === id) || null
+})
+// Already holds one of this job's tasks and no separate place on it: the lead
+// role is a role, not a second payable, so nothing new is committed.
+const leadPromotionFromOwnTask = computed(() => {
+    return assignmentContext.value === 'lead'
+        && Boolean(selectedLeadCandidateSubTask.value)
+        && !selectedLeadCandidatePlace.value
+})
+
 // Bonus UX — surface who's on the primary slot right now so the assign
 // modal can display "Currently assigned: X at KSH Y" instead of leaving
 // the admin to guess. Picks the appropriate current assignment based on
@@ -4755,7 +4815,11 @@ const currentAssignmentAmount = computed(() => {
     }
 
     if (assignmentContext.value === 'lead') {
-        return Number(currentLeadAssignment.value?.agreed_compensation || 0)
+        // The place this change will consume is the incoming technician's own,
+        // if they have one. The outgoing lead keeps theirs — they are stood
+        // down to the crew, not taken off the job — so their fee stays
+        // committed and must not be counted as headroom for the new lead.
+        return Number(selectedLeadCandidatePlace.value?.agreed_compensation || 0)
     }
 
     return Number(currentSingleAssignment.value?.agreed_compensation || 0)
@@ -4771,8 +4835,13 @@ const assignmentOverBudget = computed(() => {
     return normalizedAssignmentCompensation.value > availableAssignmentBudget.value
 })
 const canSubmitAssignment = computed(() => {
-    return Boolean(selectedTechnician.value)
-        && hasLaborBudget.value
+    if (!selectedTechnician.value) return false
+
+    // Nothing is committed by a promotion off the job's own task, so the
+    // labour budget has no say in it.
+    if (leadPromotionFromOwnTask.value) return true
+
+    return hasLaborBudget.value
         && normalizedAssignmentCompensation.value >= 0
         && !assignmentOverBudget.value
 })
@@ -5168,11 +5237,24 @@ const openLeadAssignModal = () => {
     assignmentContext.value = 'lead'
     selectedTechnician.value = findTechnicianById(props.job.lead_technician_id)
     seedAssignmentForm({
-        amount: currentLeadAssignment.value?.agreed_compensation,
+        amount: leadAgreedCompensation.value || '',
         notes: currentLeadAssignment.value?.compensation_notes,
     })
     showLeadAssignModal.value = true
 }
+
+// Picking somebody else in the modal re-seeds the fee from their own standing
+// on this job, so the figure on screen is the one that will be acted on.
+watch(selectedTechnician, () => {
+    if (!showLeadAssignModal.value) return
+
+    seedAssignmentForm({
+        amount: selectedLeadCandidatePlace.value?.agreed_compensation
+            ?? selectedLeadCandidateSubTask.value?.agreed_compensation
+            ?? '',
+        notes: selectedLeadCandidatePlace.value?.compensation_notes,
+    })
+})
 
 const closeLeadAssignModal = () => {
     showLeadAssignModal.value = false

@@ -100,7 +100,15 @@ class JobProgressRollupTest extends TestCase
         $this->assertSame(85, (int) $job->fresh()->progress_percentage);
     }
 
-    public function test_a_lead_whole_job_report_is_not_masked_by_a_lagging_sub_task(): void
+    /**
+     * On a split job the figure is the sub-task average and nothing else.
+     *
+     * The lead's whole-job report used to win wherever it was higher, which
+     * made the headline a number one man could type rather than a reading of
+     * the work. The lead moves it by getting his crew's tasks signed off and
+     * filing his own — the average, arrived at honestly.
+     */
+    public function test_a_lead_report_does_not_lift_the_job_above_its_sub_tasks(): void
     {
         $lead = $this->makeTechnician('TECH-901');
         $job = $this->makeJob($lead);
@@ -116,8 +124,124 @@ class JobProgressRollupTest extends TestCase
 
         $this->validatedReport($job->fresh(), $lead, 85);
 
-        // The old rule averaged sub-tasks only, so the job read 20%.
-        $this->assertSame(85, (int) $job->fresh()->progress_percentage);
+        $this->assertSame(20, (int) $job->fresh()->progress_percentage);
+    }
+
+    /**
+     * The reported bug: REQ-4ZNKW6 read "100% — Work is fully complete" above
+     * a carpentry task and a paint task that had not been started, because the
+     * lead's whole-job 100% both set the headline and counted as his sign-off.
+     * Neither should hold while the work it describes is at nothing.
+     */
+    public function test_a_lead_cannot_finish_a_job_whose_tasks_have_not_started(): void
+    {
+        $lead = $this->makeTechnician('TECH-910');
+        $job = $this->makeJob($lead);
+
+        foreach (['Carpentry Work', 'Paint Work'] as $order => $title) {
+            ServiceSubTask::create([
+                'service_request_id' => $job->id,
+                'title' => $title,
+                'technician_id' => $this->makeTechnician('TECH-91' . ($order + 1))->id,
+                'status' => 'assigned',
+                'progress_percentage' => 0,
+                'order' => $order + 1,
+            ]);
+        }
+
+        $this->validatedReport($job->fresh(), $lead, 100);
+
+        $job->refresh();
+
+        $this->assertSame(0, (int) $job->progress_percentage);
+        $this->assertNotSame(ServiceRequest::STATUS_COMPLETED, $job->status);
+        $this->assertNotSame(ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION, $job->status);
+    }
+
+    /**
+     * Half the work done is half the job, whoever says otherwise. The average
+     * is what the client is shown, so a job cannot read ahead of the tasks it
+     * is made of.
+     */
+    public function test_the_job_reads_the_average_of_its_sub_tasks(): void
+    {
+        $lead = $this->makeTechnician('TECH-920');
+        $job = $this->makeJob($lead);
+
+        $carpentry = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Carpentry Work',
+            'technician_id' => $lead->id,
+            'status' => 'in_progress',
+            'progress_percentage' => 0,
+            'order' => 1,
+        ]);
+
+        ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Paint Work',
+            'technician_id' => $this->makeTechnician('TECH-921')->id,
+            'status' => 'assigned',
+            'progress_percentage' => 0,
+            'order' => 2,
+        ]);
+
+        // The lead's own slice, reported as his own task rather than as a
+        // claim about the whole job.
+        $this->validatedReport($job->fresh(), $lead, 100, $carpentry);
+
+        $this->assertSame(50, (int) $job->fresh()->progress_percentage);
+    }
+
+    /**
+     * Who leads is a reporting line, not a unit of work.
+     *
+     * The lead role carries no percentage of its own: it says who verifies the
+     * work, not how much of it is done. So moving it between two men on the
+     * same crew must leave the job's figure exactly where it was — if it
+     * moves, the role has been smuggled into the arithmetic somewhere.
+     */
+    public function test_changing_the_lead_does_not_move_the_jobs_percentage(): void
+    {
+        $first = $this->makeTechnician('TECH-930');
+        $second = $this->makeTechnician('TECH-931');
+        $job = $this->makeJob($first);
+
+        $carpentry = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Carpentry Work',
+            'technician_id' => $first->id,
+            'status' => 'in_progress',
+            'progress_percentage' => 45,
+            'order' => 1,
+        ]);
+
+        ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Paint Work',
+            'technician_id' => $second->id,
+            'status' => 'in_progress',
+            'progress_percentage' => 63,
+            'order' => 2,
+        ]);
+
+        app(\App\Services\ProgressService::class)->recalculate($job->fresh());
+
+        $before = (int) $job->fresh()->progress_percentage;
+        $this->assertSame(54, $before, 'Fixture precondition: 45 and 63 average to 54.');
+
+        // The role moves to the other man on the same crew.
+        $job->update(['lead_technician_id' => $second->id, 'technician_id' => $second->id]);
+        app(\App\Services\ProgressService::class)->recalculate($job->fresh());
+
+        $this->assertSame(
+            $before,
+            (int) $job->fresh()->progress_percentage,
+            'Changing the lead moved the job percentage.'
+        );
+
+        // And the work itself is untouched by the change.
+        $this->assertSame(45, (int) $carpentry->fresh()->progress_percentage);
     }
 
     public function test_a_sub_technician_finishing_does_not_complete_the_whole_job(): void

@@ -1666,25 +1666,43 @@ class AdminDashboardController extends Controller
 
         $technician = Technician::findOrFail($request->technician_id);
         $currentLeadTechnicianId = $serviceRequest->lead_technician_id;
+        $isLeadChange = $currentLeadTechnicianId && (int) $currentLeadTechnicianId !== (int) $technician->id;
 
-        // Both places the change will consume: the outgoing lead's, and any
-        // the incoming technician already holds — a crew member being handed
-        // the job keeps their row rather than opening a second one, so their
-        // current fee must not be counted against the budget as well as the
-        // new one.
-        $existingAssignment = $this->findActivePrimaryAssignment($serviceRequest, $currentLeadTechnicianId);
+        // Where the incoming technician already stands on this job. Both are
+        // asked, because they mean different things: a bare crew place is the
+        // row the lead place is made out of, while a sub-task of their own is
+        // work they are already paid for separately.
         $incomingPlace = $this->findActivePrimaryAssignment($serviceRequest, (int) $technician->id);
+        $incomingSubTaskPlace = $serviceRequest->jobAssignments()
+            ->whereNotNull('service_sub_task_id')
+            ->where('technician_id', $technician->id)
+            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
+            ->orderByDesc('id')
+            ->first();
 
-        $this->ensureLaborBudgetCapacity(
-            $serviceRequest,
-            (float) $request->agreed_compensation,
-            excludeAssignmentId: [$existingAssignment?->id, $incomingPlace?->id]
-        );
-        $this->ensureTechnicianMilestoneCoverage(
-            $serviceRequest,
-            (int) $technician->id,
-            (float) $request->agreed_compensation
-        );
+        // Promoting somebody who already holds one of this job's tasks moves
+        // the role and nothing else. Their fee is already on the job, against
+        // the task they are doing; opening a lead place beside it would pay
+        // one man twice for one job, and seeding that place from the outgoing
+        // lead's figure — which is what used to happen — handed the new lead
+        // somebody else's money. The task keeps its fee, the man keeps his
+        // task, and only the badge moves.
+        $promotesFromOwnTask = $incomingSubTaskPlace && !$incomingPlace;
+
+        if (!$promotesFromOwnTask) {
+            // The outgoing lead is relegated rather than removed, so their fee
+            // stays committed and is not freed up for the incoming one.
+            $this->ensureLaborBudgetCapacity(
+                $serviceRequest,
+                (float) $request->agreed_compensation,
+                excludeAssignmentId: [$incomingPlace?->id]
+            );
+            $this->ensureTechnicianMilestoneCoverage(
+                $serviceRequest,
+                (int) $technician->id,
+                (float) $request->agreed_compensation
+            );
+        }
 
         // technician_id is the job's primary assignee and is read all over
         // the app — the client's "Assigned Technician", job completion,
@@ -1710,20 +1728,96 @@ class AdminDashboardController extends Controller
             $technician->update(['availability' => 'busy']);
         }
 
-        $this->syncPrimaryAssignment(
-            $serviceRequest,
-            currentTechnicianId: $currentLeadTechnicianId,
-            technician: $technician,
-            agreedCompensation: (float) $request->agreed_compensation,
-            compensationNotes: $request->compensation_notes,
-            reassignmentReason: 'Admin changed the lead technician from job details.'
-        );
+        // The outgoing lead is stood down from the role, not off the job. They
+        // were losing their place entirely — the row retired, the fee with it —
+        // which is how a man who had been on site all week vanished from the
+        // crew because somebody else was made answerable for it.
+        //
+        // Done before the incoming technician's place is written, so the
+        // relegated row is already an ordinary crew place by the time anything
+        // reads the roster back.
+        if ($isLeadChange) {
+            $this->relegateOutgoingLead($serviceRequest, (int) $currentLeadTechnicianId, $technician);
+        }
+
+        if (!$promotesFromOwnTask) {
+            // currentTechnicianId is deliberately null: nobody is giving up a
+            // place here. The outgoing lead keeps theirs as crew, handled
+            // above, and superseding it here would undo that.
+            $this->syncPrimaryAssignment(
+                $serviceRequest,
+                currentTechnicianId: null,
+                technician: $technician,
+                agreedCompensation: (float) $request->agreed_compensation,
+                compensationNotes: $request->compensation_notes,
+                reassignmentReason: 'Admin changed the lead technician from job details.'
+            );
+        }
 
         if ($technician->user && $technician->user->email) {
             Mail::to($technician->user->email)->send(new JobAssigned($serviceRequest));
         }
 
-        return redirect()->route('admin.jobs.show', $serviceRequest)->with('success', 'Lead technician assigned successfully!');
+        $message = 'Lead technician assigned successfully!';
+
+        if ($promotesFromOwnTask) {
+            $message = sprintf(
+                '%s is now the lead and keeps their own fee of KSH %s on "%s". No second fee was added.',
+                $technician->user?->name ?? 'The technician',
+                number_format((float) ($incomingSubTaskPlace->agreed_compensation ?? 0), 2),
+                $incomingSubTaskPlace->subTask?->title ?? 'their task'
+            );
+        }
+
+        return redirect()->route('admin.jobs.show', $serviceRequest)->with('success', $message);
+    }
+
+    /**
+     * Stand the outgoing lead down to an ordinary place on the crew.
+     *
+     * Changing who is answerable for a job is not the same as taking somebody
+     * off it. Their live place stays live and keeps the fee that was agreed
+     * with them — they are still on site, still owed, still on the client's
+     * gate list — and only the role moves. The roster reads "lead" off the
+     * job's lead_technician_id rather than off the row, so the badge follows
+     * the change on its own; what has to be cleared here is a role_on_job that
+     * was written as the lead's, or the gate list would keep announcing two.
+     *
+     * Taking them off the job altogether is a separate act with its own
+     * control, and it should stay that way: it owes the client a reason.
+     */
+    private function relegateOutgoingLead(
+        ServiceRequest $serviceRequest,
+        int $outgoingTechnicianId,
+        Technician $incomingLead
+    ): void {
+        $place = $this->findActivePrimaryAssignment($serviceRequest, $outgoingTechnicianId);
+
+        if (!$place) {
+            return;
+        }
+
+        $update = [];
+
+        if (!$place->role_on_job || $place->role_on_job === ServiceRequest::ROSTER_LEAD_ROLE) {
+            $update['role_on_job'] = 'Technician';
+        }
+
+        if ($update) {
+            $place->update($update);
+        }
+
+        AuditLog::log(AuditLog::ACTION_UPDATED, $place, null, [
+            'lead_stood_down' => $place->technician?->user?->name,
+            'technician_id' => $outgoingTechnicianId,
+            'new_lead_technician_id' => $incomingLead->id,
+            'new_lead' => $incomingLead->user?->name,
+            // Said plainly in the log, because the old behaviour was the
+            // opposite and somebody reading back will want to know which one
+            // this job got.
+            'fee_retained' => (float) ($place->agreed_compensation ?? 0),
+            'stood_down_by' => auth()->id(),
+        ]);
     }
 
     /**

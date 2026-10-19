@@ -581,6 +581,17 @@
                         <label class="form-field">
                             <span>Progress %</span>
                             <input v-model.number="progressForm.percent_complete" type="number" min="0" max="100" class="input">
+                            <!-- The job's headline is the average across its
+                                 tasks, so a whole-job figure typed over the top
+                                 of it changes nothing. Said here rather than
+                                 discovered later, when a lead who entered 100%
+                                 wonders why the job still reads 0%. -->
+                            <small v-if="reportingWholeSplitJob" class="field-note">
+                                The job reads {{ subTaskAverage }}% — the average across its
+                                {{ job.sub_tasks.length }} tasks. Move it by signing off your crew's
+                                task reports and filing your own; what you enter here is your account
+                                of the job, not the figure the client sees.
+                            </small>
                         </label>
 
                         <label class="form-field">
@@ -774,7 +785,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Link, router, usePage } from '@inertiajs/vue3'
 import TechnicianBottomNav from '@/Components/TechnicianBottomNav.vue'
 import PhotoUploader from '@/Components/PhotoUploader.vue'
@@ -863,6 +874,37 @@ const progressForm = ref({
     notes: '',
     service_sub_task_id: defaultSubTaskId,
 })
+
+// What the job actually reads: the average across its tasks. The lead's
+// whole-job report used to override this wherever it was higher, which is how
+// a job came to say "work is fully complete" above two tasks at nothing.
+const subTaskAverage = computed(() => {
+    const tasks = props.job.sub_tasks || []
+    if (!tasks.length) return Number(props.job.progress_percentage || 0)
+
+    const total = tasks.reduce((sum, task) => sum + Number(task.progress_percentage || 0), 0)
+    return Math.round(total / tasks.length)
+})
+
+const reportingWholeSplitJob = computed(() =>
+    Boolean(props.job.sub_tasks?.length) && !progressForm.value.service_sub_task_id,
+)
+
+// Switching between the whole job and one task changes what the figure is
+// about, so it is re-read rather than left on the last one — a lead who moved
+// off a task at 40% was being offered 40% as the job's.
+watch(
+    () => progressForm.value.service_sub_task_id,
+    (subTaskId) => {
+        if (!subTaskId) {
+            progressForm.value.percent_complete = subTaskAverage.value
+            return
+        }
+
+        const task = (props.job.sub_tasks || []).find((t) => t.id === Number(subTaskId))
+        progressForm.value.percent_complete = Number(task?.progress_percentage || 0)
+    },
+)
 
 // Set when a lead has picked a sub-task that is not their own — the report
 // will be about that technician's work, authored by the lead.
@@ -1522,6 +1564,12 @@ defineOptions({ layout: null })
     font-size: 0.78rem;
     font-weight: 700;
     color: #475569;
+}
+
+.field-note {
+    font-size: 0.74rem;
+    line-height: 1.45;
+    color: #64748b;
 }
 
 .input {
