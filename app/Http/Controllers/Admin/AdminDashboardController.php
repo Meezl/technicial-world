@@ -1656,10 +1656,14 @@ class AdminDashboardController extends Controller
     {
         $request->validate([
             'technician_id' => ['required', 'exists:technicians,id', new IsTechnician('the lead role on this job')],
-            'agreed_compensation' => 'required|numeric|min:0',
+            // Not required any more: a lead holds a task, and his fee is on
+            // that task. Still accepted so an older client sending one is not
+            // rejected outright; it is simply not used.
+            'agreed_compensation' => 'nullable|numeric|min:0',
             'compensation_notes' => 'nullable|string|max:1000',
             // What becomes of the outgoing lead's fee when he is carrying no
-            // work of his own. Only consulted in that case — see below.
+            // work of his own. Only reachable on jobs staffed before a lead
+            // was required to hold a task — see below.
             'outgoing_lead_fee' => 'nullable|in:keep,release',
         ]);
 
@@ -1699,7 +1703,26 @@ class AdminDashboardController extends Controller
         // lead's figure — which is what used to happen — handed the new lead
         // somebody else's money. The task keeps its fee, the man keeps his
         // task, and only the badge moves.
-        $promotesFromOwnTask = $incomingTask && !$incomingPlace;
+        // A lead always carries work of his own. He reports on the whole job,
+        // but he is not a supervisor standing over it — so the role can only
+        // go to somebody who holds one of this job's tasks.
+        //
+        // Refused rather than quietly allowed, because the alternative is what
+        // this job ended up as: a lead on a fee with nothing to do, and the
+        // man who actually had the carpentry listed under somebody else's
+        // name on the client's gate notice.
+        if (!$incomingTask) {
+            return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', sprintf(
+                '%s holds no task on this job, and a lead carries work of his own. Give him one of the '
+                . 'tasks first — or cut a new one for him — then make him lead.',
+                $technician->user?->name ?? 'That technician'
+            ));
+        }
+
+        // Always true now that a lead must hold a task: his money is on that
+        // task, and leading adds no second payable. Kept as a named condition
+        // because the branches below read better for it.
+        $promotesFromOwnTask = !$incomingPlace;
 
         // A lead who supervises and carries no task of his own is being paid
         // for carrying the job. Take the job off him and the fee is paid for
@@ -1851,6 +1874,58 @@ class AdminDashboardController extends Controller
         $place = $this->findActivePrimaryAssignment($serviceRequest, $outgoingTechnicianId);
 
         if (!$place) {
+            return;
+        }
+
+        // His own task on this job, which is where his money and his place on
+        // the gate list belong once he is no longer leading.
+        $ownTask = $serviceRequest->subTasks()
+            ->where('technician_id', $outgoingTechnicianId)
+            ->orderBy('order')
+            ->orderBy('id')
+            ->first();
+
+        $taskPlace = $ownTask ? $this->findActiveSubTaskAssignment($ownTask) : null;
+
+        // A lead holds a task, so standing him down leaves him holding it —
+        // and the lead place beside it is then a second row for one man doing
+        // one piece of work. It put him on the client's gate notice twice,
+        // under two identical "Technician" lines, and committed both fees
+        // against the labour budget for work only one of them covers.
+        //
+        // The place folds into the task, the way absorbBareCrewPlace folds a
+        // crew place into one. What the task does not carry — the role the
+        // client reads, the dates he is on site — moves across rather than
+        // being lost with the row.
+        if ($taskPlace && (int) $taskPlace->id !== (int) $place->id) {
+            $carriedOver = array_filter([
+                'role_on_job' => $taskPlace->role_on_job ?: 'Technician',
+                'expected_start' => $taskPlace->expected_start ?: $place->expected_start,
+                'expected_end' => $taskPlace->expected_end ?: $place->expected_end,
+                'attendance_dates' => $taskPlace->attendance_dates ?: $place->attendance_dates,
+            ], fn ($value) => $value !== null);
+
+            $taskPlace->update($carriedOver);
+
+            $place->update([
+                'status' => JobAssignment::STATUS_REASSIGNED,
+                'reassignment_reason' => sprintf(
+                    'Stood down as lead when %s took the job over. His fee is on "%s", the task he is still doing.',
+                    $incomingLead->user?->name ?? 'another technician',
+                    $ownTask->title
+                ),
+                'actual_end' => now(),
+            ]);
+
+            AuditLog::log(AuditLog::ACTION_UPDATED, $place, null, [
+                'lead_stood_down' => $place->technician?->user?->name,
+                'technician_id' => $outgoingTechnicianId,
+                'new_lead' => $incomingLead->user?->name,
+                'lead_place_folded_into_task' => $ownTask->title,
+                'fee_now_on_task' => (float) ($ownTask->agreed_compensation ?? 0),
+                'stood_down_by' => auth()->id(),
+            ]);
+
             return;
         }
 
@@ -2298,6 +2373,26 @@ class AdminDashboardController extends Controller
         }
 
         return $activeAssignments->first();
+    }
+
+    /**
+     * Another task on this job already held by the same technician, if any.
+     *
+     * Read off the tasks rather than the assignment rows beside them: the task
+     * is the authoritative record of who is doing what, and the assignment is
+     * bookkeeping that can lag it.
+     */
+    protected function technicianHoldsAnotherTask(
+        ServiceRequest $serviceRequest,
+        int $technicianId,
+        int $excludingSubTaskId
+    ): ?ServiceSubTask {
+        return $serviceRequest->subTasks()
+            ->where('technician_id', $technicianId)
+            ->where('id', '!=', $excludingSubTaskId)
+            ->orderBy('order')
+            ->orderBy('id')
+            ->first();
     }
 
     protected function findActiveSubTaskAssignment(ServiceSubTask $serviceSubTask): ?JobAssignment
@@ -5142,6 +5237,15 @@ class AdminDashboardController extends Controller
             ));
         }
 
+        // Same rule as the assign route: one man, one task at a time.
+        if ($held = $this->technicianHoldsAnotherTask($serviceRequest, (int) $technician->id, $subTask->id)) {
+            return back()->with('error', sprintf(
+                '%s already holds "%s" on this job. Take him off that first, or give this one to somebody else.',
+                $technician->user?->name ?? 'That technician',
+                $held->title
+            ));
+        }
+
         // A task's fee is allocated against the labour budget, unlike a crew
         // place, which is usually paid through the lead.
         if ($compensation > 0) {
@@ -5686,6 +5790,20 @@ class AdminDashboardController extends Controller
         // sub-task path cannot drift from this one again.
         if ($blocker = app(\App\Services\JobAuthorisationService::class)->assignmentBlocker($serviceRequest)) {
             return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', $blocker);
+        }
+
+
+        // One man, one task at a time on a job. Two tasks means two rows on
+        // the client's gate notice under one name, two fees committed for one
+        // pair of hands, and a job percentage that counts him twice. Where
+        // somebody genuinely does two trades here, the office either widens
+        // the task he holds or hands the second one on.
+        if ($existing = $this->technicianHoldsAnotherTask($serviceRequest, (int) $technician->id, $serviceSubTask->id)) {
+            return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', sprintf(
+                '%s already holds "%s" on this job. Take him off that first, or give this one to somebody else.',
+                $technician->user?->name ?? 'That technician',
+                $existing->title
+            ));
         }
 
         $this->ensureLaborBudgetCapacity(

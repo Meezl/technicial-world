@@ -13,12 +13,15 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 /**
- * Changing the lead moves one person, and only that person.
+ * Who leads a job, and what that does to the work and the money.
  *
- * Crew places and the lead's own assignment share a slot: both are rows on
- * the job with no sub-task against them. Anything that reasons about "the
- * job's assignment" without saying whose therefore reaches for whichever row
- * happens to be newest, and on a staffed job that is rarely the lead.
+ * Three rules hold it together, and each one came from a job that went wrong
+ * without it:
+ *
+ *  · a lead always carries a task of his own — he reports on the whole job,
+ *    he does not stand over it;
+ *  · one man holds one task at a time on a job;
+ *  · changing the lead changes nobody's task, and settles no new money.
  */
 class LeadReassignmentIntegrityTest extends TestCase
 {
@@ -45,11 +48,11 @@ class LeadReassignmentIntegrityTest extends TestCase
         ]);
     }
 
-    private function job(array $attributes = []): ServiceRequest
+    private function job(): ServiceRequest
     {
         $category = ServiceCategory::firstOrCreate(['name' => 'Fit-out'], ['is_active' => true]);
 
-        $job = ServiceRequest::create(array_merge([
+        $job = ServiceRequest::create([
             'request_id' => 'REQ-' . strtoupper(substr(uniqid(), -6)),
             'user_id' => User::factory()->create(['role' => User::ROLE_CLIENT])->id,
             'service_category_id' => $category->id,
@@ -60,7 +63,7 @@ class LeadReassignmentIntegrityTest extends TestCase
             'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
             'quote_amount' => 800000,
             'has_sub_tasks' => true,
-        ], $attributes));
+        ]);
 
         ServiceRequestBudget::create([
             'service_request_id' => $job->id,
@@ -71,507 +74,254 @@ class LeadReassignmentIntegrityTest extends TestCase
         return $job;
     }
 
-    /** The live, non-sub-task row for one technician. */
-    private function place(ServiceRequest $job, Technician $tech): ?JobAssignment
+    /** Cut a task and put somebody on it, the way ops does. */
+    private function taskFor(ServiceRequest $job, Technician $tech, string $title, float $fee = 20000): ServiceSubTask
     {
-        return JobAssignment::where('service_request_id', $job->id)
-            ->whereNull('service_sub_task_id')
-            ->where('technician_id', $tech->id)
-            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
-            ->first();
-    }
-
-    public function test_reassigning_the_lead_does_not_displace_a_crew_member(): void
-    {
-        $job = $this->job();
-        $first = $this->technician('First Lead');
-        $second = $this->technician('Second Lead');
-        $hand = $this->technician('Right Hand');
-
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $first->id,
-            'agreed_compensation' => 20000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
-
-        // A right-hand man, added after the lead, so his row is the newest
-        // one with no sub-task against it.
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/crew", [
-            'technician_id' => $hand->id,
-            'role_on_job' => 'Right hand',
-            'agreed_compensation' => 8000,
-        ]);
-
-        $this->assertNotNull($this->place($job, $hand), 'Fixture precondition: the crew member is on the job.');
-
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $second->id,
-            'agreed_compensation' => 25000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
-
-        // Changing who leads says nothing about the right-hand man. His place
-        // and his fee are a separate agreement.
-        $crewPlace = $this->place($job, $hand);
-        $this->assertNotNull($crewPlace, 'The crew member was dropped by a lead reassignment.');
-        $this->assertSame('8000.00', (string) $crewPlace->agreed_compensation);
-    }
-
-    /**
-     * Changing who leads is not the same as taking somebody off the job.
-     *
-     * The outgoing lead used to lose their place and their fee with it, so a
-     * man who had been on site all week vanished off the crew because
-     * somebody else was made answerable for the job. He stays, as an ordinary
-     * technician, on the money that was agreed with him.
-     */
-    public function test_the_outgoing_lead_stays_on_the_job_as_an_ordinary_technician(): void
-    {
-        $job = $this->job();
-        $first = $this->technician('First Lead');
-        $second = $this->technician('Second Lead');
-
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $first->id,
-            'agreed_compensation' => 20000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $second->id,
-            'agreed_compensation' => 25000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
-
-        $this->assertSame($second->id, (int) $job->fresh()->lead_technician_id);
-
-        $stoodDown = $this->place($job, $first);
-        $this->assertNotNull($stoodDown, 'The outgoing lead was dropped off the job.');
-        $this->assertSame('20000.00', (string) $stoodDown->agreed_compensation);
-
-        // The badge is read off the job, not the row, so standing somebody
-        // down is enough to stop them being announced as the lead.
-        $this->assertFalse($job->fresh()->isLeadTechnician($first->id));
-        $this->assertNotSame(ServiceRequest::ROSTER_LEAD_ROLE, $stoodDown->role_on_job);
-
-        $incoming = $this->place($job, $second);
-        $this->assertNotNull($incoming);
-        $this->assertSame('25000.00', (string) $incoming->agreed_compensation);
-
-        // One live place each, never two for one person.
-        $this->assertSame(2, JobAssignment::where('service_request_id', $job->id)
-            ->whereNull('service_sub_task_id')
-            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
-            ->count());
-    }
-
-    /**
-     * Somebody already holding one of the job's tasks brings his own money up
-     * with him. He used to arrive in the role on the outgoing lead's figure —
-     * the modal seeded the field with it — and on a second fee beside the one
-     * his task already pays him.
-     */
-    public function test_a_task_holder_promoted_to_lead_keeps_his_own_fee(): void
-    {
-        $job = $this->job();
-        $first = $this->technician('First Lead');
-        $painter = $this->technician('Painter');
-
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $first->id,
-            'agreed_compensation' => 20000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
-
-        $subTask = ServiceSubTask::create([
+        $task = ServiceSubTask::create([
             'service_request_id' => $job->id,
-            'title' => 'Paint Work',
-            'description' => 'All exposed metal surfaces',
+            'title' => $title,
             'status' => ServiceSubTask::STATUS_PENDING,
+            'order' => $job->subTasks()->count() + 1,
         ]);
 
-        $this->actingAs($this->admin)->post("/admin/sub-tasks/{$subTask->id}/assign", [
-            'technician_id' => $painter->id,
-            'agreed_compensation' => 12500,
-        ]);
-
-        // The fee posted here is the outgoing lead's — exactly what the old
-        // modal sent — and must not be what he ends up on.
         $this->actingAs($this->admin)
-            ->post("/admin/jobs/{$job->id}/assign-lead", [
-                'technician_id' => $painter->id,
-                'agreed_compensation' => 20000,
-                // The outgoing lead carries no task of his own here, so what
-                // happens to his fee is a decision the change has to carry.
-                'outgoing_lead_fee' => 'keep',
+            ->post("/admin/sub-tasks/{$task->id}/assign", [
+                'technician_id' => $tech->id,
+                'agreed_compensation' => $fee,
             ])
             ->assertSessionHasNoErrors();
 
-        $this->assertSame($painter->id, (int) $job->fresh()->lead_technician_id);
-
-        // No lead place was opened beside his task: leading is a role, not a
-        // second payable, so his task fee is still the whole of his money.
-        $this->assertNull(
-            $this->place($job, $painter),
-            'A second fee was opened for a lead who was already being paid for his task.'
-        );
-        $this->assertSame('12500.00', (string) $subTask->fresh()->agreed_compensation);
-
-        // And the man he replaced is still on the job, on his own fee.
-        $this->assertSame('20000.00', (string) $this->place($job, $first)->agreed_compensation);
+        return $task->fresh();
     }
 
-    public function test_the_lead_can_be_handed_back_to_whoever_held_it_before(): void
+    private function makeLead(ServiceRequest $job, Technician $tech): \Illuminate\Testing\TestResponse
+    {
+        return $this->actingAs($this->admin)
+            ->post("/admin/jobs/{$job->id}/assign-lead", ['technician_id' => $tech->id]);
+    }
+
+    /** Live rows for one technician, by kind. */
+    private function places(ServiceRequest $job, Technician $tech)
+    {
+        return JobAssignment::where('service_request_id', $job->id)
+            ->where('technician_id', $tech->id)
+            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
+            ->get();
+    }
+
+    private function committedLabour(ServiceRequest $job): float
+    {
+        return (float) $job->jobAssignments()
+                ->whereNull('service_sub_task_id')
+                ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
+                ->sum('agreed_compensation')
+            + (float) $job->subTasks()->whereNotNull('technician_id')->sum('agreed_compensation');
+    }
+
+    public function test_a_lead_must_hold_a_task_on_the_job(): void
+    {
+        $job = $this->job();
+        $carpenter = $this->technician('Carpenter');
+        $outsider = $this->technician('Outsider');
+
+        // Staffing the first task on an unled job also names its lead, so the
+        // carpenter is already carrying both by the time the outsider is put
+        // forward.
+        $this->taskFor($job, $carpenter, 'Carpentry Work');
+        $this->assertSame($carpenter->id, (int) $job->fresh()->lead_technician_id);
+
+        // The outsider holds nothing here, so he cannot be made answerable
+        // for it — and the refusal leaves the job exactly as it was.
+        $this->makeLead($job, $outsider)->assertSessionHas('error');
+
+        $this->assertSame($carpenter->id, (int) $job->fresh()->lead_technician_id);
+        $this->assertCount(0, $this->places($job, $outsider));
+
+        // Cut him one, and the role is his to take.
+        $this->taskFor($job, $outsider, 'Paint Work');
+        $this->makeLead($job, $outsider)->assertSessionHasNoErrors();
+        $this->assertSame($outsider->id, (int) $job->fresh()->lead_technician_id);
+    }
+
+    public function test_leading_opens_no_second_place_or_fee(): void
+    {
+        $job = $this->job();
+        $carpenter = $this->technician('Carpenter');
+        $this->taskFor($job, $carpenter, 'Carpentry Work', 20000);
+
+        $before = $this->committedLabour($job->fresh());
+        $this->makeLead($job, $carpenter)->assertSessionHasNoErrors();
+
+        // One man, one row, one fee — on the task he is doing.
+        $rows = $this->places($job, $carpenter);
+        $this->assertCount(1, $rows, 'Leading opened a second row beside his task.');
+        $this->assertNotNull($rows->first()->service_sub_task_id);
+        $this->assertSame($before, $this->committedLabour($job->fresh()));
+    }
+
+    /**
+     * The roster bug: a stood-down lead showed twice on the client's gate
+     * notice, under two identical "Technician" lines, with both fees
+     * committed for one pair of hands.
+     */
+    public function test_standing_a_lead_down_leaves_him_one_row_not_two(): void
     {
         $job = $this->job();
         $first = $this->technician('First Lead');
         $second = $this->technician('Second Lead');
 
-        foreach ([[$first, 20000], [$second, 25000], [$first, 22000]] as [$tech, $fee]) {
-            $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-                'technician_id' => $tech->id,
-                'agreed_compensation' => $fee,
-                // The outgoing lead carries no task of his own here, so what
-                // happens to his fee is a decision the change has to carry.
-                'outgoing_lead_fee' => 'keep',
-            ]);
+        $carpentry = $this->taskFor($job, $first, 'Carpentry Work', 60000);
+        $this->taskFor($job, $second, 'Paint Work', 45000);
+
+        $this->makeLead($job, $first)->assertSessionHasNoErrors();
+
+        // A job staffed before a lead had to hold a task can be carrying a
+        // bare lead place beside the task. It must not survive the handover.
+        JobAssignment::create([
+            'service_request_id' => $job->id,
+            'technician_id' => $first->id,
+            'assigned_by' => $this->admin->id,
+            'agreed_compensation' => 40000,
+            'status' => JobAssignment::STATUS_ACCEPTED,
+            'role_on_job' => ServiceRequest::ROSTER_LEAD_ROLE,
+        ]);
+        $this->assertCount(2, $this->places($job, $first), 'Fixture precondition: he holds two rows.');
+
+        $this->makeLead($job, $second)->assertSessionHasNoErrors();
+
+        $rows = $this->places($job, $first);
+        $this->assertCount(1, $rows, 'The stood-down lead is still on the job twice.');
+        $this->assertSame($carpentry->id, (int) $rows->first()->service_sub_task_id);
+
+        // And the client's notice lists him once.
+        $row = collect($job->fresh()->attendanceRoster())->firstWhere('name', 'First Lead');
+        $this->assertCount(1, $row['entries']);
+    }
+
+    public function test_changing_the_lead_leaves_the_outgoing_leads_task_alone(): void
+    {
+        $job = $this->job();
+        $first = $this->technician('First Lead');
+        $second = $this->technician('Second Lead');
+
+        $carpentry = $this->taskFor($job, $first, 'Carpentry Work', 60000);
+        $this->taskFor($job, $second, 'Paint Work', 45000);
+
+        $this->makeLead($job, $first)->assertSessionHasNoErrors();
+        $before = $this->committedLabour($job->fresh());
+
+        $this->makeLead($job, $second)->assertSessionHasNoErrors();
+
+        $this->assertSame($second->id, (int) $job->fresh()->lead_technician_id);
+        $this->assertSame($first->id, (int) $carpentry->fresh()->technician_id, 'He lost the task he was doing.');
+        $this->assertSame('60000.00', (string) $carpentry->fresh()->agreed_compensation);
+        $this->assertSame($before, $this->committedLabour($job->fresh()), 'The handover settled new money.');
+        $this->assertFalse($job->fresh()->isLeadTechnician($first->id));
+    }
+
+    public function test_the_lead_can_be_handed_back_and_forth_without_cost(): void
+    {
+        $job = $this->job();
+        $first = $this->technician('First Lead');
+        $second = $this->technician('Second Lead');
+
+        $carpentry = $this->taskFor($job, $first, 'Carpentry Work', 60000);
+        $paint = $this->taskFor($job, $second, 'Paint Work', 45000);
+
+        $this->makeLead($job, $first)->assertSessionHasNoErrors();
+        $before = $this->committedLabour($job->fresh());
+
+        foreach ([$second, $first, $second, $first] as $tech) {
+            $this->makeLead($job, $tech)->assertSessionHasNoErrors();
         }
 
         $this->assertSame($first->id, (int) $job->fresh()->lead_technician_id);
-
-        $back = $this->place($job, $first);
-        $this->assertNotNull($back, 'The original lead did not come back onto the job.');
-        $this->assertSame('22000.00', (string) $back->agreed_compensation);
-
-        // Handing it back stands the other man down; it does not throw him
-        // off the job he is still working on.
-        $displaced = $this->place($job, $second);
-        $this->assertNotNull($displaced, 'The displaced lead was dropped off the job.');
-        $this->assertSame('25000.00', (string) $displaced->agreed_compensation);
+        $this->assertSame($first->id, (int) $carpentry->fresh()->technician_id);
+        $this->assertSame($second->id, (int) $paint->fresh()->technician_id);
+        $this->assertSame($before, $this->committedLabour($job->fresh()));
     }
 
-    public function test_a_crew_member_promoted_to_lead_keeps_one_place(): void
+    public function test_one_technician_cannot_hold_two_tasks_on_a_job(): void
     {
         $job = $this->job();
-        $first = $this->technician('First Lead');
-        $hand = $this->technician('Right Hand');
+        $carpenter = $this->technician('Carpenter');
 
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $first->id,
-            'agreed_compensation' => 20000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/crew", [
-            'technician_id' => $hand->id,
-            'role_on_job' => 'Right hand',
-            'agreed_compensation' => 8000,
-        ]);
+        $this->taskFor($job, $carpenter, 'Carpentry Work');
 
-        // The right-hand man takes the job over.
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $hand->id,
-            'agreed_compensation' => 24000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
-
-        $this->assertSame($hand->id, (int) $job->fresh()->lead_technician_id);
-
-        // One place, not two. A second row would put him on the gate list
-        // twice and charge the labour budget for both.
-        $places = JobAssignment::where('service_request_id', $job->id)
-            ->whereNull('service_sub_task_id')
-            ->where('technician_id', $hand->id)
-            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
-            ->get();
-
-        $this->assertCount(1, $places, 'The promoted crew member holds two live places.');
-        $this->assertSame('24000.00', (string) $places->first()->agreed_compensation);
-        $this->assertNotNull($this->place($job, $first), 'The outgoing lead was dropped off the job.');
-    }
-
-    /**
-     * The other side of keeping the outgoing lead: his fee is still committed,
-     * so it is not headroom for his replacement. The budget says no, and says
-     * what is in the way, rather than quietly spending the same money twice.
-     */
-    public function test_the_outgoing_leads_fee_stays_committed_against_the_budget(): void
-    {
-        // Labour budget 400,000. The outgoing lead holds 250,000 and keeps it,
-        // so a 300,000 replacement no longer fits.
-        $job = $this->job();
-        $first = $this->technician('First Lead');
-        $second = $this->technician('Second Lead');
-
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $first->id,
-            'agreed_compensation' => 250000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
-
-        $this->actingAs($this->admin)
-            ->post("/admin/jobs/{$job->id}/assign-lead", [
-                'technician_id' => $second->id,
-                'agreed_compensation' => 300000,
-                // The outgoing lead carries no task of his own here, so what
-                // happens to his fee is a decision the change has to carry.
-                'outgoing_lead_fee' => 'keep',
-            ])
-            ->assertSessionHasErrors('agreed_compensation');
-
-        $this->assertSame($first->id, (int) $job->fresh()->lead_technician_id);
-        $this->assertNull($this->place($job, $second));
-
-        // Within what is actually left, it goes through.
-        $this->actingAs($this->admin)
-            ->post("/admin/jobs/{$job->id}/assign-lead", [
-                'technician_id' => $second->id,
-                'agreed_compensation' => 150000,
-                // The outgoing lead carries no task of his own here, so what
-                // happens to his fee is a decision the change has to carry.
-                'outgoing_lead_fee' => 'keep',
-            ])
-            ->assertSessionHasNoErrors();
-
-        $this->assertSame('150000.00', (string) $this->place($job, $second)->agreed_compensation);
-        $this->assertSame('250000.00', (string) $this->place($job, $first)->agreed_compensation);
-    }
-
-    /**
-     * The whole of the ops workflow in one pass: a lead carrying work of his
-     * own is stood down, and the work he was doing is then cut into a sub-task
-     * and given to him.
-     *
-     * A lead's own task is not a sub-task row — service_sub_tasks is the only
-     * table carrying a percentage, and a lead's work has none — so this is how
-     * that work becomes trackable once he is no longer the one answerable for
-     * the job. absorbBareCrewPlace deliberately leaves the lead's own place
-     * alone, so none of this was reachable while standing a lead down also
-     * threw him off the job.
-     */
-    public function test_a_stood_down_lead_can_be_given_his_work_back_as_a_sub_task(): void
-    {
-        $job = $this->job();
-        $first = $this->technician('First Lead');
-        $second = $this->technician('Second Lead');
-
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $first->id,
-            'agreed_compensation' => 20000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
-
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $second->id,
-            'agreed_compensation' => 25000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
-
-        // Still on the job, still on his fee, but now carrying no trackable
-        // scope — there is no row anywhere that says how far along his work is.
-        $stoodDown = $this->place($job, $first);
-        $this->assertNotNull($stoodDown);
-        $this->assertSame('20000.00', (string) $stoodDown->agreed_compensation);
-
-        // Ops cuts his work into a sub-task and hands it back to him.
-        $subTask = ServiceSubTask::create([
+        $second = ServiceSubTask::create([
             'service_request_id' => $job->id,
-            'title' => 'Steel Framework',
-            'description' => 'What the outgoing lead was already doing',
+            'title' => 'Paint Work',
             'status' => ServiceSubTask::STATUS_PENDING,
+            'order' => 2,
         ]);
 
         $this->actingAs($this->admin)
-            ->post("/admin/sub-tasks/{$subTask->id}/assign", [
-                'technician_id' => $first->id,
+            ->post("/admin/sub-tasks/{$second->id}/assign", [
+                'technician_id' => $carpenter->id,
                 'agreed_compensation' => 20000,
             ])
-            ->assertSessionHasNoErrors();
+            ->assertSessionHas('error');
 
-        // The bare place is absorbed into the task rather than sitting beside
-        // it: one man, one row, one fee, and now a percentage that counts
-        // towards the job's.
-        $this->assertNull(
-            $this->place($job, $first),
-            'The stood-down lead is on the job twice — once as crew and once on his task.'
-        );
-        $this->assertSame($first->id, (int) $subTask->fresh()->technician_id);
-        $this->assertSame('20000.00', (string) $subTask->fresh()->agreed_compensation);
-
-        // And leading is still the other man's job.
-        $this->assertSame($second->id, (int) $job->fresh()->lead_technician_id);
+        $this->assertNull($second->fresh()->technician_id);
+        $this->assertSame(1, $job->fresh()->subTasks()->where('technician_id', $carpenter->id)->count());
     }
 
-    public function test_the_budget_still_refuses_dues_it_cannot_cover(): void
+    public function test_a_lead_reassignment_leaves_the_other_task_holders_alone(): void
     {
         $job = $this->job();
         $first = $this->technician('First Lead');
+        $second = $this->technician('Second Lead');
+        $sparky = $this->technician('Electrician');
+
+        $this->taskFor($job, $first, 'Carpentry Work', 60000);
+        $this->taskFor($job, $second, 'Paint Work', 45000);
+        $electrical = $this->taskFor($job, $sparky, 'Electrical Works', 35000);
+
+        $this->makeLead($job, $first)->assertSessionHasNoErrors();
+        $this->makeLead($job, $second)->assertSessionHasNoErrors();
+
+        $this->assertSame($sparky->id, (int) $electrical->fresh()->technician_id);
+        $this->assertSame('35000.00', (string) $electrical->fresh()->agreed_compensation);
+        $this->assertCount(1, $this->places($job, $sparky));
+    }
+
+    public function test_a_crew_member_is_not_displaced_by_a_lead_change(): void
+    {
+        $job = $this->job();
+        $first = $this->technician('First Lead');
+        $second = $this->technician('Second Lead');
         $hand = $this->technician('Right Hand');
 
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $first->id,
-            'agreed_compensation' => 250000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
+        $this->taskFor($job, $first, 'Carpentry Work', 60000);
+        $this->taskFor($job, $second, 'Paint Work', 45000);
+        $this->makeLead($job, $first)->assertSessionHasNoErrors();
+
+        // A right-hand man carries no task of his own and is paid through the
+        // lead, so his row is the newest bare one on the job.
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/crew", [
             'technician_id' => $hand->id,
             'role_on_job' => 'Right hand',
-            'agreed_compensation' => 100000,
         ]);
+        $this->assertCount(1, $this->places($job, $hand));
 
-        // 400,000 budget, 100,000 already committed to the crew member who is
-        // staying. Releasing only the outgoing lead's 250,000 leaves 300,000.
-        $this->actingAs($this->admin)
-            ->post("/admin/jobs/{$job->id}/assign-lead", [
-                'technician_id' => $this->technician('Third Lead')->id,
-                'agreed_compensation' => 320000,
-                // The outgoing lead carries no task of his own here, so what
-                // happens to his fee is a decision the change has to carry.
-                'outgoing_lead_fee' => 'keep',
-            ])
-            ->assertSessionHasErrors('agreed_compensation');
+        $this->makeLead($job, $second)->assertSessionHasNoErrors();
 
-        // Refused, and nothing moved with it.
-        $this->assertSame($first->id, (int) $job->fresh()->lead_technician_id);
-        $this->assertSame('250000.00', (string) $this->place($job, $first)->agreed_compensation);
-        $this->assertSame('100000.00', (string) $this->place($job, $hand)->agreed_compensation);
-    }
-
-    public function test_re_agreeing_the_same_leads_fee_does_not_churn_their_place(): void
-    {
-        $job = $this->job();
-        $lead = $this->technician('Lead');
-
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $lead->id,
-            'agreed_compensation' => 20000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
-        $placeId = $this->place($job, $lead)->id;
-
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $lead->id,
-            'agreed_compensation' => 26000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
-
-        $place = $this->place($job, $lead);
-        $this->assertSame($placeId, $place->id, 'Re-agreeing a fee opened a new place.');
-        $this->assertSame('26000.00', (string) $place->agreed_compensation);
-        $this->assertSame(1, JobAssignment::where('service_request_id', $job->id)
-            ->whereNull('service_sub_task_id')
-            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
-            ->count());
+        $this->assertCount(1, $this->places($job, $hand), 'The crew member was dropped by a lead change.');
     }
 
     public function test_taking_a_technician_off_a_task_releases_their_dues(): void
     {
         $job = $this->job();
-        $lead = $this->technician('Lead');
-        $crew = $this->technician('Task Holder');
+        $carpenter = $this->technician('Carpenter');
+        $task = $this->taskFor($job, $carpenter, 'Carpentry Work', 60000);
 
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $lead->id,
-            'agreed_compensation' => 20000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
+        $this->assertSame(60000.0, $this->committedLabour($job->fresh()));
 
-        $task = ServiceSubTask::create([
-            'service_request_id' => $job->id,
-            'title' => 'Carpentry',
-            'status' => ServiceSubTask::STATUS_PENDING,
-        ]);
-        $this->actingAs($this->admin)->post("/admin/sub-tasks/{$task->id}/assign", [
-            'technician_id' => $crew->id,
-            'agreed_compensation' => 300000,
-        ]);
-
-        $this->actingAs($this->admin)->post("/admin/sub-tasks/{$task->id}/unassign", [
-            'reason' => 'Trade pulled off the job.',
-        ]);
-
-        $this->assertNull($task->fresh()->technician_id);
-
-        // The 300,000 is back: a replacement at the same figure fits again.
-        $replacement = $this->technician('Replacement');
         $this->actingAs($this->admin)
-            ->post("/admin/sub-tasks/{$task->id}/assign", [
-                'technician_id' => $replacement->id,
-                'agreed_compensation' => 300000,
-            ])
+            ->post("/admin/sub-tasks/{$task->id}/unassign", ['reason' => 'Off site indefinitely.'])
             ->assertSessionHasNoErrors();
 
-        $this->assertSame($replacement->id, (int) $task->fresh()->technician_id);
-        // And the lead is where they were throughout.
-        $this->assertSame($lead->id, (int) $job->fresh()->lead_technician_id);
-    }
-
-    public function test_a_lead_reassignment_leaves_task_holders_alone(): void
-    {
-        $job = $this->job();
-        $first = $this->technician('First Lead');
-        $second = $this->technician('Second Lead');
-        $crew = $this->technician('Task Holder');
-
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $first->id,
-            'agreed_compensation' => 20000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
-
-        $task = ServiceSubTask::create([
-            'service_request_id' => $job->id,
-            'title' => 'Carpentry',
-            'status' => ServiceSubTask::STATUS_PENDING,
-        ]);
-        $this->actingAs($this->admin)->post("/admin/sub-tasks/{$task->id}/assign", [
-            'technician_id' => $crew->id,
-            'agreed_compensation' => 5000,
-        ]);
-
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $second->id,
-            'agreed_compensation' => 25000,
-            // The outgoing lead carries no task of his own here, so what
-            // happens to his fee is a decision the change has to carry.
-            'outgoing_lead_fee' => 'keep',
-        ]);
-
-        $taskAssignment = JobAssignment::where('service_sub_task_id', $task->id)
-            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
-            ->first();
-
-        $this->assertNotNull($taskAssignment, 'The task holder lost their assignment.');
-        $this->assertSame($crew->id, (int) $taskAssignment->technician_id);
-        $this->assertSame('5000.00', (string) $taskAssignment->agreed_compensation);
-        $this->assertSame($crew->id, (int) $task->fresh()->technician_id);
+        $this->assertNull($task->fresh()->technician_id);
+        $this->assertSame(0.0, $this->committedLabour($job->fresh()));
     }
 }

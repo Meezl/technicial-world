@@ -369,8 +369,19 @@
                             <template v-else-if="pendingClaimFor(task).revised_by_lead_at && isLeadTechnician">
                                 you answered the project team's query; it is back with them.
                             </template>
-                            <template v-else-if="pendingClaimFor(task).submitted_by === technician.user_id">
+                            <!-- Whose desk it is actually on. The lead cannot
+                                 ratify his own work, so his goes straight to
+                                 the office; a crew member's waits for the lead
+                                 first, and telling him the office had it sent
+                                 him chasing the wrong people. -->
+                            <template v-else-if="pendingClaimFor(task).submitted_by === technician.user_id && isLeadTechnician">
                                 you wrote this, so the project team ratifies it.
+                            </template>
+                            <template v-else-if="pendingClaimFor(task).submitted_by === technician.user_id && job.lead_technician_id">
+                                your lead signs this off before the office sees it.
+                            </template>
+                            <template v-else-if="pendingClaimFor(task).submitted_by === technician.user_id">
+                                awaiting the project team.
                             </template>
                             <template v-else-if="isLeadTechnician">awaiting the project team.</template>
                             <template v-else>awaiting approval.</template>

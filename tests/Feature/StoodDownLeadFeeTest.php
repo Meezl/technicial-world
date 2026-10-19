@@ -82,7 +82,14 @@ class StoodDownLeadFeeTest extends TestCase
             ->first();
     }
 
-    /** A supervising lead on a fee, with the crew's work held by somebody else. */
+    /**
+     * A job from before a lead had to hold a task: somebody supervising on a
+     * fee, with all the work held by others.
+     *
+     * Built directly, because the staffing route refuses to create this shape
+     * now — which is the point. The disposition it asks for exists for the
+     * jobs that were already carrying it.
+     */
     private function supervisedJob(Technician $supervisor, Technician $crew): ServiceRequest
     {
         $job = $this->job();
@@ -97,12 +104,38 @@ class StoodDownLeadFeeTest extends TestCase
             'order' => 1,
         ]);
 
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
+        $job->update(['lead_technician_id' => $supervisor->id, 'technician_id' => $supervisor->id]);
+
+        JobAssignment::create([
+            'service_request_id' => $job->id,
             'technician_id' => $supervisor->id,
+            'assigned_by' => $this->admin->id,
             'agreed_compensation' => 20000,
+            'status' => JobAssignment::STATUS_ACCEPTED,
+            'role_on_job' => ServiceRequest::ROSTER_LEAD_ROLE,
         ]);
 
-        return $job;
+        return $job->fresh();
+    }
+
+    /** The incoming lead needs a task of his own before he can take the role. */
+    private function taskFor(ServiceRequest $job, Technician $tech, string $title, float $fee = 25000): ServiceSubTask
+    {
+        $task = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => $title,
+            'status' => ServiceSubTask::STATUS_PENDING,
+            'order' => $job->subTasks()->count() + 1,
+        ]);
+
+        $this->actingAs($this->admin)
+            ->post("/admin/sub-tasks/{$task->id}/assign", [
+                'technician_id' => $tech->id,
+                'agreed_compensation' => $fee,
+            ])
+            ->assertSessionHasNoErrors();
+
+        return $task->fresh();
     }
 
     public function test_changing_the_lead_is_refused_until_the_fee_is_decided(): void
@@ -111,11 +144,11 @@ class StoodDownLeadFeeTest extends TestCase
         $crew = $this->technician('Carpenter');
         $successor = $this->technician('New Lead');
         $job = $this->supervisedJob($supervisor, $crew);
+        $this->taskFor($job, $successor, 'Successor Task');
 
         $this->actingAs($this->admin)
             ->post("/admin/jobs/{$job->id}/assign-lead", [
                 'technician_id' => $successor->id,
-                'agreed_compensation' => 25000,
             ])
             ->assertSessionHas('error');
 
@@ -132,11 +165,11 @@ class StoodDownLeadFeeTest extends TestCase
         $crew = $this->technician('Carpenter');
         $successor = $this->technician('New Lead');
         $job = $this->supervisedJob($supervisor, $crew);
+        $this->taskFor($job, $successor, 'Successor Task');
 
         $this->actingAs($this->admin)
             ->post("/admin/jobs/{$job->id}/assign-lead", [
                 'technician_id' => $successor->id,
-                'agreed_compensation' => 25000,
                 'outgoing_lead_fee' => 'release',
             ])
             ->assertSessionHasNoErrors();
@@ -159,11 +192,11 @@ class StoodDownLeadFeeTest extends TestCase
         $crew = $this->technician('Carpenter');
         $successor = $this->technician('New Lead');
         $job = $this->supervisedJob($supervisor, $crew);
+        $this->taskFor($job, $successor, 'Successor Task');
 
         $this->actingAs($this->admin)
             ->post("/admin/jobs/{$job->id}/assign-lead", [
                 'technician_id' => $successor->id,
-                'agreed_compensation' => 25000,
                 'outgoing_lead_fee' => 'keep',
             ])
             ->assertSessionHasNoErrors();
@@ -182,10 +215,10 @@ class StoodDownLeadFeeTest extends TestCase
         $crew = $this->technician('Carpenter');
         $successor = $this->technician('New Lead');
         $job = $this->supervisedJob($supervisor, $crew);
+        $this->taskFor($job, $successor, 'Successor Task');
 
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $successor->id,
-            'agreed_compensation' => 25000,
             'outgoing_lead_fee' => 'keep',
         ]);
 
@@ -232,17 +265,19 @@ class StoodDownLeadFeeTest extends TestCase
 
         $job->update(['lead_technician_id' => $workingLead->id, 'technician_id' => $workingLead->id]);
 
-        // No disposition sent, and none needed: his money is against work he
-        // is still doing.
+        // The successor needs work of his own before he can take the role.
+        $this->taskFor($job, $successor, 'Paint Work', 25000);
+
+        // No disposition sent, and none needed: the outgoing lead's money is
+        // against work he is still doing.
         $this->actingAs($this->admin)
             ->post("/admin/jobs/{$job->id}/assign-lead", [
                 'technician_id' => $successor->id,
-                'agreed_compensation' => 25000,
             ])
             ->assertSessionHasNoErrors();
 
         $this->assertSame($successor->id, (int) $job->fresh()->lead_technician_id);
-        $this->assertSame('10000.00', (string) $job->fresh()->subTasks()->first()->agreed_compensation);
+        $this->assertSame('10000.00', (string) $job->fresh()->subTasks()->orderBy('id')->first()->agreed_compensation);
         $this->assertSame([], $job->fresh()->feesWithoutWork());
     }
 }

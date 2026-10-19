@@ -3294,6 +3294,11 @@
                          it is made. Both halves used to be silent: the outgoing
                          lead disappeared off the job, and the incoming one
                          arrived on the outgoing one's fee. -->
+                    <p v-if="selectedTechnician && !selectedLeadCandidateSubTask" class="lead-notice lead-notice-blocked">
+                        <i class="fas fa-triangle-exclamation"></i>
+                        {{ selectedTechnician?.user?.name }} holds no task on this job, and a lead carries work
+                        of his own. Give him one of the tasks first — or cut a new one for him — then make him lead.
+                    </p>
                     <p v-if="leadPromotionFromOwnTask" class="lead-notice">
                         <i class="fas fa-circle-info"></i>
                         {{ selectedTechnician?.user?.name }} already holds
@@ -3339,7 +3344,11 @@
                         </label>
                     </div>
 
-                    <div class="form-row assignment-finance-row" v-if="!leadPromotionFromOwnTask">
+                    <!-- A lead carries a task, and his fee is on that task,
+                         so there is nothing to agree here. The field used to
+                         open a second payable beside the work he was already
+                         being paid for. -->
+                    <div class="form-row assignment-finance-row" v-if="false">
                         <div class="form-group">
                             <label>Lead Technician Dues (KSH)</label>
                             <input
@@ -4916,6 +4925,10 @@ const canSubmitAssignment = computed(() => {
     // whichever way it goes, somebody has to have chosen it.
     if (outgoingLeadFeeNeedsDecision.value && !outgoingLeadFee.value) return false
 
+    // A lead carries a task of his own. Without one there is nothing to make
+    // him answerable for, and the server refuses it.
+    if (assignmentContext.value === 'lead' && !selectedLeadCandidateSubTask.value) return false
+
     // Nothing is committed by a promotion off the job's own task, so the
     // labour budget has no say in it.
     if (leadPromotionFromOwnTask.value) return true
@@ -5350,7 +5363,6 @@ const assignLeadTechnician = () => {
 
     router.post(`/admin/jobs/${props.job.id}/assign-lead`, {
         technician_id: selectedTechnician.value.id,
-        agreed_compensation: normalizedAssignmentCompensation.value,
         compensation_notes: assignmentForm.compensation_notes,
         outgoing_lead_fee: outgoingLeadFeeNeedsDecision.value ? outgoingLeadFee.value : null,
     }, {
@@ -5847,6 +5859,12 @@ defineOptions({
 </script>
 
 <style>
+.lead-notice-blocked {
+    border: 1px solid #fecaca;
+    background: #fef2f2;
+    color: #991b1b;
+}
+
 .lead-notice-decide {
     display: grid;
     gap: 0.6rem;

@@ -231,38 +231,32 @@ class LeadChangeProgressInvarianceTest extends TestCase
         $this->assertSame($before, $this->snapshot($job), 'Passing the lead back and forth moved a percentage.');
     }
 
-    public function test_a_lead_declining_their_assignment_leaves_every_percentage_alone(): void
+    public function test_a_technician_declining_their_task_leaves_every_percentage_alone(): void
     {
         $job = $this->job();
-        // A supervising lead, carrying no task of his own — the shape that
-        // holds a place of its own to decline. Somebody promoted off a task
-        // has no separate lead place to walk away from; he would be taken off
-        // the task instead, which is a different act.
-        $supervisor = $this->technician('Supervising Lead');
         $carpenter = $this->technician('Carpenter');
         $painter = $this->technician('Painter');
 
         $this->subTask($job, 'Carpentry Work', $carpenter, 45, 1);
-        $this->subTask($job, 'Paint Work', $painter, 63, 2);
+        $paint = $this->subTask($job, 'Paint Work', $painter, 63, 2);
 
-        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
-            'technician_id' => $supervisor->id,
-            'agreed_compensation' => 20000,
+        $place = JobAssignment::create([
+            'service_request_id' => $job->id,
+            'service_sub_task_id' => $paint->id,
+            'technician_id' => $painter->id,
+            'assigned_by' => $this->admin->id,
+            'agreed_compensation' => 45000,
+            'status' => JobAssignment::STATUS_PENDING,
         ]);
 
         $before = $this->seededSnapshot($job);
 
-        // Walking away empties the role; it says nothing about the work that
-        // has already been done on the job.
-        $assignment = JobAssignment::where('service_request_id', $job->id)
-            ->whereNull('service_sub_task_id')
-            ->where('technician_id', $supervisor->id)
-            ->firstOrFail();
+        // Walking away leaves the task needing somebody. It says nothing
+        // about the work already done on it, which the client has been shown.
+        app(AssignmentResponseService::class)->decline($place, 'Double booked.');
 
-        app(AssignmentResponseService::class)->decline($assignment, 'Double booked.');
-
-        $this->assertNull($job->fresh()->lead_technician_id);
-        $this->assertSame($before, $this->snapshot($job), 'A declined lead assignment moved a percentage.');
+        $this->assertNull($paint->fresh()->technician_id, 'The task should be free for somebody else.');
+        $this->assertSame($before, $this->snapshot($job), 'A declined task moved a percentage.');
     }
 
     /**

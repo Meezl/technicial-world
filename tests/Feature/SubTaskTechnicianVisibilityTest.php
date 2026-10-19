@@ -1738,18 +1738,27 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             'other_budget' => 0,
         ]);
 
-        foreach (['Second fix wiring', 'HVAC ducting'] as $title) {
+        // The lead's own task goes up with the rest: he reports on the whole
+        // job and carries work of his own, so the role cannot be given to
+        // somebody holding nothing.
+        foreach (['Containment', 'Second fix wiring', 'HVAC ducting'] as $title) {
             $this->actingAs($admin)
                 ->post(route('admin.sub-tasks.store', $job), ['title' => $title])
                 ->assertSessionHasNoErrors();
         }
 
-        [$wiring, $hvac] = $job->subTasks()->orderBy('order')->get()->all();
+        [$containment, $wiring, $hvac] = $job->subTasks()->orderBy('order')->get()->all();
+
+        $this->actingAs($admin)
+            ->post(route('admin.sub-tasks.assign', $containment), [
+                'technician_id' => $lead->id,
+                'agreed_compensation' => 90000,
+            ])
+            ->assertSessionHasNoErrors();
 
         $this->actingAs($admin)
             ->post(route('admin.jobs.assign-lead', $job), [
                 'technician_id' => $lead->id,
-                'agreed_compensation' => 90000,
             ])
             ->assertSessionHasNoErrors();
 
