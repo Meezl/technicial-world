@@ -91,6 +91,9 @@ class LeadReassignmentIntegrityTest extends TestCase
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $first->id,
             'agreed_compensation' => 20000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
 
         // A right-hand man, added after the lead, so his row is the newest
@@ -106,6 +109,9 @@ class LeadReassignmentIntegrityTest extends TestCase
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $second->id,
             'agreed_compensation' => 25000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
 
         // Changing who leads says nothing about the right-hand man. His place
@@ -132,10 +138,16 @@ class LeadReassignmentIntegrityTest extends TestCase
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $first->id,
             'agreed_compensation' => 20000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $second->id,
             'agreed_compensation' => 25000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
 
         $this->assertSame($second->id, (int) $job->fresh()->lead_technician_id);
@@ -175,6 +187,9 @@ class LeadReassignmentIntegrityTest extends TestCase
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $first->id,
             'agreed_compensation' => 20000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
 
         $subTask = ServiceSubTask::create([
@@ -195,6 +210,9 @@ class LeadReassignmentIntegrityTest extends TestCase
             ->post("/admin/jobs/{$job->id}/assign-lead", [
                 'technician_id' => $painter->id,
                 'agreed_compensation' => 20000,
+                // The outgoing lead carries no task of his own here, so what
+                // happens to his fee is a decision the change has to carry.
+                'outgoing_lead_fee' => 'keep',
             ])
             ->assertSessionHasNoErrors();
 
@@ -222,6 +240,9 @@ class LeadReassignmentIntegrityTest extends TestCase
             $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
                 'technician_id' => $tech->id,
                 'agreed_compensation' => $fee,
+                // The outgoing lead carries no task of his own here, so what
+                // happens to his fee is a decision the change has to carry.
+                'outgoing_lead_fee' => 'keep',
             ]);
         }
 
@@ -247,6 +268,9 @@ class LeadReassignmentIntegrityTest extends TestCase
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $first->id,
             'agreed_compensation' => 20000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/crew", [
             'technician_id' => $hand->id,
@@ -258,6 +282,9 @@ class LeadReassignmentIntegrityTest extends TestCase
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $hand->id,
             'agreed_compensation' => 24000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
 
         $this->assertSame($hand->id, (int) $job->fresh()->lead_technician_id);
@@ -291,12 +318,18 @@ class LeadReassignmentIntegrityTest extends TestCase
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $first->id,
             'agreed_compensation' => 250000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
 
         $this->actingAs($this->admin)
             ->post("/admin/jobs/{$job->id}/assign-lead", [
                 'technician_id' => $second->id,
                 'agreed_compensation' => 300000,
+                // The outgoing lead carries no task of his own here, so what
+                // happens to his fee is a decision the change has to carry.
+                'outgoing_lead_fee' => 'keep',
             ])
             ->assertSessionHasErrors('agreed_compensation');
 
@@ -308,6 +341,9 @@ class LeadReassignmentIntegrityTest extends TestCase
             ->post("/admin/jobs/{$job->id}/assign-lead", [
                 'technician_id' => $second->id,
                 'agreed_compensation' => 150000,
+                // The outgoing lead carries no task of his own here, so what
+                // happens to his fee is a decision the change has to carry.
+                'outgoing_lead_fee' => 'keep',
             ])
             ->assertSessionHasNoErrors();
 
@@ -336,11 +372,17 @@ class LeadReassignmentIntegrityTest extends TestCase
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $first->id,
             'agreed_compensation' => 20000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
 
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $second->id,
             'agreed_compensation' => 25000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
 
         // Still on the job, still on his fee, but now carrying no trackable
@@ -387,6 +429,9 @@ class LeadReassignmentIntegrityTest extends TestCase
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $first->id,
             'agreed_compensation' => 250000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/crew", [
             'technician_id' => $hand->id,
@@ -400,6 +445,9 @@ class LeadReassignmentIntegrityTest extends TestCase
             ->post("/admin/jobs/{$job->id}/assign-lead", [
                 'technician_id' => $this->technician('Third Lead')->id,
                 'agreed_compensation' => 320000,
+                // The outgoing lead carries no task of his own here, so what
+                // happens to his fee is a decision the change has to carry.
+                'outgoing_lead_fee' => 'keep',
             ])
             ->assertSessionHasErrors('agreed_compensation');
 
@@ -417,12 +465,18 @@ class LeadReassignmentIntegrityTest extends TestCase
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $lead->id,
             'agreed_compensation' => 20000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
         $placeId = $this->place($job, $lead)->id;
 
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $lead->id,
             'agreed_compensation' => 26000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
 
         $place = $this->place($job, $lead);
@@ -443,6 +497,9 @@ class LeadReassignmentIntegrityTest extends TestCase
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $lead->id,
             'agreed_compensation' => 20000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
 
         $task = ServiceSubTask::create([
@@ -485,6 +542,9 @@ class LeadReassignmentIntegrityTest extends TestCase
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $first->id,
             'agreed_compensation' => 20000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
 
         $task = ServiceSubTask::create([
@@ -500,6 +560,9 @@ class LeadReassignmentIntegrityTest extends TestCase
         $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
             'technician_id' => $second->id,
             'agreed_compensation' => 25000,
+            // The outgoing lead carries no task of his own here, so what
+            // happens to his fee is a decision the change has to carry.
+            'outgoing_lead_fee' => 'keep',
         ]);
 
         $taskAssignment = JobAssignment::where('service_sub_task_id', $task->id)

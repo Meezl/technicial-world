@@ -842,6 +842,60 @@ class ServiceRequest extends Model
      *
      * @return array<int, array{ref: int, name: string, national_id: string|null, photo_url: string|null, role: string, attendance: string, is_lead: bool}>
      */
+    /**
+     * People this job owes money with no work on it to show for it.
+     *
+     * A lead who supervises and carries no task of his own is paid for
+     * carrying the job. Take the job off him and the fee is against nothing —
+     * he is on the roster, owed money, and answerable for no work. Ops either
+     * cuts him a task, which his place folds into and the fee goes with, or
+     * the fee comes off.
+     *
+     * Derived rather than flagged on the row, so it cannot drift out of step
+     * with the thing it describes: it stops being true the moment somebody
+     * gives him a task, with nothing to remember to clear.
+     *
+     * Whoever leads or carries the job is excluded — their fee is against
+     * carrying it, which is work, and they are doing it.
+     */
+    public function feesWithoutWork(): array
+    {
+        $assignments = $this->jobAssignments()
+            ->whereNull('service_sub_task_id')
+            ->whereIn('status', self::LIVE_ASSIGNMENT_STATUSES)
+            ->where('agreed_compensation', '>', 0)
+            ->with('technician.user')
+            ->get();
+
+        if ($assignments->isEmpty()) {
+            return [];
+        }
+
+        $staffedTaskHolders = $this->subTasks()
+            ->whereNotNull('technician_id')
+            ->pluck('technician_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        return $assignments
+            ->reject(function ($assignment) use ($staffedTaskHolders) {
+                $technicianId = (int) $assignment->technician_id;
+
+                return $this->isLeadTechnician($technicianId)
+                    || (int) $this->technician_id === $technicianId
+                    || in_array($technicianId, $staffedTaskHolders, true);
+            })
+            ->map(fn ($assignment) => [
+                'assignment_id' => $assignment->id,
+                'technician_id' => (int) $assignment->technician_id,
+                'name' => $assignment->technician?->user?->name ?? 'Unknown technician',
+                'amount' => (float) $assignment->agreed_compensation,
+                'role_on_job' => $assignment->role_on_job,
+            ])
+            ->values()
+            ->all();
+    }
+
     public function attendanceRoster(): array
     {
         $assignments = $this->relationLoaded('liveAssignments')

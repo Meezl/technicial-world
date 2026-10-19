@@ -541,6 +541,29 @@
                             </div>
                         </div>
 
+                        <!-- The other half of the stand-down decision: a fee
+                             kept on the promise of a task that was never cut.
+                             Derived, so it clears itself the moment somebody
+                             gives him work. -->
+                        <div v-if="feesWithoutWork.length" class="fees-without-work">
+                            <i class="fas fa-triangle-exclamation"></i>
+                            <div>
+                                <strong>
+                                    {{ feesWithoutWork.length === 1 ? 'One fee has' : `${feesWithoutWork.length} fees have` }}
+                                    no work on this job behind {{ feesWithoutWork.length === 1 ? 'it' : 'them' }}.
+                                </strong>
+                                <ul>
+                                    <li v-for="entry in feesWithoutWork" :key="entry.assignment_id">
+                                        {{ entry.name }} — KSH {{ formatCurrency(entry.amount) }}
+                                    </li>
+                                </ul>
+                                <p>
+                                    Usually a lead who was stood down and never given a task. Give them one,
+                                    or take the fee off — until then it stays committed against the labour budget.
+                                </p>
+                            </div>
+                        </div>
+
                         <div class="roster-scroll">
                             <table class="roster-table">
                                 <thead>
@@ -3278,12 +3301,43 @@
                         KSH {{ formatCurrency(selectedLeadCandidateSubTask?.agreed_compensation || 0) }}.
                         Leading is a role, not a second fee, so nothing more is committed.
                     </p>
-                    <p v-if="job.lead_technician && selectedTechnician && selectedTechnician.id !== job.lead_technician_id" class="lead-notice">
+                    <p
+                        v-if="job.lead_technician && selectedTechnician && selectedTechnician.id !== job.lead_technician_id && !outgoingLeadFeeNeedsDecision"
+                        class="lead-notice"
+                    >
                         <i class="fas fa-user-minus"></i>
                         {{ job.lead_technician.user?.name }} stays on the job as an ordinary technician and
                         keeps their agreed fee of KSH {{ formatCurrency(leadAgreedCompensation) }}. Take them
                         off the job separately if they are leaving it.
                     </p>
+
+                    <!-- A lead carrying no task of his own is paid for
+                         carrying the job. Take the job off him and the fee is
+                         against nothing, so the decision is made here, by the
+                         person making the change, rather than left for
+                         somebody to find in the labour budget later. -->
+                    <div v-if="outgoingLeadFeeNeedsDecision" class="lead-notice lead-notice-decide">
+                        <p>
+                            <i class="fas fa-circle-exclamation"></i>
+                            <strong>{{ job.lead_technician.user?.name }} holds no task on this job.</strong>
+                            His KSH {{ formatCurrency(leadAgreedCompensation) }} is for carrying it, and you are
+                            taking that off him. He stays on the crew either way.
+                        </p>
+                        <label class="lead-fee-option">
+                            <input type="radio" value="keep" v-model="outgoingLeadFee">
+                            <span>
+                                <strong>Keep the fee — I will give him a task</strong>
+                                The job will show the fee as having no work behind it until you do.
+                            </span>
+                        </label>
+                        <label class="lead-fee-option">
+                            <input type="radio" value="release" v-model="outgoingLeadFee">
+                            <span>
+                                <strong>Take the fee off the job</strong>
+                                He stays on the roster and the gate list. Agree a new fee if you later give him work.
+                            </span>
+                        </label>
+                    </div>
 
                     <div class="form-row assignment-finance-row" v-if="!leadPromotionFromOwnTask">
                         <div class="form-group">
@@ -3397,6 +3451,10 @@ const props = defineProps({
         default: () => ({})
     },
     technicianVisibleKinds: {
+        type: Array,
+        default: () => []
+    },
+    feesWithoutWork: {
         type: Array,
         default: () => []
     },
@@ -4710,6 +4768,23 @@ const leadAgreedCompensation = computed(() => {
     return Number(leadSubTask.value?.agreed_compensation || 0)
 })
 
+// The outgoing lead's standing, which decides whether changing the lead needs
+// a decision about his money. A lead who supervises and carries no task is
+// paid for carrying the job; take the job off him and the fee is against
+// nothing.
+const outgoingLeadTask = computed(() => {
+    const leadId = Number(props.job.lead_technician_id)
+    if (!leadId) return null
+    return (props.job.sub_tasks || []).find((task) => Number(task.technician_id) === leadId) || null
+})
+const outgoingLeadFeeNeedsDecision = computed(() => {
+    if (assignmentContext.value !== 'lead') return false
+    if (!props.job.lead_technician_id) return false
+    if (!selectedTechnician.value || Number(selectedTechnician.value.id) === Number(props.job.lead_technician_id)) return false
+
+    return !outgoingLeadTask.value && Number(currentLeadAssignment.value?.agreed_compensation || 0) > 0
+})
+
 // Where the technician picked in the Change Lead modal already stands on this
 // job. The fee the modal offers comes from here rather than from the outgoing
 // lead: a man being moved up brings his own figure with him, and seeding the
@@ -4836,6 +4911,10 @@ const assignmentOverBudget = computed(() => {
 })
 const canSubmitAssignment = computed(() => {
     if (!selectedTechnician.value) return false
+
+    // What happens to a supervising lead's fee is a decision, not a default:
+    // whichever way it goes, somebody has to have chosen it.
+    if (outgoingLeadFeeNeedsDecision.value && !outgoingLeadFee.value) return false
 
     // Nothing is committed by a promotion off the job's own task, so the
     // labour budget has no say in it.
@@ -5233,7 +5312,10 @@ const closeSingleAssignModal = () => {
 }
 
 // Lead technician methods
+const outgoingLeadFee = ref('')
+
 const openLeadAssignModal = () => {
+    outgoingLeadFee.value = ''
     assignmentContext.value = 'lead'
     selectedTechnician.value = findTechnicianById(props.job.lead_technician_id)
     seedAssignmentForm({
@@ -5270,6 +5352,7 @@ const assignLeadTechnician = () => {
         technician_id: selectedTechnician.value.id,
         agreed_compensation: normalizedAssignmentCompensation.value,
         compensation_notes: assignmentForm.compensation_notes,
+        outgoing_lead_fee: outgoingLeadFeeNeedsDecision.value ? outgoingLeadFee.value : null,
     }, {
         preserveState: false,
         onSuccess: () => {
@@ -5764,6 +5847,54 @@ defineOptions({
 </script>
 
 <style>
+.lead-notice-decide {
+    display: grid;
+    gap: 0.6rem;
+}
+
+.lead-fee-option {
+    display: flex;
+    gap: 0.6rem;
+    align-items: flex-start;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid #d7dee7;
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+.lead-fee-option span {
+    display: grid;
+    gap: 0.15rem;
+    font-size: 0.82rem;
+    line-height: 1.4;
+}
+
+.lead-fee-option strong {
+    font-size: 0.86rem;
+}
+
+.fees-without-work {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+    padding: 0.85rem 1rem;
+    border: 1px solid #fde047;
+    border-radius: 10px;
+    background: #fef9c3;
+    color: #713f12;
+    font-size: 0.84rem;
+    line-height: 1.5;
+}
+
+.fees-without-work ul {
+    margin: 0.35rem 0;
+    padding-left: 1.1rem;
+}
+
+.fees-without-work p {
+    margin: 0.35rem 0 0;
+}
 
 /*
  * Flash messages for this page. Pinned to the viewport rather than placed in

@@ -166,6 +166,22 @@ deliberately, either way.
    affected jobs close?
 4. Weighted or unweighted (Phase 5).
 
+## Settled since
+
+**A supervising lead's fee does not survive him being stood down unanswered.**
+A lead carrying no task of his own is paid for carrying the job; take the job
+off him and the fee is against nothing. Changing the lead now refuses until
+ops says which: keep the fee, with a task to follow, or take it off the job.
+He stays on the crew either way — standing a lead down has never been the
+same as removing somebody.
+
+A kept fee shows on the job as having no work behind it (`feesWithoutWork`,
+derived rather than flagged, so it clears itself the moment somebody gives him
+a task and there is nothing to remember to tick off). Cutting him a task folds
+his bare place into it and carries the fee across. A lead who already holds a
+task is never asked — his money is against work he is still doing. See
+`StoodDownLeadFeeTest`.
+
 ## Explicitly not doing
 
 - **Not** putting a `progress_percentage` on the lead's `JobAssignment`. It

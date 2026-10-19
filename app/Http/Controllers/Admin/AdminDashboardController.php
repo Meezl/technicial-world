@@ -482,6 +482,9 @@ class AdminDashboardController extends Controller
             // Who the client is expecting and when — the same reading the
             // notice email and the client's own page use.
             'attendanceRoster' => $serviceRequest->attendanceRoster(),
+            // Money committed on this job with no work behind it — usually a
+            // lead who was stood down and never given a task.
+            'feesWithoutWork' => $serviceRequest->feesWithoutWork(),
             'attendanceWindow' => $serviceRequest->attendanceWindow(),
             // The outbox, and whether what is on screen is still what the
             // client is holding. Sending left a flash that vanished on the
@@ -1655,6 +1658,9 @@ class AdminDashboardController extends Controller
             'technician_id' => ['required', 'exists:technicians,id', new IsTechnician('the lead role on this job')],
             'agreed_compensation' => 'required|numeric|min:0',
             'compensation_notes' => 'nullable|string|max:1000',
+            // What becomes of the outgoing lead's fee when he is carrying no
+            // work of his own. Only consulted in that case — see below.
+            'outgoing_lead_fee' => 'nullable|in:keep,release',
         ]);
 
         // Staffing a project lead-first reached none of the approval checks the
@@ -1694,6 +1700,45 @@ class AdminDashboardController extends Controller
         // somebody else's money. The task keeps its fee, the man keeps his
         // task, and only the badge moves.
         $promotesFromOwnTask = $incomingTask && !$incomingPlace;
+
+        // A lead who supervises and carries no task of his own is being paid
+        // for carrying the job. Take the job off him and the fee is paid for
+        // nothing — he is on the roster, on the gate list, owed money, and
+        // answerable for no work. Leaving that to be noticed later is how a
+        // labour budget quietly stays committed to somebody with nothing to
+        // do, so the choice is made here, by the person making the change,
+        // while they still have the context to make it.
+        //
+        // Two ways out, and ops picks one: cut him a task, which his place
+        // then folds into and his fee goes with, or take the fee off the job.
+        // Either way he stays on the crew — standing a lead down has never
+        // been the same as removing somebody, and still is not.
+        $outgoingPlace = $isLeadChange
+            ? $this->findActivePrimaryAssignment($serviceRequest, (int) $currentLeadTechnicianId)
+            : null;
+
+        $outgoingHoldsTask = $isLeadChange && $serviceRequest->subTasks()
+            ->where('technician_id', $currentLeadTechnicianId)
+            ->exists();
+
+        $outgoingFee = (float) ($outgoingPlace?->agreed_compensation ?? 0);
+        $outgoingNeedsDisposition = $isLeadChange && !$outgoingHoldsTask && $outgoingFee > 0;
+        $releaseOutgoingFee = false;
+
+        if ($outgoingNeedsDisposition) {
+            $disposition = $request->input('outgoing_lead_fee');
+
+            if (!in_array($disposition, ['keep', 'release'], true)) {
+                return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', sprintf(
+                    '%s leads this job without a task of his own, on KSH %s. Say what happens to that fee '
+                    . 'before changing the lead: give him a task to carry it, or take it off the job.',
+                    $outgoingPlace?->technician?->user?->name ?? 'The outgoing lead',
+                    number_format($outgoingFee, 2)
+                ));
+            }
+
+            $releaseOutgoingFee = $disposition === 'release';
+        }
 
         if (!$promotesFromOwnTask) {
             // The outgoing lead is relegated rather than removed, so their fee
@@ -1743,7 +1788,12 @@ class AdminDashboardController extends Controller
         // relegated row is already an ordinary crew place by the time anything
         // reads the roster back.
         if ($isLeadChange) {
-            $this->relegateOutgoingLead($serviceRequest, (int) $currentLeadTechnicianId, $technician);
+            $this->relegateOutgoingLead(
+                $serviceRequest,
+                (int) $currentLeadTechnicianId,
+                $technician,
+                $releaseOutgoingFee
+            );
         }
 
         if (!$promotesFromOwnTask) {
@@ -1795,7 +1845,8 @@ class AdminDashboardController extends Controller
     private function relegateOutgoingLead(
         ServiceRequest $serviceRequest,
         int $outgoingTechnicianId,
-        Technician $incomingLead
+        Technician $incomingLead,
+        bool $releaseFee = false
     ): void {
         $place = $this->findActivePrimaryAssignment($serviceRequest, $outgoingTechnicianId);
 
@@ -1807,6 +1858,21 @@ class AdminDashboardController extends Controller
 
         if (!$place->role_on_job || $place->role_on_job === ServiceRequest::ROSTER_LEAD_ROLE) {
             $update['role_on_job'] = 'Technician';
+        }
+
+        // He stays on the job either way. What goes is the money, because
+        // there is no longer any work on this job it is against — and a fee
+        // with no work behind it is the thing ops asked not to be left
+        // holding.
+        if ($releaseFee) {
+            $update['agreed_compensation'] = 0;
+            $update['paid_through_lead'] = true;
+            $update['compensation_notes'] = sprintf(
+                'Fee taken off when %s took the job over on %s — no task of his own on this job to carry it. '
+                . 'Give him a task and agree a fee against that.',
+                $incomingLead->user?->name ?? 'another technician',
+                now()->format('d M Y')
+            );
         }
 
         if ($update) {
@@ -1821,7 +1887,8 @@ class AdminDashboardController extends Controller
             // Said plainly in the log, because the old behaviour was the
             // opposite and somebody reading back will want to know which one
             // this job got.
-            'fee_retained' => (float) ($place->agreed_compensation ?? 0),
+            'fee_retained' => $releaseFee ? 0.0 : (float) ($place->agreed_compensation ?? 0),
+            'fee_released' => $releaseFee,
             'stood_down_by' => auth()->id(),
         ]);
     }
