@@ -934,6 +934,88 @@ class ProgressService
     }
 
     /**
+     * The office tidies a settled report without re-arguing the figure.
+     *
+     * A report the lead has signed off left the office two choices: overrule
+     * the lead, or remove the report. Both are heavy, and neither is what is
+     * usually wanted — a photo of a whiteboard that says nothing, a note that
+     * reads badly to the client, a picture worth adding before this goes out.
+     * Ops was overruling leads it did not disagree with, or deleting work
+     * that had genuinely been done, to get at the notes.
+     *
+     * So this is deliberately narrow. It touches what the report *says* and
+     * what it *shows*: the office's own note, the note the client reads, and
+     * the photographs. It does not touch the percentage, whose sign-off it
+     * carries, the sub-task, the job's figure or billing. Changing the figure
+     * is still overruling the lead, and still owes a reason.
+     *
+     * The notes keep their version history, so "what did the client actually
+     * see" stays answerable afterwards.
+     */
+    public function amendReport(
+        ProgressReport $report,
+        User $actor,
+        array $data,
+        array $photos = []
+    ): ProgressReport {
+        if (!in_array($actor->role, [User::ROLE_ADMIN, User::ROLE_PROJECT_MANAGER], true)) {
+            throw new \RuntimeException('Only the office may amend a report.');
+        }
+
+        return DB::transaction(function () use ($report, $actor, $data, $photos) {
+            $update = [];
+
+            foreach (['client_visible_notes', 'validation_notes'] as $field) {
+                if (!array_key_exists($field, $data)) {
+                    continue;
+                }
+
+                $this->recordNoteVersionIfChanged(
+                    $report,
+                    $actor->id,
+                    $field,
+                    $report->{$field},
+                    $data[$field]
+                );
+
+                $update[$field] = $data[$field];
+            }
+
+            if ($update) {
+                $report->update($update);
+            }
+
+            // Scoped through the report's own relation, so an id belonging to
+            // another report cannot be flipped from here.
+            $removed = 0;
+            if (!empty($data['remove_photo_ids'])) {
+                $removed = $report->photos()
+                    ->whereIn('id', $data['remove_photo_ids'])
+                    ->update(['removed_by_pm' => true]);
+            }
+
+            foreach ($photos as $photo) {
+                if ($photo instanceof UploadedFile) {
+                    $this->addPhoto($report, $photo, $actor->id, 'Added by the office');
+                }
+            }
+
+            AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, [
+                'office_amendment' => true,
+                'fields' => array_keys($update),
+                'photos_removed' => $removed,
+                'photos_added' => count($photos),
+                // Said plainly: the client may already be holding the version
+                // this replaces.
+                'already_released_to_client' => $report->released_to_client_at !== null,
+                'amended_by' => $actor->id,
+            ]);
+
+            return $report->fresh(['photos']);
+        });
+    }
+
+    /**
      * Overrule a lead technician's sign-off from the office.
      *
      * The office could always amend a lead-approved report — validate() sets

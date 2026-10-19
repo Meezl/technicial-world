@@ -712,6 +712,10 @@ Route::middleware(['auth'])->group(function () {
 // report out of circulation; it stays in the record, and a report a
 // technician has been paid against is refused.
 Route::middleware(['auth', 'role:admin,project_manager'])->group(function () {
+    // Tidying a settled report's notes and photographs, which is not the same
+    // act as disagreeing with its figure.
+    Route::post('/progress-reports/{progressReport}/amend', [\App\Http\Controllers\Admin\ProgressReportController::class, 'amend'])
+        ->name('progress-reports.amend');
     Route::delete('/progress-reports/{progressReport}', [\App\Http\Controllers\Admin\ProgressReportController::class, 'destroy'])
         ->name('progress-reports.destroy');
     Route::post('/progress-reports/{progressReport}/restore', [\App\Http\Controllers\Admin\ProgressReportController::class, 'restore'])

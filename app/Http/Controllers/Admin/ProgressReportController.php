@@ -21,6 +21,39 @@ class ProgressReportController extends Controller
     {
     }
 
+    /**
+     * Tidy a settled report — its notes and its photographs — without
+     * re-opening the argument about how far along the work is.
+     */
+    public function amend(Request $request, ProgressReport $progressReport)
+    {
+        $data = $request->validate([
+            'client_visible_notes' => 'nullable|string|max:2000',
+            'validation_notes' => 'nullable|string|max:2000',
+            'remove_photo_ids' => 'nullable|array',
+            'remove_photo_ids.*' => 'integer',
+            'photos' => 'nullable|array|max:6',
+            // Same rule as a technician's own upload: no `image`, because it
+            // uses getimagesize() and that cannot read HEIC.
+            'photos.*' => 'nullable|file|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
+        ]);
+
+        try {
+            $this->progress->amendReport(
+                $progressReport,
+                $request->user(),
+                $data,
+                $request->file('photos', [])
+            );
+        } catch (RuntimeException $e) {
+            return back()->withErrors(['report' => $e->getMessage()]);
+        }
+
+        return back()->with('success', $progressReport->fresh()->released_to_client_at
+            ? 'Report updated. The client was sent the earlier version, so tell them if this changes what they were told.'
+            : 'Report updated.');
+    }
+
     public function destroy(Request $request, ProgressReport $progressReport)
     {
         $data = $request->validate([
