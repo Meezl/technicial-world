@@ -9,12 +9,17 @@ use Illuminate\Console\Command;
 /**
  * Re-read every job's percentage and status from its validated reports.
  *
- * The rollup used to take the most recently validated report rather than the
- * highest, and averaged sub-tasks while ignoring the lead's whole-job report.
- * Jobs already stored the wrong numbers when that was fixed — a job reading
- * 20% with an 85% report validated against it, or showing "Completed"
- * because one sub-technician finished their slice. Fixing the rule does not
- * fix those rows; this does.
+ * The rollup has been wrong in both directions. It took the most recently
+ * validated report rather than the highest; then it let a lead's whole-job
+ * report stand above the sub-tasks it covered, so a job could read "100% —
+ * work is fully complete" above two tasks that had not been started. Jobs
+ * already stored the wrong numbers each time the rule changed. Fixing the
+ * rule does not fix those rows; this does — on a split job the figure comes
+ * back to the sub-task average, and a sign-off that no longer holds takes the
+ * job back to in progress.
+ *
+ * Expect this to lower some jobs. A job that was reading its lead's figure is
+ * being brought back to what its tasks actually say, which is the point.
  *
  * Billing is deliberately left alone. Milestones that already raised a
  * payment request keep it, and nothing re-fires.
