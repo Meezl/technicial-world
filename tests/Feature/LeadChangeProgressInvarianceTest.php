@@ -92,6 +92,27 @@ class LeadChangeProgressInvarianceTest extends TestCase
     }
 
     /**
+     * What the job has committed to pay for labour, read the way
+     * getLaborAllocationSummary reads it: every live place on the job, plus
+     * every staffed task's fee. Mirrored here rather than called, because the
+     * production method is protected on the controller — if the two ever
+     * diverge, that is worth knowing too.
+     */
+    private function committedLabour(ServiceRequest $job): float
+    {
+        $places = (float) $job->jobAssignments()
+            ->whereNull('service_sub_task_id')
+            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
+            ->sum('agreed_compensation');
+
+        $tasks = (float) $job->subTasks()
+            ->whereNotNull('technician_id')
+            ->sum('agreed_compensation');
+
+        return $places + $tasks;
+    }
+
+    /**
      * Every percentage on the job, in one comparable shape. Taken whole rather
      * than asserted field by field so a figure moving somewhere nobody thought
      * to look still fails the test.
@@ -213,6 +234,47 @@ class LeadChangeProgressInvarianceTest extends TestCase
     public function test_a_lead_declining_their_assignment_leaves_every_percentage_alone(): void
     {
         $job = $this->job();
+        // A supervising lead, carrying no task of his own — the shape that
+        // holds a place of its own to decline. Somebody promoted off a task
+        // has no separate lead place to walk away from; he would be taken off
+        // the task instead, which is a different act.
+        $supervisor = $this->technician('Supervising Lead');
+        $carpenter = $this->technician('Carpenter');
+        $painter = $this->technician('Painter');
+
+        $this->subTask($job, 'Carpentry Work', $carpenter, 45, 1);
+        $this->subTask($job, 'Paint Work', $painter, 63, 2);
+
+        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
+            'technician_id' => $supervisor->id,
+            'agreed_compensation' => 20000,
+        ]);
+
+        $before = $this->seededSnapshot($job);
+
+        // Walking away empties the role; it says nothing about the work that
+        // has already been done on the job.
+        $assignment = JobAssignment::where('service_request_id', $job->id)
+            ->whereNull('service_sub_task_id')
+            ->where('technician_id', $supervisor->id)
+            ->firstOrFail();
+
+        app(AssignmentResponseService::class)->decline($assignment, 'Double booked.');
+
+        $this->assertNull($job->fresh()->lead_technician_id);
+        $this->assertSame($before, $this->snapshot($job), 'A declined lead assignment moved a percentage.');
+    }
+
+    /**
+     * Payment is the other half of the same rule. The lead role is a
+     * reporting line, so handing it to somebody already on the crew settles
+     * nothing new: the outgoing lead keeps the fee agreed with him, the
+     * incoming one brings his own up with him, and the job's committed labour
+     * is exactly what it was.
+     */
+    public function test_a_role_swap_within_the_crew_commits_no_new_money(): void
+    {
+        $job = $this->job();
         $first = $this->technician('First Lead');
         $painter = $this->technician('Painter');
 
@@ -224,19 +286,56 @@ class LeadChangeProgressInvarianceTest extends TestCase
             'agreed_compensation' => 20000,
         ]);
 
-        $before = $this->seededSnapshot($job);
+        $before = $this->committedLabour($job->fresh());
 
-        // Walking away empties the role; it says nothing about the work that
-        // has already been done on the job.
-        $assignment = JobAssignment::where('service_request_id', $job->id)
-            ->whereNull('service_sub_task_id')
-            ->where('technician_id', $first->id)
-            ->firstOrFail();
+        // The painter already holds one of this job's tasks, so leading is a
+        // role he takes on, not a second payable.
+        $this->actingAs($this->admin)
+            ->post("/admin/jobs/{$job->id}/assign-lead", [
+                'technician_id' => $painter->id,
+                'agreed_compensation' => 20000,
+            ])
+            ->assertSessionHasNoErrors();
 
-        app(AssignmentResponseService::class)->decline($assignment, 'Double booked.');
+        $this->assertSame($painter->id, (int) $job->fresh()->lead_technician_id);
+        $this->assertSame(
+            $before,
+            $this->committedLabour($job->fresh()),
+            'Handing the lead to somebody already on the crew changed what the job owes.'
+        );
+    }
 
-        $this->assertNull($job->fresh()->lead_technician_id);
-        $this->assertSame($before, $this->snapshot($job), 'A declined lead assignment moved a percentage.');
+    /**
+     * And passing it back and forth cannot ratchet the figure up a little
+     * each time — the failure mode a role that carries its own fee would have.
+     */
+    public function test_passing_the_lead_back_and_forth_does_not_ratchet_the_bill(): void
+    {
+        $job = $this->job();
+        $first = $this->technician('First Lead');
+        $painter = $this->technician('Painter');
+
+        $this->subTask($job, 'Carpentry Work', $first, 45, 1);
+        $this->subTask($job, 'Paint Work', $painter, 63, 2);
+
+        $this->actingAs($this->admin)->post("/admin/jobs/{$job->id}/assign-lead", [
+            'technician_id' => $first->id,
+            'agreed_compensation' => 20000,
+        ]);
+
+        $before = $this->committedLabour($job->fresh());
+
+        foreach ([$painter, $first, $painter, $first] as $tech) {
+            $this->actingAs($this->admin)
+                ->post("/admin/jobs/{$job->id}/assign-lead", [
+                    'technician_id' => $tech->id,
+                    'agreed_compensation' => 20000,
+                ])
+                ->assertSessionHasNoErrors();
+        }
+
+        $this->assertSame($before, $this->committedLabour($job->fresh()));
+        $this->assertSame($before, $this->committedLabour($job->fresh()));
     }
 
     /**

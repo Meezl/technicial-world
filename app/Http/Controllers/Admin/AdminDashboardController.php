@@ -1670,14 +1670,20 @@ class AdminDashboardController extends Controller
 
         // Where the incoming technician already stands on this job. Both are
         // asked, because they mean different things: a bare crew place is the
-        // row the lead place is made out of, while a sub-task of their own is
+        // row the lead place is made out of, while a task of their own is
         // work they are already paid for separately.
+        //
+        // Who holds a task is read off the task itself, not off the
+        // assignment row beside it. The two are written together today, but
+        // the task is the authoritative record and the assignment is
+        // bookkeeping — and the cost of reading the wrong one is a second fee
+        // opened for a man the job is already paying, which is the exact
+        // thing this branch exists to prevent.
         $incomingPlace = $this->findActivePrimaryAssignment($serviceRequest, (int) $technician->id);
-        $incomingSubTaskPlace = $serviceRequest->jobAssignments()
-            ->whereNotNull('service_sub_task_id')
+        $incomingTask = $serviceRequest->subTasks()
             ->where('technician_id', $technician->id)
-            ->whereIn('status', ServiceRequest::LIVE_ASSIGNMENT_STATUSES)
-            ->orderByDesc('id')
+            ->orderBy('order')
+            ->orderBy('id')
             ->first();
 
         // Promoting somebody who already holds one of this job's tasks moves
@@ -1687,7 +1693,7 @@ class AdminDashboardController extends Controller
         // lead's figure — which is what used to happen — handed the new lead
         // somebody else's money. The task keeps its fee, the man keeps his
         // task, and only the badge moves.
-        $promotesFromOwnTask = $incomingSubTaskPlace && !$incomingPlace;
+        $promotesFromOwnTask = $incomingTask && !$incomingPlace;
 
         if (!$promotesFromOwnTask) {
             // The outgoing lead is relegated rather than removed, so their fee
@@ -1764,8 +1770,8 @@ class AdminDashboardController extends Controller
             $message = sprintf(
                 '%s is now the lead and keeps their own fee of KSH %s on "%s". No second fee was added.',
                 $technician->user?->name ?? 'The technician',
-                number_format((float) ($incomingSubTaskPlace->agreed_compensation ?? 0), 2),
-                $incomingSubTaskPlace->subTask?->title ?? 'their task'
+                number_format((float) ($incomingTask->agreed_compensation ?? 0), 2),
+                $incomingTask->title ?? 'their task'
             );
         }
 
