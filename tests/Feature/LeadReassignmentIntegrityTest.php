@@ -266,6 +266,80 @@ class LeadReassignmentIntegrityTest extends TestCase
         $this->assertSame(1, $job->fresh()->subTasks()->where('technician_id', $carpenter->id)->count());
     }
 
+    /**
+     * The rule is scoped, not absolute. A variation is work the client
+     * approved and paid for separately, and it only reaches a technician once
+     * that variation is settled — so the trade already on site can take more
+     * of their own trade. Blocking it forced the extra work onto somebody who
+     * was not there.
+     */
+    public function test_a_variations_work_can_go_to_the_man_already_on_the_job(): void
+    {
+        $job = $this->job();
+        $carpenter = $this->technician('Carpenter');
+
+        $this->taskFor($job, $carpenter, 'Carpentry Work', 60000);
+
+        $variation = \App\Models\VariationOrder::create([
+            'service_request_id' => $job->id,
+            'vo_number' => 'VO-001',
+            'reason' => 'Client added a second storage bay.',
+            'status' => \App\Models\VariationOrder::STATUS_APPROVED,
+            'labor_delta' => 40000,
+            'materials_delta' => 0,
+            'net_amount' => 40000,
+            'approved_at' => now(),
+            'created_by' => $this->admin->id,
+        ]);
+
+        $extra = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'variation_order_id' => $variation->id,
+            'title' => 'Second bay carpentry',
+            'status' => ServiceSubTask::STATUS_PENDING,
+            'approved_at' => now(),
+            'approved_by' => $this->admin->id,
+            'order' => 2,
+        ]);
+
+        $job->budget->update(['labor_budget' => 500000]);
+
+        $this->actingAs($this->admin)
+            ->post("/admin/sub-tasks/{$extra->id}/assign", [
+                'technician_id' => $carpenter->id,
+                'agreed_compensation' => 40000,
+            ])
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame($carpenter->id, (int) $extra->fresh()->technician_id);
+        $this->assertSame(2, $job->fresh()->subTasks()->where('technician_id', $carpenter->id)->count());
+
+        // One man on the client's gate notice, whatever he is holding.
+        $row = collect($job->fresh()->attendanceRoster())->firstWhere('name', 'Carpenter');
+        $this->assertCount(1, collect($job->fresh()->attendanceRoster())->where('name', 'Carpenter'));
+        $this->assertCount(2, $row['entries']);
+
+        // But two from the same variation is still two at once.
+        $alsoExtra = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'variation_order_id' => $variation->id,
+            'title' => 'Second bay shelving',
+            'status' => ServiceSubTask::STATUS_PENDING,
+            'approved_at' => now(),
+            'approved_by' => $this->admin->id,
+            'order' => 3,
+        ]);
+
+        $this->actingAs($this->admin)
+            ->post("/admin/sub-tasks/{$alsoExtra->id}/assign", [
+                'technician_id' => $carpenter->id,
+                'agreed_compensation' => 10000,
+            ])
+            ->assertSessionHas('error');
+
+        $this->assertNull($alsoExtra->fresh()->technician_id);
+    }
+
     public function test_a_lead_reassignment_leaves_the_other_task_holders_alone(): void
     {
         $job = $this->job();

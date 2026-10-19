@@ -163,25 +163,19 @@ class VariationBudgetTest extends TestCase
         $this->approve($variation);
         $this->actingAs($this->admin)->post(route('variations.tasks.approve', $task));
 
-        // The man already on the quoted work cannot take this as well — one
-        // technician holds one task at a time on a job — so the extra scope
-        // goes to somebody else.
+        // The man already on the quoted work takes this as well. One
+        // technician holds one task at a time, but a variation is scope the
+        // client approved and paid for separately, so it does not count
+        // against the task he already holds — and the trade on site is
+        // usually the right person for more of their own trade.
         $this->actingAs($this->admin)
             ->post(route('admin.sub-tasks.assign', $task), [
                 'technician_id' => $tech->id,
                 'agreed_compensation' => 60000,
             ])
-            ->assertSessionHas('error');
+            ->assertSessionHasNoErrors();
 
-        $second = $this->technician();
-
-        $this->actingAs($this->admin)
-            ->post(route('admin.sub-tasks.assign', $task), [
-                'technician_id' => $second->id,
-                'agreed_compensation' => 60000,
-            ]);
-
-        $this->assertSame($second->id, $task->fresh()->technician_id);
+        $this->assertSame($tech->id, $task->fresh()->technician_id);
         $this->assertSame(60000.0, (float) $task->fresh()->agreed_compensation);
     }
 

@@ -2376,7 +2376,23 @@ class AdminDashboardController extends Controller
     }
 
     /**
-     * Another task on this job already held by the same technician, if any.
+     * Another task in the same scope already held by this technician, if any.
+     *
+     * One man holds one task at a time, so that two rows on the client's gate
+     * notice are two people and the job's committed labour is one fee per
+     * pair of hands.
+     *
+     * The rule is scoped, not absolute. A variation is work the client has
+     * separately approved and separately paid for — it reaches a technician
+     * only once the variation is settled and an admin has admitted the task
+     * (see ServiceSubTask::blockedReason) — so the second fee is one the
+     * client has already agreed to, and the trade already on site is usually
+     * the right person for more of their own trade. Blocking that forced the
+     * extra work onto somebody who was not there.
+     *
+     * So the comparison is within a scope: the original quotation is one, and
+     * each variation is its own. A man may hold his quoted task and a task
+     * from a variation; he may not hold two of either.
      *
      * Read off the tasks rather than the assignment rows beside them: the task
      * is the authoritative record of who is doing what, and the assignment is
@@ -2385,11 +2401,16 @@ class AdminDashboardController extends Controller
     protected function technicianHoldsAnotherTask(
         ServiceRequest $serviceRequest,
         int $technicianId,
-        int $excludingSubTaskId
+        ServiceSubTask $incoming
     ): ?ServiceSubTask {
         return $serviceRequest->subTasks()
             ->where('technician_id', $technicianId)
-            ->where('id', '!=', $excludingSubTaskId)
+            ->where('id', '!=', $incoming->id)
+            ->when(
+                $incoming->variation_order_id,
+                fn ($query) => $query->where('variation_order_id', $incoming->variation_order_id),
+                fn ($query) => $query->whereNull('variation_order_id')
+            )
             ->orderBy('order')
             ->orderBy('id')
             ->first();
@@ -5237,8 +5258,10 @@ class AdminDashboardController extends Controller
             ));
         }
 
-        // Same rule as the assign route: one man, one task at a time.
-        if ($held = $this->technicianHoldsAnotherTask($serviceRequest, (int) $technician->id, $subTask->id)) {
+        // Same rule as the assign route, and the same scoping: one man, one
+        // task at a time within a scope, with a variation's work counted
+        // separately because the client bought it separately.
+        if ($held = $this->technicianHoldsAnotherTask($serviceRequest, (int) $technician->id, $subTask)) {
             return back()->with('error', sprintf(
                 '%s already holds "%s" on this job. Take him off that first, or give this one to somebody else.',
                 $technician->user?->name ?? 'That technician',
@@ -5798,11 +5821,14 @@ class AdminDashboardController extends Controller
         // pair of hands, and a job percentage that counts him twice. Where
         // somebody genuinely does two trades here, the office either widens
         // the task he holds or hands the second one on.
-        if ($existing = $this->technicianHoldsAnotherTask($serviceRequest, (int) $technician->id, $serviceSubTask->id)) {
+        if ($existing = $this->technicianHoldsAnotherTask($serviceRequest, (int) $technician->id, $serviceSubTask)) {
             return redirect()->route('admin.jobs.show', $serviceRequest)->with('error', sprintf(
-                '%s already holds "%s" on this job. Take him off that first, or give this one to somebody else.',
+                '%s already holds "%s"%s. Take him off that first, or give this one to somebody else.',
                 $technician->user?->name ?? 'That technician',
-                $existing->title
+                $existing->title,
+                $serviceSubTask->variation_order_id
+                    ? ' on this variation'
+                    : ' on this job'
             ));
         }
 
