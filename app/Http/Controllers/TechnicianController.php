@@ -1564,12 +1564,27 @@ class TechnicianController extends Controller
 
         $serviceRequest = $serviceSubTask->serviceRequest;
 
-        // Must be the sub-task's assigned technician, or carry the job as a
-        // whole (lead / sole assignee).
+        // The bar belongs to whoever is doing the work, and to nobody else.
+        //
+        // The lead could drag any task's bar on the job. It filed a claim in
+        // that technician's name rather than writing the figure outright, so
+        // nothing was settled without the office — but a draggable bar on
+        // another man's task says plainly that his progress is the lead's to
+        // set, and that is not what the role is. Every task carries its own
+        // progress, the job's figure is the average of them, and the lead's
+        // part in that is to approve a claim or send it back.
+        //
+        // Reporting for a crew member who cannot file for himself is still
+        // open to the lead, through the progress report form, where it is a
+        // deliberate act labelled as filed on his behalf and settled by the
+        // office rather than a bar he can drag.
         $isAssigned = (int) $serviceSubTask->technician_id === (int) $technician->id;
 
-        if (!$isAssigned && !$serviceRequest->isLeadTechnician($technician->id)) {
-            abort(403, 'Unauthorized');
+        if (!$isAssigned) {
+            abort(403, $serviceRequest->isLeadTechnician($technician->id)
+                ? 'This task belongs to another technician. Approve or send back what they claim; '
+                    . 'the bar is theirs to move.'
+                : 'Unauthorized');
         }
 
         // Work bought by a variation is not reportable until the variation is
@@ -1599,10 +1614,14 @@ class TechnicianController extends Controller
         // the billing milestones that key off it — with nobody approving the
         // claim. It now files the same kind of progress report the form does,
         // and only counts once approved.
+        // Always the assigned technician's own claim now: nobody else reaches
+        // this. Passed as not-on-behalf rather than asking whether they lead,
+        // because a lead moving his own bar is filing for himself like anyone
+        // else.
         [$subjectTechnicianId, $authoredAs] = $this->attributeReport(
             $technician,
             $serviceSubTask,
-            $serviceRequest->isLeadTechnician($technician->id)
+            false
         );
 
         app(ProgressService::class)->submitReport(
@@ -1617,9 +1636,7 @@ class TechnicianController extends Controller
             ]
         );
 
-        return back()->with('success', $authoredAs === \App\Models\ProgressReport::AS_LEAD
-            ? 'Filed on the technician\'s behalf. It goes to the project team to ratify.'
-            : 'Progress submitted for approval.');
+        return back()->with('success', 'Progress submitted for approval.');
     }
 
     /**

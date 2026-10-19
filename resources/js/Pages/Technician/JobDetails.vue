@@ -351,6 +351,14 @@
                             @change="(event) => updateTaskProgress(task, event.target.value)"
                         >
 
+                        <!-- A bar that cannot be dragged reads as broken
+                             unless it says why it is not yours to drag. -->
+                        <p v-if="!isMyTask(task)" class="subtask-supervising">
+                            <i class="fas fa-eye"></i>
+                            {{ task.technician?.user?.name || 'The assigned technician' }} moves this one.
+                            Yours is to approve what they claim, or send it back.
+                        </p>
+
                         <!-- A claim counts only once someone signs it off, so
                              say plainly that it is waiting rather than showing
                              a bar that looks banked. -->
@@ -1027,8 +1035,11 @@ function isMyTask(task) {
     return props.technician.id === task.technician_id
 }
 
+// The bar belongs to whoever is doing the work. A lead supervising a task
+// reads it and rules on what is claimed against it; he does not set it. His
+// own task he moves like anybody else.
 function canUpdateTask(task) {
-    return props.isLeadTechnician || isMyTask(task)
+    return isMyTask(task)
 }
 
 const CAPACITY_LABELS = {
@@ -1717,6 +1728,15 @@ defineOptions({ layout: null })
 
 .complete-btn {
     background: var(--success-color);
+}
+
+.subtask-supervising {
+    margin: 0.4rem 0 0;
+    font-size: 0.76rem;
+    color: #64748b;
+    display: flex;
+    gap: 0.4rem;
+    align-items: baseline;
 }
 
 .subtask-mine {
