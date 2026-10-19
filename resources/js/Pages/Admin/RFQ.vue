@@ -467,6 +467,18 @@
                                 >
                                     <i class="fas fa-check-circle"></i> Paid in full
                                 </span>
+                                <!-- Same quotation PDF the desktop table offers. The
+                                     desktop table is display:none on a phone, so without
+                                     this the file had no route in on mobile at all. -->
+                                <a
+                                    v-if="['quoted', 'approved'].includes(rfq.rfq_status)"
+                                    :href="`/admin/rfq/${rfq.id}/quotation-pdf`"
+                                    @click.stop
+                                    class="btn btn-sm btn-info"
+                                    title="Download the quotation PDF (same file the client received)"
+                                >
+                                    <i class="fas fa-file-pdf"></i> Quote PDF
+                                </a>
                                 <button
                                     v-if="rfq.rfq_status === 'quoted' && rfq.submission_mode === 'admin_proxy'"
                                     @click="openApproveOnBehalfModal(rfq)"
@@ -3014,7 +3026,7 @@ defineOptions({ layout: null })
 
 @media (max-width: 768px) {
     .rfq-stats { grid-template-columns: 1fr 1fr; }
-    .rfq-hero, .hero-action-grid, .mobile-rfq-grid, .pagination-shell, .pagination-controls { grid-template-columns: 1fr; }
+    .rfq-hero, .hero-action-grid, .pagination-shell, .pagination-controls { grid-template-columns: 1fr; }
     .rfq-hero, .table-shell-header, .mobile-card-top, .pagination-shell { display: flex; flex-direction: column; align-items: flex-start; }
     .desktop-table { display: none; }
     .mobile-rfq-list { display: grid; margin-top: 0; }
@@ -3025,11 +3037,81 @@ defineOptions({ layout: null })
     .modal-content.extra-large { width: 98%; max-height: 95vh; }
     .material-item-view { flex-direction: column; align-items: flex-start; gap: 0.25rem; }
     .quote-amount-bar { flex-direction: column; gap: 0.5rem; text-align: center; }
-    .btn-pagination, .page-number-btn { width: 100%; justify-content: center; }
 }
 
 @media (min-width: 769px) {
     .mobile-rfq-list { display: none; }
+}
+
+/* ─────────────────────────────────────────────
+   Phone layout (<= 768px, i.e. once the sidebar becomes the fixed
+   60px .mobile-topbar drawer). Everything below is additive — it only
+   ever applies where the desktop table is already hidden.
+   ───────────────────────────────────────────── */
+@media (max-width: 768px) {
+    /* The sticky toolbar used to stick to `top: 0`, which on a phone is
+       underneath the fixed 60px .mobile-topbar (z-index 40 vs our 20) —
+       the search field lost its top third and the clear-search button
+       with it. Park it just below the bar instead. */
+    .rfq-toolbar-sticky { top: 60px; }
+
+    /* Search on its own row, then Needs Action and Filters sharing the
+       next one. Stacked three-deep this bar claimed 236px — 29% of a
+       375x812 screen — before a single request was visible. */
+    .toolbar-primary { margin-top: 0.75rem; gap: 0.6rem; }
+    .toolbar-primary > .needs-action-pill,
+    .toolbar-primary > .advanced-toggle-btn {
+        flex: 1 1 0;
+        min-width: 0;
+        justify-content: center;
+    }
+
+    /* Pagination stayed reachable at full width, but seven stacked
+       buttons ran 359px tall and the bottom one sat under the floating
+       WhatsApp button. Keep it a wrapped row of real tap targets. */
+    .pagination-shell { align-items: stretch; }
+    .pagination-controls { width: 100%; justify-content: center; gap: 0.5rem; }
+    .page-number-row { justify-content: center; gap: 0.5rem; }
+    .btn-pagination, .page-number-btn {
+        flex: 0 0 auto;
+        min-width: 44px;
+        min-height: 44px;
+        justify-content: center;
+        display: inline-flex;
+        align-items: center;
+    }
+
+    /* 44px tap targets for the row actions and the two page-level
+       buttons that sat at 33–38px. */
+    .mobile-actions .btn,
+    .hero-create-btn,
+    .add-material-btn {
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .mobile-actions .btn { flex: 1 1 auto; }
+
+    /* Clear the fixed WhatsApp button so it never lands on pagination. */
+    .dashboard-container .main-content.rfq-page { padding-bottom: 6rem; }
+
+    /* Long client emails in the details modal pushed the panel ~10px
+       wider than the modal itself. */
+    .info-section, .quote-section, .rejection-section { overflow-wrap: anywhere; }
+
+    /* The quotation footer is sticky, so four stacked full-width buttons
+       held 286px of a 771px modal and left almost nothing for the form.
+       Two to a row keeps it near 100px. */
+    .qd-footer .qd-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.4rem;
+        width: 100%;
+        margin-left: 0;
+    }
+    .dashboard-container .qd-footer .qd-actions .btn { width: 100%; }
+    .qd-footer .qd-status { width: 100%; justify-content: center; }
 }
 
 /* Proxy payment */
