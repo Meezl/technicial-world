@@ -857,37 +857,45 @@ class ProgressService
                 $this->resyncSubTask($subTask);
             }
 
-            $this->recomputeAfterRemoval($serviceRequest->fresh());
+            $this->recomputeFromCountingReports($serviceRequest->fresh());
 
             return $report->fresh();
         });
     }
 
     /**
-     * Recompute a job's percentage after a report has been taken out.
+     * Rebuild a job's figure from the reports that currently count, whenever
+     * that set has changed underneath it — a report removed, restored, or
+     * sent back so that it no longer settles anything.
      *
      * Not updateServiceRequestProgress(): that treats "no validated reports"
      * as "nothing to say" and leaves the existing figure alone, which is
-     * right when a report arrives and wrong here. Removing the only evidence
-     * for 75% has to take the job back to zero, or the number outlives the
-     * report it came from.
+     * right when a report arrives and wrong here. Withdrawing the only
+     * evidence for 75% has to take the job back to zero, or the number
+     * outlives the report it came from.
      *
      * Billing is deliberately not released. A milestone that has already
      * raised a payment request keeps it — the client may have paid — and
      * milestones never bill twice, so nothing re-fires when progress climbs
      * back.
      */
-    private function recomputeAfterRemoval(ServiceRequest $serviceRequest): void
+    private function recomputeFromCountingReports(ServiceRequest $serviceRequest): void
     {
-        // Same reading as everywhere else, so removing a report cannot leave
-        // the job on a different rule to the one that put it there.
+        // Same reading as everywhere else, so a change to what counts cannot
+        // leave the job on a different rule to the one that put it there.
         $percent = $this->headlinePercent($serviceRequest) ?? 0;
 
         $update = ['progress_percentage' => $percent];
 
-        // A job that was closed on the strength of a report that has now gone
-        // should not stay closed.
-        if (!$this->hasLeadSignOff($serviceRequest) && $serviceRequest->status === ServiceRequest::STATUS_COMPLETED) {
+        // A job that was finished on the strength of a report that no longer
+        // counts should not stay finished. Both ends of the sign-off are
+        // walked back, not just the terminal one: a lead's 100% being sent
+        // back used to leave the job sitting on the office's confirmation
+        // queue with nothing behind it.
+        if (!$this->hasLeadSignOff($serviceRequest) && in_array($serviceRequest->status, [
+            ServiceRequest::STATUS_COMPLETED,
+            ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION,
+        ], true)) {
             $update['status'] = ServiceRequest::STATUS_IN_PROGRESS;
         }
 
@@ -1021,16 +1029,32 @@ class ProgressService
             if ($report->subTask) {
                 $this->resyncSubTask($report->subTask);
             }
-            $this->recomputeAfterRemoval($report->serviceRequest->fresh());
+            $this->recomputeFromCountingReports($report->serviceRequest->fresh());
 
             return $report->fresh();
         });
     }
 
     /**
-     * A lead sends a claim back. The report is kept — the argument about what
-     * was really done is part of the job's record — but it stops counting and
-     * the technician sees why.
+     * A claim is sent back. The report is kept — the argument about what was
+     * really done is part of the job's record — but it stops counting and the
+     * technician sees why.
+     *
+     * Stopping counting has to mean it. Clearing the validation flags left the
+     * figure the report had already put on the board: a lead approved 63%,
+     * which moved the sub-task and the job, and the office sending that same
+     * report back took its authority away while the 63% stayed. The row went
+     * on carrying a number whose evidence had just been withdrawn, and the
+     * job went on averaging it in.
+     *
+     * The sub-task falls back to its last settled figure rather than to zero.
+     * A rejection is an argument about the newest claim, not a statement that
+     * nothing was ever done — zeroing the row would make sending work back
+     * look like the job had gone backwards.
+     *
+     * Billing is deliberately untouched, exactly as on removal: a milestone
+     * that has raised a payment request keeps it, and nothing re-fires when
+     * the figure climbs back.
      */
     public function reject(
         ProgressReport $report,
@@ -1039,6 +1063,9 @@ class ProgressService
         string $rejectedAs = ProgressReport::AS_LEAD
     ): ProgressReport {
         return DB::transaction(function () use ($report, $userId, $reason, $rejectedAs) {
+            $subTask = $report->subTask;
+            $serviceRequest = $report->serviceRequest;
+
             $report->update([
                 'is_validated' => false,
                 'validated_by' => null,
@@ -1056,6 +1083,16 @@ class ProgressService
                 'rejected_as' => $rejectedAs,
                 'reason' => $reason,
             ]);
+
+            // Order matters: the report is already marked unvalidated above,
+            // so it excludes itself from the reports these two read.
+            if ($subTask) {
+                $this->resyncSubTask($subTask);
+            }
+
+            if ($serviceRequest) {
+                $this->recomputeFromCountingReports($serviceRequest->fresh());
+            }
 
             return $report->fresh();
         });
