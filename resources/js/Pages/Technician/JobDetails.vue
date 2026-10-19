@@ -505,27 +505,56 @@
                             </button>
                         </div>
 
-                        <!-- Approving takes an optional note. A rejection has to
-                             say why; an approval does not, but a lead who saw
-                             something worth recording should not have to find
-                             another channel for it. The office reads this. -->
+                        <!-- Three answers to a claim, not two: take it as
+                             filed, settle it lower, or send it back. The
+                             middle one is the common case — the work is real
+                             but not as far along as the man says — and without
+                             it a lead either passed on a figure he did not
+                             believe or bounced work that had genuinely been
+                             done. Upwards is the office's, not his. -->
                         <div v-if="approvingClaim && approvingClaim.id === pendingClaimFor(task)?.id" class="reject-box">
                             <label class="form-field">
-                                <span>Anything to note? <em>(optional)</em></span>
+                                <span>Settle at</span>
+                                <input
+                                    v-model.number="approvalPercent"
+                                    type="number"
+                                    min="0"
+                                    :max="approvingClaim.percent_complete"
+                                    class="input"
+                                >
+                                <small class="field-note">
+                                    {{ approvingClaim.percent_complete }}% claimed. Confirm that, or less if
+                                    less has been done — to agree to more, the office has to do it.
+                                </small>
+                            </label>
+                            <label class="form-field">
+                                <span>
+                                    {{ approvalLowered ? 'What did you see on site?' : 'Anything to note?' }}
+                                    <em v-if="!approvalLowered">(optional)</em>
+                                </span>
                                 <textarea
                                     v-model="approvalNote"
                                     rows="2"
                                     class="input textarea"
-                                    placeholder="e.g. Walked the roof with them; capping is sound."
+                                    :placeholder="approvalLowered
+                                        ? 'e.g. Only four of the eight diffusers are actually fitted.'
+                                        : 'e.g. Walked the roof with them; capping is sound.'"
                                 ></textarea>
+                                <small v-if="approvalLowered" class="field-note">
+                                    Lowering someone's figure is an argument about their work, so it carries the
+                                    same obligation sending it back does. The technician and the office read this.
+                                </small>
                             </label>
+                            <p v-if="approveError" class="reject-error">{{ approveError }}</p>
                             <div class="signoff-actions">
                                 <button
                                     class="btn btn-primary"
                                     :disabled="busyReportId === approvingClaim.id"
                                     @click="confirmApprove()"
                                 >
-                                    {{ busyReportId === approvingClaim.id ? 'Approving…' : 'Approve' }}
+                                    {{ busyReportId === approvingClaim.id
+                                        ? 'Approving…'
+                                        : (approvalLowered ? `Settle at ${approvalPercent}%` : 'Approve') }}
                                 </button>
                                 <button class="btn btn-outline" @click="cancelApprove()">Cancel</button>
                             </div>
@@ -1119,31 +1148,65 @@ const rejectError = ref('')
 
 const approvingClaim = ref(null)
 const approvalNote = ref('')
+const approvalPercent = ref(0)
+const approveError = ref('')
 
-// Opens the note box rather than approving outright — one extra tap, in
-// exchange for the lead being able to say what they saw.
+// Settling below what was claimed is a different act from confirming it, and
+// the form says so as soon as the figure moves.
+const approvalLowered = computed(() =>
+    Boolean(approvingClaim.value)
+    && Number(approvalPercent.value) < Number(approvingClaim.value.percent_complete),
+)
+
+// Opens the box rather than approving outright — one extra tap, in exchange
+// for the lead being able to settle the figure and say what he saw.
 function approveClaim(claim) {
     if (!claim) return
     approvingClaim.value = claim
     approvalNote.value = ''
+    approvalPercent.value = Number(claim.percent_complete)
+    approveError.value = ''
     rejectingClaim.value = null
 }
 
 function cancelApprove() {
     approvingClaim.value = null
     approvalNote.value = ''
+    approveError.value = ''
 }
 
 function confirmApprove() {
     const claim = approvingClaim.value
     if (!claim) return
+
+    const claimed = Number(claim.percent_complete)
+    const settled = Number(approvalPercent.value)
+
+    // Checked here as well as on the server so the lead is told before the
+    // round trip, not after it.
+    if (!Number.isFinite(settled) || settled < 0 || settled > claimed) {
+        approveError.value = `Confirm this at ${claimed}% or less. Agreeing to more than was claimed is the office's to do.`
+        return
+    }
+
+    if (settled < claimed && !approvalNote.value.trim()) {
+        approveError.value = 'Say what you saw on site before settling this below what was claimed.'
+        return
+    }
+
+    approveError.value = ''
     busyReportId.value = claim.id
 
     router.post(`/technician/progress-reports/${claim.id}/approve`, {
         approval_note: approvalNote.value || null,
+        validated_percent: settled,
     }, {
         preserveScroll: true,
-        onSuccess: () => { approvingClaim.value = null; approvalNote.value = '' },
+        onSuccess: () => {
+            approvingClaim.value = null
+            approvalNote.value = ''
+            approveError.value = ''
+        },
         onFinish: () => { busyReportId.value = null },
     })
 }

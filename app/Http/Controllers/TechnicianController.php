@@ -1639,10 +1639,48 @@ class TechnicianController extends Controller
         // the report reaches them.
         $data = $request->validate([
             'approval_note' => 'nullable|string|max:1000',
+            // Omitted means "as claimed", which is what every approval sent
+            // before this existed.
+            'validated_percent' => 'nullable|integer|min:0|max:100',
         ]);
 
         if ($progressReport->is_validated) {
             return back()->with('error', 'That report has already been approved.');
+        }
+
+        $claimed = (int) $progressReport->percent_complete;
+        $settled = $data['validated_percent'] ?? $claimed;
+
+        // The lead had two answers to a claim: take it as filed, or send it
+        // back. Neither fits the common case — the work is real but it is not
+        // as far along as the man says — so a lead who thought it was 50%
+        // either passed on 63% he did not believe or bounced work that had
+        // genuinely been done.
+        //
+        // Downwards only. Settling somebody's work above what they claimed is
+        // agreeing to something nobody asserted, and it is the one direction
+        // that could quietly inflate a job towards its next billing
+        // milestone. The office can raise a figure, with its own override
+        // trail; the lead cannot.
+        if ($settled > $claimed) {
+            return back()->with('error', sprintf(
+                'You can confirm this at %d%% or less, not above it. %s claimed %d%%, and agreeing to more '
+                . 'than was claimed is the office\'s to do.',
+                $claimed,
+                $progressReport->technician?->user?->name ?? 'The technician',
+                $claimed
+            ));
+        }
+
+        // Lowering somebody's figure is an argument about their work, so it
+        // carries the same obligation a rejection does: say what you saw. An
+        // approval left as filed still needs no justification.
+        $lowered = $settled < $claimed;
+
+        if ($lowered && trim((string) ($data['approval_note'] ?? '')) === '') {
+            return back()->with('error',
+                'Say what you saw on site before settling this below what was claimed — '
+                . 'the technician and the office both read that note.');
         }
 
         // releaseBilling: false — the lead's word moves the work, not the
@@ -1651,7 +1689,7 @@ class TechnicianController extends Controller
         app(ProgressService::class)->validate(
             $progressReport,
             auth()->id(),
-            ['validated_percent' => $progressReport->percent_complete],
+            ['validated_percent' => $settled],
             [],
             releaseBilling: false,
             validatedAs: \App\Models\ProgressReport::AS_LEAD
@@ -1667,6 +1705,15 @@ class TechnicianController extends Controller
             'lead_reviewed_at' => $progressReport->lead_reviewed_at ?? now(),
             'lead_approval_note' => $data['approval_note'] ?? null,
         ])->save();
+
+        if ($lowered) {
+            return back()->with('success', sprintf(
+                'Settled at %d%% rather than the %d%% claimed. The technician sees your note, and the office '
+                . 'will confirm any payment that follows.',
+                $settled,
+                $claimed
+            ));
+        }
 
         return back()->with('success',
             'Sub-task progress approved. The office will confirm any payment that follows.');
