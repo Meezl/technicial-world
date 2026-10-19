@@ -35,6 +35,8 @@ These are the acceptance criteria. Each one is a test, not a convention.
 
 1. **Changing the lead never moves any percentage** — not a sub-task's, not the
    job's. *(Locked: `LeadChangeProgressInvarianceTest`.)*
+   <!-- Phases 2 and the first half of 4 are done; 1, 3 and the rest of 4
+        remain. Phase 1 is still waiting on the four decisions below. -->
 2. **The job's headline is derived, never typed.** No screen offers a field
    that sets it.
 3. **Nobody verifies their own work.** The crew's rows settle on the lead's
@@ -84,20 +86,22 @@ at zero. The only record of that is the lead's last validated whole-job report,
 which is an estimate — so it is proposed, not applied, and ops confirms per job
 before it goes live. Same dry-run shape as `jobs:recalculate-progress`.
 
-### Phase 2 — give the lead his third verb
+### Phase 2 — give the lead his third verb *(done)*
 
-He has two today: approve as claimed, or send back with a reason. He cannot say
+He had two: approve as claimed, or send back with a reason. He cannot say
 "it is less than that". `approveSubTaskReport` hard-codes the figure:
 
 ```php
 ['validated_percent' => $progressReport->percent_complete],   // TechnicianController:1640
 ```
 
-`ProgressService::validate()` already takes `validated_percent` from its
-caller, so this is a field on the form plus a guard: **he may lower, never
+`ProgressService::validate()` already took `validated_percent` from its
+caller, so this was a field on the form plus a guard: **he may lower, never
 raise**. Raising somebody's claim on their behalf is a different act and
-belongs with the office. The existing refusal on his own row stays
-(`authorizeLeadSignOff`, TechnicianController:1799).
+stays with the office, where it already carries an override trail. Lowering
+carries the obligation a rejection does — say what you saw — while an
+approval left as filed still needs no note. The existing refusal on his own
+row is unchanged and covered by a test. See `LeadSettlesBelowClaimTest`.
 
 ### Phase 3 — the verification sheet replaces the typed overall
 
@@ -119,12 +123,15 @@ the extra guard bolted onto `hasLeadSignOff` becomes redundant.
 
 ### Phase 4 — two latent defects this exposes
 
-- **Rejection does not walk the number back.** `ProgressService::reject()`
-  (ProgressService:997) clears `is_validated` and `validated_percent` but never
-  re-syncs the row or recomputes the job — `deleteReport` does both. So when
-  the office rejects a report the lead already approved, the row keeps the
-  figure whose evidence has just been withdrawn. Fix to invariant 5: back to
-  the last settled value.
+- ~~**Rejection does not walk the number back.**~~ *(done)* `reject()` now
+  re-syncs the row and recomputes the job, falling back to the last settled
+  value rather than to zero, with billing untouched. Found on the way: the
+  shared recompute helper reverted a job on `STATUS_COMPLETED` but not on
+  `COMPLETED_PENDING_CONFIRMATION`, so a sent-back sign-off left the job on
+  the office's confirmation queue with nothing behind it — removal and
+  restoration were carrying the same gap. The helper is now
+  `recomputeFromCountingReports`, which is what all three callers do. See
+  `RejectedReportProgressTest`.
 - **Rows are last-wins, the job is highest-wins.** Under a verification model
   this resolves itself — a row's value *is* the lead's most recent
   verification — so last-wins becomes correct by definition and the asymmetry
