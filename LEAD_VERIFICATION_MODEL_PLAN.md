@@ -67,8 +67,15 @@ The structural change. A lead who is carrying work gets a row for it like
 anybody else, created when the job is split rather than when he is stood down.
 
 - Ops states, when splitting a job, whether the lead is carrying work or
-  supervising only. Supervising-only is a legitimate state and must stay
-  available — this is not "always create a row for the lead".
+  supervising only. Both are real and supported: a lead can carry a task *and*
+  supervise, or supervise only. So this is not "always create a row for the
+  lead", and nothing downstream may assume a lead has a row.
+- Supervision itself never becomes a row. It is not deliverable work — it is
+  how the work is verified — so it carries no percentage and takes no place in
+  the average. A supervise-only lead's job reads as the average of his crew's
+  rows, which is correct: none of the work is his.
+- Where he carries a task as well, that task is one row among the others and
+  gets no extra weight for being the lead's.
 - Where he is carrying work, the row is created with it. The existing
   `absorbBareCrewPlace` machinery already folds his bare place into the row,
   carrying his fee, role and dates across (verified in
@@ -148,8 +155,11 @@ deliberately, either way.
 
 ## Decisions needed before Phase 1 starts
 
-1. Is "lead supervising only, carrying no work" a state we support? (Assumed
-   yes.)
+1. ~~Is "lead supervising only, carrying no work" a state we support?~~
+   **Answered: both shapes are real.** A lead can carry a task *and* supervise,
+   or supervise only. So Phase 1 cannot create a row for every lead, and
+   cannot assume one exists either — ops states which shape the job is, and
+   the row follows from that rather than from the role.
 2. What percentage does a backfilled lead row open at, and who confirms it?
 3. Client-visible percentages will move on every job where a lead was carrying
    untracked work. Who tells the client, and do we hold the backfill until
