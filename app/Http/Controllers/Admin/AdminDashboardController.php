@@ -2407,6 +2407,14 @@ class AdminDashboardController extends Controller
      * each variation is its own. A man may hold his quoted task and a task
      * from a variation; he may not hold two of either.
      *
+     * "At a time" is meant literally: a task the office has already signed off
+     * at 100% is finished work, not a pair of hands that is busy, and it must
+     * not stand between the man and more work on the same job. That was the
+     * reading before — any task he had ever held blocked the next one — and it
+     * left the office unable to give a technician the next lot after validating
+     * his last one, with no way out but to strip him off completed work and
+     * lose the record of who did it.
+     *
      * Read off the tasks rather than the assignment rows beside them: the task
      * is the authoritative record of who is doing what, and the assignment is
      * bookkeeping that can lag it.
@@ -2419,6 +2427,7 @@ class AdminDashboardController extends Controller
         return $serviceRequest->subTasks()
             ->where('technician_id', $technicianId)
             ->where('id', '!=', $incoming->id)
+            ->where('status', '!=', ServiceSubTask::STATUS_COMPLETED)
             ->when(
                 $incoming->variation_order_id,
                 fn ($query) => $query->where('variation_order_id', $incoming->variation_order_id),
