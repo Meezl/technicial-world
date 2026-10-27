@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use App\Models\Ticket;
+use App\Mail\Concerns\CopiesTheOfficeArchive;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
@@ -14,7 +15,7 @@ use Illuminate\Queue\SerializesModels;
  */
 class TicketAcknowledgement extends Mailable
 {
-    use Queueable, SerializesModels;
+    use CopiesTheOfficeArchive, Queueable, SerializesModels;
 
     public function __construct(public Ticket $ticket) {}
 
@@ -22,6 +23,7 @@ class TicketAcknowledgement extends Mailable
     {
         return new Envelope(
             subject: "Your ticket {$this->ticket->ticket_ref} has been received — Technician World",
+            bcc: $this->officeArchive(),
         );
     }
 

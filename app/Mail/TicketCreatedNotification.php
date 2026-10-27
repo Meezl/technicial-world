@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use App\Models\Ticket;
+use App\Mail\Concerns\CopiesTheOfficeArchive;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
@@ -14,7 +15,7 @@ use Illuminate\Queue\SerializesModels;
  */
 class TicketCreatedNotification extends Mailable
 {
-    use Queueable, SerializesModels;
+    use CopiesTheOfficeArchive, Queueable, SerializesModels;
 
     public function __construct(public Ticket $ticket) {}
 
@@ -27,6 +28,7 @@ class TicketCreatedNotification extends Mailable
         };
         return new Envelope(
             subject: "{$prefix} Ticket: {$this->ticket->ticket_ref} — {$this->ticket->subject}",
+            bcc: $this->officeArchive(),
         );
     }
 

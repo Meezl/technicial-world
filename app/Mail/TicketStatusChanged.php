@@ -4,6 +4,7 @@ namespace App\Mail;
 
 use App\Models\Ticket;
 use App\Models\TicketStatusLog;
+use App\Mail\Concerns\CopiesTheOfficeArchive;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
@@ -15,7 +16,7 @@ use Illuminate\Queue\SerializesModels;
  */
 class TicketStatusChanged extends Mailable
 {
-    use Queueable, SerializesModels;
+    use CopiesTheOfficeArchive, Queueable, SerializesModels;
 
     public function __construct(
         public Ticket $ticket,
@@ -26,6 +27,7 @@ class TicketStatusChanged extends Mailable
     {
         return new Envelope(
             subject: "Ticket {$this->ticket->ticket_ref} — {$this->ticket->statusLabel()}",
+            bcc: $this->officeArchive(),
         );
     }
 
