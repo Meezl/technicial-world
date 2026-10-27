@@ -1814,7 +1814,7 @@ class TechnicianController extends Controller
             ]);
         }
 
-        // Office → lead: only the lead answers, and it returns to the office.
+        // Nobody named on site: the office asked the lead, so the lead answers.
         if ($progressReport->isReturnedToLead()) {
             if (!$serviceRequest->isLeadTechnician($technician->id)) {
                 abort(403, 'Only the lead technician can answer a report the office sent back on this job.');
@@ -1823,19 +1823,91 @@ class TechnicianController extends Controller
             return back()->with('success', 'Sent back to the project team.');
         }
 
-        // Lead → crew: the crew member whose work it is corrects it, and it
-        // returns to the lead to sign off.
+        // Addressed to a technician — by their lead, or by the office itself.
+        // Either way it is theirs to answer, and it goes back to whoever asked.
         if ($progressReport->isReturnedToCrew()) {
-            $isOwner = (int) $progressReport->technician_id === (int) $technician->id
-                || (int) $progressReport->submitted_by === (int) auth()->id();
-            if (!$isOwner) {
+            if (!$this->mayAnswerReturnedReport($progressReport, $technician)) {
                 abort(403, 'That report is not yours to revise.');
             }
+
+            $answersOffice = $progressReport->answerGoesToOffice();
+
             app(ProgressService::class)->reviseByTechnician($progressReport, auth()->id(), $data, $photos);
-            return back()->with('success', 'Sent back to your lead technician to sign off.');
+
+            return back()->with('success', $answersOffice
+                ? 'Sent back to the project team, who asked.'
+                : 'Sent back to your lead technician to sign off.');
         }
 
         return back()->with('error', 'That report has not been sent back to you.');
+    }
+
+    /**
+     * Whose report is it to answer? The technician it was addressed to, and —
+     * for a lead return filed before an addressee was recorded — whoever the
+     * report is about or wrote it, which is who those always meant.
+     */
+    private function mayAnswerReturnedReport(\App\Models\ProgressReport $progressReport, Technician $technician): bool
+    {
+        $addressee = $progressReport->answeredBy();
+
+        if ($addressee !== null) {
+            return (int) $addressee === (int) $technician->id;
+        }
+
+        return (int) $progressReport->technician_id === (int) $technician->id
+            || (int) $progressReport->submitted_by === (int) auth()->id();
+    }
+
+    /**
+     * The lead hands an office query down to the person whose work it is.
+     *
+     * A query the lead cannot answer from their own knowledge used to leave
+     * them guessing or relaying somebody else's words as their own. The
+     * technician answers it themselves, and because the office asked, their
+     * answer goes straight back to the office rather than round the houses.
+     */
+    public function passReturnToCrew(Request $request, \App\Models\ProgressReport $progressReport)
+    {
+        $technician = auth()->user()->technician;
+        $serviceRequest = $progressReport->serviceRequest;
+
+        if (!$technician || !$serviceRequest || !$serviceRequest->isLeadTechnician($technician->id)) {
+            abort(403, 'Only the lead technician can pass a query down on this job.');
+        }
+
+        if (!$progressReport->isReturnedToLead()) {
+            return back()->with('error', 'That report is not sitting with you to pass on.');
+        }
+
+        $data = $request->validate([
+            'technician_id' => 'required|integer|exists:technicians,id',
+            'note' => 'nullable|string|max:1000',
+        ]);
+
+        if (!$serviceRequest->hasTechnician($data['technician_id'])) {
+            return back()->withErrors([
+                'technician_id' => 'That technician is not on this job.',
+            ]);
+        }
+
+        if ($serviceRequest->isLeadTechnician((int) $data['technician_id'])) {
+            return back()->withErrors([
+                'technician_id' => 'Passing it to yourself changes nothing — answer it, or pass it to your crew.',
+            ]);
+        }
+
+        app(ProgressService::class)->passReturnToCrew(
+            $progressReport,
+            auth()->id(),
+            (int) $data['technician_id'],
+            $data['note'] ?? null
+        );
+
+        $name = \App\Models\Technician::with('user:id,name')->find($data['technician_id'])?->user?->name;
+
+        return back()->with('success', ($name ? $name . ' has' : 'They have')
+            . ' been asked to answer it. Their reply goes straight back to the office.');
     }
 
     /**

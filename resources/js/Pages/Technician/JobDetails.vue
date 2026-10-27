@@ -402,9 +402,46 @@
                                 Your lead is answering this.
                             </p>
 
-                            <div v-else-if="revisingClaim?.id !== returnedToLeadFor(task).id">
+                            <!-- The lead who cannot answer from their own
+                                 knowledge hands the question to whoever did
+                                 the work, instead of relaying their words. -->
+                            <div v-else-if="passingDown?.id === returnedToLeadFor(task).id" class="revise-box">
+                                <label class="form-field">
+                                    <span>Anything to add for {{ passDownName(returnedToLeadFor(task)) }}?</span>
+                                    <textarea
+                                        v-model="passDownNote"
+                                        rows="2"
+                                        class="input textarea"
+                                        placeholder="Optional. The office's own words are kept either way."
+                                    ></textarea>
+                                </label>
+                                <p v-if="passDownError" class="reject-error">{{ passDownError }}</p>
+                                <p class="returned-owner">
+                                    Their answer goes straight back to the office, not to you.
+                                </p>
+                                <div class="signoff-actions">
+                                    <button
+                                        class="btn btn-primary"
+                                        :disabled="busyReportId === returnedToLeadFor(task).id"
+                                        @click="confirmPassDown()"
+                                    >
+                                        {{ busyReportId === returnedToLeadFor(task).id ? 'Sending…' : 'Pass it on' }}
+                                    </button>
+                                    <button class="btn btn-outline" @click="cancelPassDown()">Cancel</button>
+                                </div>
+                            </div>
+
+                            <div v-else-if="revisingClaim?.id !== returnedToLeadFor(task).id" class="returned-actions">
                                 <button class="btn btn-primary btn-full" @click="openRevise(returnedToLeadFor(task))">
                                     <i class="fas fa-pen"></i> Edit or comment
+                                </button>
+                                <button
+                                    v-if="canPassDown(returnedToLeadFor(task))"
+                                    class="btn btn-outline btn-full"
+                                    @click="openPassDown(returnedToLeadFor(task))"
+                                >
+                                    <i class="fas fa-user-arrow-down"></i>
+                                    Ask {{ passDownName(returnedToLeadFor(task)) }} to answer
                                 </button>
                             </div>
 
@@ -465,6 +502,18 @@
                                 <strong>{{ rejectedClaimFor(task).rejection_reason }}</strong>
                             </p>
 
+                            <!-- What the office actually asked, kept whole when
+                                 a lead passes the query down with a note of
+                                 their own. -->
+                            <p v-if="rejectedClaimFor(task).returned_origin_reason
+                                && rejectedClaimFor(task).returned_origin_reason !== rejectedClaimFor(task).rejection_reason"
+                                class="returned-owner">
+                                The office asked: {{ rejectedClaimFor(task).returned_origin_reason }}
+                            </p>
+                            <p v-if="answerGoesToOffice(rejectedClaimFor(task))" class="returned-owner">
+                                Your answer goes straight to the office — your lead does not sign this one again.
+                            </p>
+
                             <template v-if="isMyTask(task)">
                                 <div v-if="revisingClaim?.id !== rejectedClaimFor(task).id">
                                     <button class="btn btn-primary btn-full" @click="openRevise(rejectedClaimFor(task))">
@@ -510,7 +559,7 @@
                                             :disabled="busyReportId === revisingClaim.id || preparingRevisePhotos"
                                             @click="submitRevision()"
                                         >
-                                            {{ busyReportId === revisingClaim.id ? 'Sending…' : 'Resubmit to lead' }}
+                                            {{ busyReportId === revisingClaim.id ? 'Sending…' : reviseSubmitLabel(revisingClaim) }}
                                         </button>
                                         <button class="btn btn-outline" @click="cancelRevise()">Cancel</button>
                                     </div>
@@ -786,6 +835,12 @@
                         <p v-if="report.rejected_at" class="report-rejected-note">
                             Sent back<span v-if="report.rejector?.name"> by {{ report.rejector.name }}</span>:
                             {{ report.rejection_reason }}
+                        </p>
+
+                        <p v-if="report.rejected_at && report.returned_origin_reason
+                            && report.returned_origin_reason !== report.rejection_reason"
+                            class="report-rejected-note">
+                            The office asked: {{ report.returned_origin_reason }}
                         </p>
 
                         <!-- Answering a report sent back from here, rather than
@@ -1188,7 +1243,25 @@ function claimsFor(task) {
 
 const OFFICE_CAPACITIES = ['project_manager', 'admin']
 
+// Sitting with the lead: the office asked and named nobody on site. Once a
+// technician is named — by the office directly, or by the lead passing the
+// query down — it is theirs, whoever raised it.
 const isReturnedToLead = (report) =>
+    Boolean(report?.rejected_at
+        && !report.returned_to_technician_id
+        && OFFICE_CAPACITIES.includes(report.rejected_as))
+
+// Who has to answer it. Lead returns filed before the addressee was recorded
+// carry none, and those always meant the report's own technician.
+const returnedAddressee = (report) =>
+    report?.rejected_at && !isReturnedToLead(report)
+        ? (report.returned_to_technician_id ?? report.technician_id)
+        : null
+
+// The office asked, so the answer goes back to the office even though a
+// technician is writing it. Worth saying on screen: the lead is not in the
+// loop any more, and nobody should be waiting for them.
+const answerGoesToOffice = (report) =>
     Boolean(report?.rejected_at && OFFICE_CAPACITIES.includes(report.rejected_as))
 
 // The newest claim still waiting on somebody. Until it is signed off the
@@ -1334,8 +1407,26 @@ function canReviseReport(report) {
         return props.isLeadTechnician
     }
 
-    return report.technician_id === props.technician.id
-        || report.submitted_by === props.technician.user_id
+    const addressee = returnedAddressee(report)
+
+    return addressee === props.technician.id
+        || (addressee == null && report.submitted_by === props.technician.user_id)
+}
+
+// A query the lead cannot answer themselves goes to the person whose work it
+// is about. Offered only where there is somebody else to pass it to — a lead's
+// own claim, or a whole-job figure, is theirs to account for.
+function canPassDown(report) {
+    return Boolean(
+        props.isLeadTechnician
+        && isReturnedToLead(report)
+        && report.technician_id
+        && report.technician_id !== props.technician.id,
+    )
+}
+
+function passDownName(report) {
+    return report?.technician?.user?.name || 'the technician'
 }
 
 // The sub-task cards already offer the latest claim on each task. Anything
@@ -1347,18 +1438,58 @@ function offeredOnSubTaskCard(report) {
 
     const task = (props.job.sub_tasks || []).find((t) => t.id === report.service_sub_task_id)
 
-    return Boolean(task && claimsFor(task)[0]?.id === report.id)
+    if (!task || claimsFor(task)[0]?.id !== report.id) return false
+
+    // The card's own form is behind "this task is mine", or behind leading the
+    // job. Anyone else addressed on that report — the office can name whoever
+    // filed it — would see the card offer nothing and the history stay silent.
+    return isMyTask(task) || (isReturnedToLead(report) && props.isLeadTechnician)
 }
 
 function canReviseFromHistory(report) {
     return canReviseReport(report) && !offeredOnSubTaskCard(report)
 }
 
-// An answer to the office goes back to the office; an answer to the lead goes
-// back to the lead. The button says which, so nobody expects the client to
-// hear about it next.
+// The answer goes back to whoever asked, which is not always who it was last
+// with: a query the office raised comes back to the office even when a
+// technician answers it. The button says which, so nobody is left waiting on a
+// desk that is not involved.
 function reviseSubmitLabel(report) {
-    return isReturnedToLead(report) ? 'Send back to the office' : 'Resubmit to lead'
+    return answerGoesToOffice(report) ? 'Send back to the office' : 'Resubmit to lead'
+}
+
+const passingDown = ref(null)
+const passDownNote = ref('')
+const passDownError = ref('')
+
+function openPassDown(report) {
+    passingDown.value = report
+    passDownNote.value = ''
+    passDownError.value = ''
+}
+
+function cancelPassDown() {
+    passingDown.value = null
+    passDownNote.value = ''
+    passDownError.value = ''
+}
+
+function confirmPassDown() {
+    const report = passingDown.value
+    if (!report) return
+
+    busyReportId.value = report.id
+    router.post(`/technician/progress-reports/${report.id}/pass-down`, {
+        technician_id: report.technician_id,
+        note: passDownNote.value,
+    }, {
+        preserveScroll: true,
+        onSuccess: () => cancelPassDown(),
+        onError: (errors) => {
+            passDownError.value = errors.technician_id || 'Could not pass that on.'
+        },
+        onFinish: () => { busyReportId.value = null },
+    })
 }
 
 function openRevise(claim) {
@@ -1934,6 +2065,13 @@ defineOptions({ layout: null })
    returned for. */
 .report-revise {
     margin: .25rem 0 .6rem;
+}
+
+/* Two ways out of a query the office raised — answer it, or hand it to the
+   person who did the work. Stacked, because they are read one-handed. */
+.returned-actions {
+    display: grid;
+    gap: .5rem;
 }
 
 .subtask-returned {

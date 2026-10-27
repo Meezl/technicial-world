@@ -39,6 +39,8 @@ use Illuminate\Validation\ValidationException;
 
 class AdminDashboardController extends Controller
 {
+    use \App\Http\Controllers\Concerns\ReturnsProgressReports;
+
     public function index()
     {
         // Real KPI stats
@@ -365,6 +367,9 @@ class AdminDashboardController extends Controller
             // the option to pull them in.
             'progressReports',
             'progressReports.technician.user',
+            // Named when a return was addressed to somebody other than the
+            // lead, so the banner can say who is actually holding it.
+            'progressReports.returnedToTechnician.user:id,name',
             'progressReports.submitter',
             'progressReports.validator',
             'progressReports.subTask',
@@ -771,19 +776,27 @@ class AdminDashboardController extends Controller
     {
         $data = $request->validate([
             'rejection_reason' => 'required|string|min:5|max:1000',
+            // Who is being asked. Omitted means the lead, which is what every
+            // return did before the office could address one directly.
+            'return_to_technician_id' => 'nullable|integer|exists:technicians,id',
         ], [
-            'rejection_reason.required' => 'Tell the lead what you need looking at.',
-            'rejection_reason.min' => 'Give the lead something to act on — a few words at least.',
+            'rejection_reason.required' => 'Tell them what you need looking at.',
+            'rejection_reason.min' => 'Give them something to act on — a few words at least.',
         ]);
+
+        $addressee = $this->returnAddresseeFor($progressReport, $data['return_to_technician_id'] ?? null);
 
         app(ProgressService::class)->reject(
             $progressReport,
             auth()->id(),
             $data['rejection_reason'],
-            \App\Models\ProgressReport::AS_ADMIN
+            \App\Models\ProgressReport::AS_ADMIN,
+            $addressee?->id
         );
 
-        return back()->with('success', 'Sent back to the lead technician.');
+        return back()->with('success', $addressee
+            ? 'Sent back to ' . ($addressee->user?->name ?? 'the technician') . '. Their answer comes straight back to you.'
+            : 'Sent back to the lead technician.');
     }
 
     /**

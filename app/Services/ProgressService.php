@@ -1142,11 +1142,18 @@ class ProgressService
         ProgressReport $report,
         int $userId,
         string $reason,
-        string $rejectedAs = ProgressReport::AS_LEAD
+        string $rejectedAs = ProgressReport::AS_LEAD,
+        ?int $returnedToTechnicianId = null
     ): ProgressReport {
-        return DB::transaction(function () use ($report, $userId, $reason, $rejectedAs) {
+        return DB::transaction(function () use ($report, $userId, $reason, $rejectedAs, $returnedToTechnicianId) {
             $subTask = $report->subTask;
             $serviceRequest = $report->serviceRequest;
+
+            // A lead sending work back is always addressing the person whose
+            // work it is; the office says who it means. Recording it either
+            // way means nothing downstream has to infer it again.
+            $addressee = $returnedToTechnicianId
+                ?? ($rejectedAs === ProgressReport::AS_LEAD ? $report->technician_id : null);
 
             $report->update([
                 'is_validated' => false,
@@ -1157,12 +1164,14 @@ class ProgressService
                 'rejected_at' => now(),
                 'rejected_by' => $userId,
                 'rejected_as' => $rejectedAs,
+                'returned_to_technician_id' => $addressee,
                 'rejection_reason' => $reason,
             ]);
 
             AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, [
                 'rejected' => true,
                 'rejected_as' => $rejectedAs,
+                'returned_to_technician_id' => $addressee,
                 'reason' => $reason,
             ]);
 
@@ -1175,6 +1184,46 @@ class ProgressService
             if ($serviceRequest) {
                 $this->recomputeFromCountingReports($serviceRequest->fresh());
             }
+
+            return $report->fresh();
+        });
+    }
+
+    /**
+     * The lead hands an office query down to the person whose work it is.
+     *
+     * A lead who cannot answer a query from their own knowledge had two
+     * choices before this: guess, or walk the question to the technician and
+     * retype their answer as their own. Neither leaves a record of who
+     * actually accounted for the work.
+     *
+     * The query stays the office's — that is who asked, and that is where the
+     * answer goes back to, without the lead having to handle it a second time.
+     * The office's own words are kept beside the lead's note, so the
+     * technician reads the question that was actually asked rather than one
+     * paraphrase of it.
+     */
+    public function passReturnToCrew(
+        ProgressReport $report,
+        int $userId,
+        int $technicianId,
+        ?string $note = null
+    ): ProgressReport {
+        return DB::transaction(function () use ($report, $userId, $technicianId, $note) {
+            $officeReason = $report->returned_origin_reason ?? $report->rejection_reason;
+
+            $report->update([
+                'returned_to_technician_id' => $technicianId,
+                'returned_origin_reason' => $officeReason,
+                'rejection_reason' => $note
+                    ? trim($note)
+                    : $officeReason,
+            ]);
+
+            AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, [
+                'return_passed_to_technician' => $technicianId,
+                'by' => $userId,
+            ]);
 
             return $report->fresh();
         });
@@ -1209,7 +1258,9 @@ class ProgressService
                 'rejected_at' => null,
                 'rejected_by' => null,
                 'rejected_as' => null,
+                'returned_to_technician_id' => null,
                 'rejection_reason' => null,
+                'returned_origin_reason' => null,
                 'is_validated' => false,
                 'approved_by_lead_at' => null,
                 // The office asked, the lead answered — so the office settles
@@ -1242,6 +1293,10 @@ class ProgressService
     public function reviseByTechnician(ProgressReport $report, int $userId, array $data, array $photos = []): ProgressReport
     {
         return DB::transaction(function () use ($report, $userId, $data, $photos) {
+            // Read before the update clears it: who asked decides where the
+            // answer lands. A query the lead raised is settled on site; one the
+            // office raised comes back to the office, whoever wrote the answer.
+            $answersOffice = $report->answerGoesToOffice();
             $previousNotes = $report->notes;
             $notes = $data['notes'] ?? $previousNotes;
 
@@ -1260,9 +1315,15 @@ class ProgressService
                 'rejected_at' => null,
                 'rejected_by' => null,
                 'rejected_as' => null,
+                'returned_to_technician_id' => null,
                 'rejection_reason' => null,
+                'returned_origin_reason' => null,
                 'is_validated' => false,
                 'approved_by_lead_at' => null,
+                // An office query answered on site is the office's to settle,
+                // exactly as when the lead answers it — the technician cannot
+                // put their own correction beyond the desk that asked.
+                'revised_by_lead_at' => $answersOffice ? now() : $report->revised_by_lead_at,
             ]);
 
             foreach ($photos as $photo) {

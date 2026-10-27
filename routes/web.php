@@ -623,6 +623,9 @@ Route::middleware(['auth', 'role:technician'])->group(function () {
     // crew member to their lead — by correcting the report itself, photos
     // included, rather than filing a second one against the same work.
     Route::post('/technician/progress-reports/{progressReport}/revise', [\App\Http\Controllers\TechnicianController::class, 'reviseReturnedReport'])->name('technician.progress-report.revise');
+    // The lead hands an office query down to the crew member whose work it
+    // is, rather than answering for them. The reply still goes to the office.
+    Route::post('/technician/progress-reports/{progressReport}/pass-down', [\App\Http\Controllers\TechnicianController::class, 'passReturnToCrew'])->name('technician.progress-report.pass-down');
     // The lead pushes the whole reviewed batch up to the office in one move —
     // the office sees nothing on a lead-run job until this lands.
     Route::post('/technician/jobs/{serviceRequest}/post-reports', [\App\Http\Controllers\TechnicianController::class, 'postReportsToOffice'])->name('technician.reports.post');

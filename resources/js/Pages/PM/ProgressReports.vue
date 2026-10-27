@@ -225,13 +225,13 @@
                         </div>
                     </div>
 
-                    <!-- Already with the lead: nothing for the PM to do until
-                         they answer, so say that rather than showing a form
-                         that looks actionable. Checked first because a
-                         returned report is unvalidated too. -->
-                    <div v-if="isWithLead(report)" class="returned-banner">
+                    <!-- Already out on site: nothing for the PM to do until
+                         it is answered, so say who is holding it rather than
+                         showing a form that looks actionable. Checked first
+                         because a returned report is unvalidated too. -->
+                    <div v-if="isWithSite(report)" class="returned-banner">
                         <i class="fas fa-hourglass-half"></i>
-                        With the lead technician<span v-if="report.rejection_reason">: {{ report.rejection_reason }}</span>
+                        With {{ returnedHolder(report) }}<span v-if="report.rejection_reason">: {{ report.rejection_reason }}</span>
                     </div>
 
                     <div v-else-if="!report.is_validated" class="validation-form">
@@ -281,12 +281,27 @@
                         </div>
 
                         <div v-if="returningId === report.id" class="return-box">
-                            <label>What do you need the lead to look at?</label>
+                            <label>What do you need looking at?</label>
                             <textarea
                                 v-model="returnReason"
                                 rows="3"
                                 placeholder="e.g. Photos show six panels but the report claims eight — please recount before I validate."
                             ></textarea>
+
+                            <!-- The lead stays the default: they run the site.
+                                 A recount only the technician can do need not
+                                 wait a day to go through them. -->
+                            <template v-if="returnDirectCandidate(report)">
+                                <label>Who should answer it?</label>
+                                <select v-model="returnToTechnicianId">
+                                    <option value="">The lead technician</option>
+                                    <option :value="returnDirectCandidate(report).id">
+                                        {{ returnDirectCandidate(report).user?.name || 'The technician' }}
+                                        — whose work this is
+                                    </option>
+                                </select>
+                            </template>
+
                             <p v-if="returnError" class="return-error">{{ returnError }}</p>
                             <div class="decision-actions">
                                 <button class="btn btn-primary btn-sm" @click="submitReturn(report)" :disabled="submitting">
@@ -438,39 +453,64 @@ function validateReport(report) {
 // Sent back to the lead and awaiting their answer. Mirrors
 // ProgressReport::isReturnedToLead.
 const OFFICE_CAPACITIES = ['project_manager', 'admin']
-const isWithLead = (report) =>
+const isWithSite = (report) =>
     Boolean(report.rejected_at && OFFICE_CAPACITIES.includes(report.rejected_as))
+
+// Who is actually holding it — the lead, or the technician it was handed to.
+const returnedHolder = (report) =>
+    report.returned_to_technician_id
+        ? (report.returned_to_technician?.user?.name || 'the technician whose work it is')
+        : 'the lead technician'
 
 const returningId = ref(null)
 const returnReason = ref('')
 const returnError = ref('')
+// Empty means the lead, which is where a return has always gone by default.
+const returnToTechnicianId = ref('')
+
+// Whose work the report is about, when that is somebody other than whoever
+// runs the job — the only person who can be asked directly.
+function returnDirectCandidate(report) {
+    const tech = report?.technician
+    const job = report?.service_request
+    if (!tech || !job) return null
+
+    const runsTheJob = job.lead_technician_id ?? job.technician_id
+
+    return tech.id === runsTheJob ? null : tech
+}
 
 function openReturn(report) {
     returningId.value = report.id
     returnReason.value = ''
     returnError.value = ''
+    returnToTechnicianId.value = ''
 }
 
 function cancelReturn() {
     returningId.value = null
     returnReason.value = ''
     returnError.value = ''
+    returnToTechnicianId.value = ''
 }
 
 function submitReturn(report) {
     if (returnReason.value.trim().length < 5) {
-        returnError.value = 'Give the lead something to act on — a few words at least.'
+        returnError.value = 'Give them something to act on — a few words at least.'
         return
     }
 
     submitting.value = true
     router.post(`/pm/progress-reports/${report.id}/return`, {
         rejection_reason: returnReason.value.trim(),
+        return_to_technician_id: returnToTechnicianId.value || null,
     }, {
         preserveScroll: true,
         onSuccess: () => cancelReturn(),
         onError: (errors) => {
-            returnError.value = errors.rejection_reason || 'Could not send that back.'
+            returnError.value = errors.rejection_reason
+                || errors.return_to_technician_id
+                || 'Could not send that back.'
         },
         onFinish: () => { submitting.value = false },
     })
@@ -967,7 +1007,8 @@ defineOptions({ layout: null })
     margin-bottom: 0.4rem;
 }
 
-.return-box textarea {
+.return-box textarea,
+.return-box select {
     width: 100%;
     padding: 0.6rem 0.7rem;
     border: 1px solid #cbd5e1;

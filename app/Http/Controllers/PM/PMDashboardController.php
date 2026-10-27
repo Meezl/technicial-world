@@ -26,6 +26,8 @@ use Carbon\Carbon;
 
 class PMDashboardController extends Controller
 {
+    use \App\Http\Controllers\Concerns\ReturnsProgressReports;
+
     public function __construct(
         private QuotationService $quotationService,
         private JobService $jobService,
@@ -409,7 +411,10 @@ class PMDashboardController extends Controller
         $reports = ProgressReport::whereHas('serviceRequest', function ($q) use ($pmId) {
                 $q->where('assigned_pm_id', $pmId);
             })
-            ->with(['serviceRequest:id,request_id,job_reference', 'technician.user', 'submitter', 'photos'])
+            // Who runs the job comes along so the queue can offer to send a
+            // query straight to the technician whose work it is, rather than
+            // only to the lead.
+            ->with(['serviceRequest:id,request_id,job_reference,technician_id,lead_technician_id', 'technician.user', 'returnedToTechnician.user:id,name', 'submitter', 'photos'])
             ->when($request->boolean('pending_only', true), fn($q) => $q->needsOfficeAction())
             ->orderBy('report_date', 'desc')
             ->paginate(12)
@@ -523,19 +528,25 @@ class PMDashboardController extends Controller
 
         $data = $request->validate([
             'rejection_reason' => 'required|string|min:5|max:1000',
+            'return_to_technician_id' => 'nullable|integer|exists:technicians,id',
         ], [
-            'rejection_reason.required' => 'Tell the lead what you need looking at.',
-            'rejection_reason.min' => 'Give the lead something to act on — a few words at least.',
+            'rejection_reason.required' => 'Tell them what you need looking at.',
+            'rejection_reason.min' => 'Give them something to act on — a few words at least.',
         ]);
+
+        $addressee = $this->returnAddresseeFor($progressReport, $data['return_to_technician_id'] ?? null);
 
         $this->progressService->reject(
             $progressReport,
             auth()->id(),
             $data['rejection_reason'],
-            \App\Models\ProgressReport::AS_PROJECT_MANAGER
+            \App\Models\ProgressReport::AS_PROJECT_MANAGER,
+            $addressee?->id
         );
 
-        return redirect()->back()->with('success', 'Sent back to the lead technician.');
+        return redirect()->back()->with('success', $addressee
+            ? 'Sent back to ' . ($addressee->user?->name ?? 'the technician') . '. Their answer comes straight back to you.'
+            : 'Sent back to the lead technician.');
     }
 
     /**

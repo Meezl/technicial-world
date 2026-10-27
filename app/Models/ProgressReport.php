@@ -44,7 +44,11 @@ class ProgressReport extends Model
         'rejected_at',
         'rejected_by',
         'rejected_as',
+        // Who has to answer it. Null means read it from rejected_as, the way
+        // every report filed before this column did.
+        'returned_to_technician_id',
         'rejection_reason',
+        'returned_origin_reason',
         'revised_by_lead_at',
         'deleted_by',
         'deletion_reason',
@@ -254,6 +258,19 @@ class ProgressReport extends Model
                 . 'the report or reply to it there, and it goes back to them, not to us.',
             'tell_client' => 'Nothing — an internal recount is not a client matter.',
         ],
+        'returned_to_crew_from_office' => [
+            'label' => 'Office query — with the technician',
+            'tone' => 'amber',
+            'waiting_on' => 'The technician whose work it is',
+            'meaning' => 'The office queried the report and it is being answered on site by the '
+                . 'technician themselves — either because the office addressed them directly, or '
+                . 'because the lead passed the question down to the person who did the work.',
+            'next' => 'Wait for the answer. It comes back to this desk, not to the lead, because the '
+                . 'query was ours — the lead\'s sign-off is not needed again for a figure we asked about.',
+            'tell_technician' => 'The query is with you, not your lead. Correct the report or answer the '
+                . 'question on your job page and it comes straight back to the office.',
+            'tell_client' => 'Nothing — an internal recount is not a client matter.',
+        ],
         'returned_to_lead' => [
             'label' => 'Sent back to lead',
             'tone' => 'amber',
@@ -385,7 +402,9 @@ class ProgressReport extends Model
         }
 
         if ($this->isReturnedToCrew()) {
-            return 'returned_to_crew';
+            // Who asked decides where it comes back to, and the office needs
+            // to know its own query has not quietly become the lead's.
+            return $this->answerGoesToOffice() ? 'returned_to_crew_from_office' : 'returned_to_crew';
         }
 
         if ($this->isReturnedToLead()) {
@@ -452,24 +471,57 @@ class ProgressReport extends Model
     }
 
     /**
-     * Sent back by the office, so it is the lead's to edit or comment on
-     * before it goes back up.
+     * Sent back by the office and nobody on site has been named, so it is the
+     * lead's to edit or comment on before it goes back up.
      */
     public function isReturnedToLead(): bool
     {
         return $this->rejected_at !== null
+            && $this->returned_to_technician_id === null
             && in_array($this->rejected_as, self::OFFICE_CAPACITIES, true);
     }
 
     /**
-     * Sent back by the lead to the crew member whose work it is, so it is
-     * theirs to correct and resubmit — back up to the lead. The counterpart
-     * of isReturnedToLead (the office sending one to the lead).
+     * Sitting with a named technician rather than with the lead: the lead sent
+     * it down to the crew member whose work it is, or the office addressed
+     * them directly. Theirs to correct and resubmit.
      */
     public function isReturnedToCrew(): bool
     {
         return $this->rejected_at !== null
-            && $this->rejected_as === self::AS_LEAD;
+            && ($this->returned_to_technician_id !== null
+                || $this->rejected_as === self::AS_LEAD);
+    }
+
+    /**
+     * Which technician has to answer this, or null when it is the lead's.
+     *
+     * Falls back to the report's own technician for a lead return filed before
+     * the addressee was recorded — that is who those were always addressed to.
+     */
+    public function answeredBy(): ?int
+    {
+        if (!$this->isReturnedToCrew()) {
+            return null;
+        }
+
+        return $this->returned_to_technician_id ?? $this->technician_id;
+    }
+
+    /**
+     * Where the answer goes when it is sent back up. The office asked, so the
+     * office gets the answer, even when a technician wrote it; a query the
+     * lead raised is settled on site first.
+     */
+    public function answerGoesToOffice(): bool
+    {
+        return in_array($this->rejected_as, self::OFFICE_CAPACITIES, true);
+    }
+
+    /** Is this report's query the office's, handed down to a technician? */
+    public function isOfficeQueryWithCrew(): bool
+    {
+        return $this->isReturnedToCrew() && $this->answerGoesToOffice();
     }
 
     /**
@@ -479,6 +531,9 @@ class ProgressReport extends Model
     public function scopeAwaitingLeadRevision($query)
     {
         return $query->whereNotNull('rejected_at')
+            // Handed down to a named technician, so it is no longer the lead
+            // the office is waiting on.
+            ->whereNull('returned_to_technician_id')
             ->whereIn('rejected_as', self::OFFICE_CAPACITIES);
     }
 
@@ -546,6 +601,12 @@ class ProgressReport extends Model
     public function rejector(): BelongsTo
     {
         return $this->belongsTo(User::class, 'rejected_by');
+    }
+
+    /** The technician a returned report was addressed to, when one was named. */
+    public function returnedToTechnician(): BelongsTo
+    {
+        return $this->belongsTo(Technician::class, 'returned_to_technician_id');
     }
 
     /**
