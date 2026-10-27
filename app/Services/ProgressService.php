@@ -1189,9 +1189,9 @@ class ProgressService
      * as a version, so the argument is traceable, and the report goes back to
      * the office rather than counting on the lead's own say-so.
      */
-    public function reviseByLead(ProgressReport $report, int $userId, array $data): ProgressReport
+    public function reviseByLead(ProgressReport $report, int $userId, array $data, array $photos = []): ProgressReport
     {
-        return DB::transaction(function () use ($report, $userId, $data) {
+        return DB::transaction(function () use ($report, $userId, $data, $photos) {
             $previousNotes = $report->notes;
             $notes = $data['notes'] ?? $previousNotes;
 
@@ -1218,11 +1218,18 @@ class ProgressService
                 'revised_by_lead_at' => now(),
             ]);
 
+            // Added to the report that was queried rather than to a new one,
+            // so the evidence sits with the claim it answers.
+            foreach ($photos as $photo) {
+                $this->addPhoto($report, $photo, $userId);
+            }
+
             AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, [
                 'revised_by_lead' => true,
+                'photos_added' => count($photos),
             ]);
 
-            return $report->fresh();
+            return $report->fresh(['photos']);
         });
     }
 
@@ -1232,9 +1239,9 @@ class ProgressService
      * rewrite the notes, or add a comment — but it goes back to the lead to
      * sign off, not to the office, and does not count until they do.
      */
-    public function reviseByTechnician(ProgressReport $report, int $userId, array $data): ProgressReport
+    public function reviseByTechnician(ProgressReport $report, int $userId, array $data, array $photos = []): ProgressReport
     {
-        return DB::transaction(function () use ($report, $userId, $data) {
+        return DB::transaction(function () use ($report, $userId, $data, $photos) {
             $previousNotes = $report->notes;
             $notes = $data['notes'] ?? $previousNotes;
 
@@ -1258,11 +1265,16 @@ class ProgressService
                 'approved_by_lead_at' => null,
             ]);
 
+            foreach ($photos as $photo) {
+                $this->addPhoto($report, $photo, $userId);
+            }
+
             AuditLog::log(AuditLog::ACTION_UPDATED, $report, null, [
                 'revised_by_technician' => true,
+                'photos_added' => count($photos),
             ]);
 
-            return $report->fresh();
+            return $report->fresh(['photos']);
         });
     }
 

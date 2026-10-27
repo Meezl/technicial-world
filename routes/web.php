@@ -619,7 +619,9 @@ Route::middleware(['auth', 'role:technician'])->group(function () {
     // back with a reason. Neither releases billing — that stays with ops.
     Route::post('/technician/progress-reports/{progressReport}/approve', [\App\Http\Controllers\TechnicianController::class, 'approveSubTaskReport'])->name('technician.progress-report.approve');
     Route::post('/technician/progress-reports/{progressReport}/reject', [\App\Http\Controllers\TechnicianController::class, 'rejectSubTaskReport'])->name('technician.progress-report.reject');
-    // The lead answers a report the office sent back and puts it up again.
+    // Answering a report that was sent back — the lead to the office, or a
+    // crew member to their lead — by correcting the report itself, photos
+    // included, rather than filing a second one against the same work.
     Route::post('/technician/progress-reports/{progressReport}/revise', [\App\Http\Controllers\TechnicianController::class, 'reviseReturnedReport'])->name('technician.progress-report.revise');
     // The lead pushes the whole reviewed batch up to the office in one move —
     // the office sees nothing on a lead-run job until this lands.

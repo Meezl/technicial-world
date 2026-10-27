@@ -1778,6 +1778,10 @@ class TechnicianController extends Controller
      */
     public function reviseReturnedReport(Request $request, \App\Models\ProgressReport $progressReport)
     {
+        // Same headroom as a first submission: a report sent back for want of
+        // evidence is answered with photographs, over the same site signal.
+        UploadRuntime::prepare('technician.progress-report.revise');
+
         $technician = auth()->user()->technician;
         $serviceRequest = $progressReport->serviceRequest;
 
@@ -1793,12 +1797,20 @@ class TechnicianController extends Controller
             'percent_complete' => 'nullable|integer|min:0|max:100',
             'notes' => 'nullable|string|max:2000',
             'comment' => 'nullable|string|max:1000',
+            // The commonest thing asked for when a report is returned. Without
+            // this the only way to add evidence was a second report, which is
+            // the duplication this whole path exists to avoid.
+            'photos' => 'nullable|array|max:6',
+            'photos.*' => 'nullable|file|mimes:jpg,jpeg,png,webp,heic,heif|max:10240',
         ]);
 
+        $photos = $request->file('photos', []);
+
         // Sending it back up unchanged says nothing about what was queried.
-        if (!$request->filled('comment') && !$request->filled('notes') && !$request->filled('percent_complete')) {
+        if (!$request->filled('comment') && !$request->filled('notes')
+            && !$request->filled('percent_complete') && $photos === []) {
             return back()->withErrors([
-                'comment' => 'Change the figure, edit the notes, or add a comment before sending it back.',
+                'comment' => 'Change the figure, edit the notes, add a photo, or add a comment before sending it back.',
             ]);
         }
 
@@ -1807,7 +1819,7 @@ class TechnicianController extends Controller
             if (!$serviceRequest->isLeadTechnician($technician->id)) {
                 abort(403, 'Only the lead technician can answer a report the office sent back on this job.');
             }
-            app(ProgressService::class)->reviseByLead($progressReport, auth()->id(), $data);
+            app(ProgressService::class)->reviseByLead($progressReport, auth()->id(), $data, $photos);
             return back()->with('success', 'Sent back to the project team.');
         }
 
@@ -1819,7 +1831,7 @@ class TechnicianController extends Controller
             if (!$isOwner) {
                 abort(403, 'That report is not yours to revise.');
             }
-            app(ProgressService::class)->reviseByTechnician($progressReport, auth()->id(), $data);
+            app(ProgressService::class)->reviseByTechnician($progressReport, auth()->id(), $data, $photos);
             return back()->with('success', 'Sent back to your lead technician to sign off.');
         }
 

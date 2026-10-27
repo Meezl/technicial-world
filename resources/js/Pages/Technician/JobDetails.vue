@@ -426,11 +426,24 @@
                                         placeholder="Answer the query — e.g. the figure is right, the extra panels went in after the photos."
                                     ></textarea>
                                 </label>
+                                <!-- A returned report is most often asking for better
+                                     evidence. Adding it here keeps the photographs with
+                                     the claim they answer, instead of in a second report. -->
+                                <div class="form-field">
+                                    <span>Add photos</span>
+                                    <PhotoUploader
+                                        v-model="revisePhotos"
+                                        :max="6"
+                                        :disabled="busyReportId === revisingClaim.id"
+                                        hint="Optional. Up to 6 photos backing up what you are saying here."
+                                        @busy="preparingRevisePhotos = $event"
+                                    />
+                                </div>
                                 <p v-if="reviseError" class="reject-error">{{ reviseError }}</p>
                                 <div class="signoff-actions">
                                     <button
                                         class="btn btn-primary"
-                                        :disabled="busyReportId === revisingClaim.id"
+                                        :disabled="busyReportId === revisingClaim.id || preparingRevisePhotos"
                                         @click="submitRevision()"
                                     >
                                         {{ busyReportId === revisingClaim.id ? 'Sending…' : 'Send back up' }}
@@ -477,11 +490,24 @@
                                             placeholder="What you put right — e.g. corrected to 60%, the last two panels went in after the photos."
                                         ></textarea>
                                     </label>
+                                    <!-- A returned report is most often asking for better
+                                         evidence. Adding it here keeps the photographs with
+                                         the claim they answer, instead of in a second report. -->
+                                    <div class="form-field">
+                                        <span>Add photos</span>
+                                        <PhotoUploader
+                                                v-model="revisePhotos"
+                                            :max="6"
+                                            :disabled="busyReportId === revisingClaim.id"
+                                            hint="Optional. Up to 6 photos backing up what you are saying here."
+                                            @busy="preparingRevisePhotos = $event"
+                                        />
+                                    </div>
                                     <p v-if="reviseError" class="reject-error">{{ reviseError }}</p>
                                     <div class="signoff-actions">
                                         <button
                                             class="btn btn-primary"
-                                            :disabled="busyReportId === revisingClaim.id"
+                                            :disabled="busyReportId === revisingClaim.id || preparingRevisePhotos"
                                             @click="submitRevision()"
                                         >
                                             {{ busyReportId === revisingClaim.id ? 'Sending…' : 'Resubmit to lead' }}
@@ -761,6 +787,60 @@
                             Sent back<span v-if="report.rejector?.name"> by {{ report.rejector.name }}</span>:
                             {{ report.rejection_reason }}
                         </p>
+
+                        <!-- Answering a report sent back from here, rather than
+                             filing a second one. A whole-job report has no
+                             sub-task card to answer from, so without this the
+                             only way out of a query was a duplicate — which the
+                             office then had to reconcile against the original. -->
+                        <div v-if="canReviseFromHistory(report)" class="report-revise">
+                            <div v-if="revisingClaim?.id !== report.id">
+                                <button class="btn btn-primary btn-full" @click="openRevise(report)">
+                                    <i class="fas fa-pen"></i> Edit &amp; resubmit
+                                </button>
+                            </div>
+
+                            <div v-else class="revise-box">
+                                <label class="form-field">
+                                    <span>Progress %</span>
+                                    <input v-model.number="reviseForm.percent_complete" type="number" min="0" max="100" class="input">
+                                </label>
+                                <label class="form-field">
+                                    <span>Notes</span>
+                                    <textarea v-model="reviseForm.notes" rows="3" class="input textarea"></textarea>
+                                </label>
+                                <label class="form-field">
+                                    <span>Add a comment</span>
+                                    <textarea
+                                        v-model="reviseForm.comment"
+                                        rows="2"
+                                        class="input textarea"
+                                        placeholder="Answer what was asked — e.g. corrected to 60%, the last two panels went in after the photos."
+                                    ></textarea>
+                                </label>
+                                <div class="form-field">
+                                    <span>Add photos</span>
+                                    <PhotoUploader
+                                        v-model="revisePhotos"
+                                        :max="6"
+                                        :disabled="busyReportId === report.id"
+                                        hint="Optional. Up to 6 photos backing up what you are saying here."
+                                        @busy="preparingRevisePhotos = $event"
+                                    />
+                                </div>
+                                <p v-if="reviseError" class="reject-error">{{ reviseError }}</p>
+                                <div class="signoff-actions">
+                                    <button
+                                        class="btn btn-primary"
+                                        :disabled="busyReportId === report.id || preparingRevisePhotos"
+                                        @click="submitRevision()"
+                                    >
+                                        {{ busyReportId === report.id ? 'Sending…' : reviseSubmitLabel(report) }}
+                                    </button>
+                                    <button class="btn btn-outline" @click="cancelRevise()">Cancel</button>
+                                </div>
+                            </div>
+                        </div>
 
                         <p v-if="report.notes" class="report-notes">{{ report.notes }}</p>
                         <p v-if="report.validation_notes" class="report-validation-note">
@@ -1236,10 +1316,55 @@ function confirmApprove() {
 const revisingClaim = ref(null)
 const reviseForm = ref({ percent_complete: 0, notes: '', comment: '' })
 const reviseError = ref('')
+// Photographs added while answering. Kept out of reviseForm because the
+// uploader owns the queue and is reset through its own ref.
+// No uploader ref to reset: the box is removed from the page when the answer
+// is sent or cancelled, so the queue goes with it. A ref would also be an
+// array here — one of these boxes renders inside the history's v-for.
+const revisePhotos = ref([])
+const preparingRevisePhotos = ref(false)
+
+// May this technician answer a report that was sent back, rather than file a
+// fresh one? Mirrors reviseReturnedReport on the server: the office returns to
+// the lead, the lead returns to whoever's work it is.
+function canReviseReport(report) {
+    if (!report?.rejected_at) return false
+
+    if (isReturnedToLead(report)) {
+        return props.isLeadTechnician
+    }
+
+    return report.technician_id === props.technician.id
+        || report.submitted_by === props.technician.user_id
+}
+
+// The sub-task cards already offer the latest claim on each task. Anything
+// else that was sent back — a whole-job report above all, which has no card of
+// its own — is answered from the history list, so no returned report is left
+// without a way back other than filing a duplicate.
+function offeredOnSubTaskCard(report) {
+    if (!report.service_sub_task_id) return false
+
+    const task = (props.job.sub_tasks || []).find((t) => t.id === report.service_sub_task_id)
+
+    return Boolean(task && claimsFor(task)[0]?.id === report.id)
+}
+
+function canReviseFromHistory(report) {
+    return canReviseReport(report) && !offeredOnSubTaskCard(report)
+}
+
+// An answer to the office goes back to the office; an answer to the lead goes
+// back to the lead. The button says which, so nobody expects the client to
+// hear about it next.
+function reviseSubmitLabel(report) {
+    return isReturnedToLead(report) ? 'Send back to the office' : 'Resubmit to lead'
+}
 
 function openRevise(claim) {
     revisingClaim.value = claim
     reviseError.value = ''
+    revisePhotos.value = []
     reviseForm.value = {
         percent_complete: claim.percent_complete,
         notes: claim.notes || '',
@@ -1250,32 +1375,43 @@ function openRevise(claim) {
 function cancelRevise() {
     revisingClaim.value = null
     reviseError.value = ''
+    revisePhotos.value = []
+    preparingRevisePhotos.value = false
 }
 
 function submitRevision() {
     const claim = revisingClaim.value
-    if (!claim) return
+    if (!claim || preparingRevisePhotos.value) return
 
     const unchanged =
         Number(reviseForm.value.percent_complete) === Number(claim.percent_complete) &&
         (reviseForm.value.notes || '') === (claim.notes || '') &&
-        !reviseForm.value.comment.trim()
+        !reviseForm.value.comment.trim() &&
+        revisePhotos.value.length === 0
 
     if (unchanged) {
-        reviseError.value = 'Change the figure, edit the notes, or add a comment before sending it back.'
+        reviseError.value = 'Change the figure, edit the notes, add a photo, or add a comment before sending it back.'
         return
     }
 
+    // FormData rather than a plain object: the answer can carry photographs,
+    // which is the commonest thing a returned report is asking for.
+    const formData = new FormData()
+    formData.append('percent_complete', reviseForm.value.percent_complete)
+    formData.append('notes', reviseForm.value.notes || '')
+    formData.append('comment', reviseForm.value.comment || '')
+    revisePhotos.value.forEach((file, index) => {
+        formData.append(`photos[${index}]`, file)
+    })
+
     busyReportId.value = claim.id
-    router.post(`/technician/progress-reports/${claim.id}/revise`, {
-        percent_complete: reviseForm.value.percent_complete,
-        notes: reviseForm.value.notes,
-        comment: reviseForm.value.comment,
-    }, {
+    router.post(`/technician/progress-reports/${claim.id}/revise`, formData, {
+        forceFormData: true,
         preserveScroll: true,
         onSuccess: () => cancelRevise(),
         onError: (errors) => {
-            reviseError.value = errors.comment || errors.percent_complete || 'Could not send that back.'
+            reviseError.value = errors.comment || errors.percent_complete
+                || errors['photos.0'] || 'Could not send that back.'
         },
         onFinish: () => { busyReportId.value = null },
     })
@@ -1792,6 +1928,12 @@ defineOptions({ layout: null })
     font-size: .82rem;
     line-height: 1.45;
     color: #9f1239;
+}
+
+/* The way out of a returned report, sitting directly under the reason it was
+   returned for. */
+.report-revise {
+    margin: .25rem 0 .6rem;
 }
 
 .subtask-returned {
