@@ -271,6 +271,77 @@ class NewRequestAlertTest extends TestCase
         Notification::assertSentToTimes($this->admin, NewServiceRequestNotification::class, 1);
     }
 
+    /**
+     * A queued alert carries only the recipient's id, and the worker sends to
+     * whoever has that id in its database. A client received office reminders
+     * about another client's requests that way, so the notification checks
+     * the role itself, at the moment it sends.
+     */
+    public function test_an_office_alert_addressed_to_a_client_is_not_sent(): void
+    {
+        $sr = $this->alertedRequest();
+
+        $this->client->notify(new NewServiceRequestNotification($sr, 4));
+
+        $this->assertSame(0, $this->client->notifications()->count());
+        $this->assertNotContains($this->client->email, $this->mailedTo());
+    }
+
+    public function test_an_office_alert_addressed_to_deactivated_staff_is_not_sent(): void
+    {
+        $sr = $this->alertedRequest();
+        $this->pm->forceFill(['is_active' => false])->save();
+
+        $this->pm->notify(new NewServiceRequestNotification($sr->fresh(), 1));
+
+        $this->assertSame(0, $this->pm->notifications()->count());
+        $this->assertNotContains($this->pm->email, $this->mailedTo());
+    }
+
+    public function test_the_send_time_check_still_lets_staff_and_the_inbox_through(): void
+    {
+        $sr = $this->alertedRequest();
+
+        app(\App\Services\NotificationService::class)->alertOfficeAboutRfq($sr, 1);
+
+        $this->assertSame(1, $this->admin->notifications()->count());
+        $this->assertSame(1, $this->pm->notifications()->count());
+        $this->assertSame(0, $this->client->notifications()->count());
+
+        $mailed = $this->mailedTo();
+        $this->assertContains($this->admin->email, $mailed);
+        $this->assertContains($this->pm->email, $mailed);
+        $this->assertContains('info@technicianworld.co.ke', $mailed);
+        $this->assertNotContains($this->client->email, $mailed);
+    }
+
+    private function alertedRequest(): ServiceRequest
+    {
+        return ServiceRequest::create([
+            'request_id' => 'REQ-GUARD1',
+            'user_id' => $this->client->id,
+            'service_category_id' => $this->category->id,
+            'description' => 'Fixing a sink.',
+            'location' => 'Nairobi West',
+            'urgency' => 'low',
+            'status' => ServiceRequest::STATUS_PENDING,
+        ]);
+    }
+
+    /**
+     * Every address the array mailer has actually delivered to.
+     *
+     * @return array<int, string>
+     */
+    private function mailedTo(): array
+    {
+        return collect(app('mailer')->getSymfonyTransport()->messages())
+            ->flatMap(fn ($sent) => $sent->getEnvelope()->getRecipients())
+            ->map(fn ($address) => $address->getAddress())
+            ->values()
+            ->all();
+    }
+
     public function test_requests_that_were_never_alerted_are_not_reminded(): void
     {
         Notification::fake();

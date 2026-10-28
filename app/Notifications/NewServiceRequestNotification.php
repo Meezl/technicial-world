@@ -39,6 +39,44 @@ class NewServiceRequestNotification extends Notification implements ShouldQueue
         return $notifiable instanceof AnonymousNotifiable ? ['mail'] : ['mail', 'database'];
     }
 
+    /**
+     * The last word on who receives this, checked as it is sent.
+     *
+     * The recipients are picked when the alert is queued, but a queued job
+     * carries only the user's id; the worker loads whoever has that id in its
+     * own database. A client received office reminders about another
+     * client's requests that way, without their role ever having changed.
+     * Laravel asks shouldSend() in the worker, after that load, so this is
+     * the one place that sees the user the email will actually reach.
+     */
+    public function shouldSend(object $notifiable, string $channel): bool
+    {
+        if (!$notifiable instanceof User) {
+            return true;
+        }
+
+        $allowed = in_array($notifiable->role, [User::ROLE_ADMIN, User::ROLE_PROJECT_MANAGER], true)
+            // Unset on a model that was created in memory and never reloaded;
+            // the column defaults to active.
+            && (bool) ($notifiable->is_active ?? true);
+
+        if (!$allowed) {
+            // Loud on purpose: this means something queued an office alert
+            // for somebody who is not office staff, and that is worth finding.
+            \Illuminate\Support\Facades\Log::warning('Office alert blocked for non-staff recipient', [
+                'user_id' => $notifiable->id,
+                'role' => $notifiable->role,
+                'is_active' => $notifiable->is_active,
+                'service_request_id' => $this->serviceRequest->id,
+                'request_id' => $this->serviceRequest->request_id,
+                'reminder' => $this->reminder,
+                'channel' => $channel,
+            ]);
+        }
+
+        return $allowed;
+    }
+
     public function toMail(object $notifiable): MailMessage
     {
         $sr = $this->serviceRequest;
