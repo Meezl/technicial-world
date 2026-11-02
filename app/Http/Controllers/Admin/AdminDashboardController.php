@@ -436,6 +436,18 @@ class AdminDashboardController extends Controller
         // Compute budget vs actual for this SR
         $budgetSummary = $this->buildBudgetSummary($job);
 
+        // Whether approving completion will close the job outright, because
+        // the client has already confirmed the work. The sign-off card says so
+        // before the office presses the button.
+        $job->setAttribute('client_signed_off', $job->clientHasSignedOff());
+
+        // Who approved the quote and exactly when, named rather than an id,
+        // so the timing card reads as a record of it.
+        $approvalEvidence = $job->approvalEvidence();
+        $approvalEvidence['approver_name'] = $approvalEvidence['approver_id']
+            ? User::whereKey($approvalEvidence['approver_id'])->value('name')
+            : null;
+
         return Inertia::render('Admin/JobDetails', [
             'job' => $job,
             // What each status means, who it is waiting on, and what to say to
@@ -483,7 +495,7 @@ class AdminDashboardController extends Controller
                 'deposit_required' => $conversions->depositRequired($serviceRequest),
                 'deposit_paid' => $conversions->depositPaid($serviceRequest),
             ],
-            'approvalEvidence' => $serviceRequest->approvalEvidence(),
+            'approvalEvidence' => $approvalEvidence,
             // Who the client is expecting and when — the same reading the
             // notice email and the client's own page use.
             'attendanceRoster' => $serviceRequest->attendanceRoster(),
@@ -4900,13 +4912,21 @@ class AdminDashboardController extends Controller
             );
         }
 
-        app(\App\Services\JobService::class)
+        $approved = app(\App\Services\JobService::class)
             ->approveCompletion($serviceRequest, auth()->user(), $request->input('notes'));
 
         AuditLog::log(AuditLog::ACTION_APPROVAL, $serviceRequest, null, [
             'completion_approved_by' => auth()->id(),
             'notes' => $request->input('notes'),
         ]);
+
+        // The client had already confirmed it, so approval closed the job and
+        // there is nothing for them to verify.
+        if ($approved->status === ServiceRequest::STATUS_CLOSED) {
+            return back()->with('success',
+                $serviceRequest->request_id . ' approved and closed. The client had already confirmed the work, so they were not asked again.'
+            );
+        }
 
         // Tell the client. They can find it in their portal either way, but a
         // client who does not log in would otherwise never know it was waiting

@@ -80,6 +80,19 @@
                             <i class="fas fa-wallet"></i>
                             Payments
                         </Link>
+                        <!-- The one decision a job at this stage is waiting on.
+                             The sign-off card further down holds it too, but
+                             from the top of the page it read as finished with
+                             nothing left to do. -->
+                        <button
+                            v-if="awaitingCompletionSignOff"
+                            type="button"
+                            class="btn btn-primary hero-action-btn"
+                            @click="showApproveCompletion = true"
+                        >
+                            <i class="fas fa-circle-check"></i>
+                            Approve completion
+                        </button>
                         <!-- A job can be recorded as delivered and not be. The
                              office needs a way back that is not the database. -->
                         <button
@@ -495,7 +508,11 @@
                             </div>
                             <div class="signoff-fact">
                                 <span>Client confirmed</span>
-                                <strong>{{ job.client_confirmed_completion ? 'Yes' : 'Not yet' }}</strong>
+                                <strong>{{ job.client_signed_off ? 'Yes' : 'Not yet' }}</strong>
+                            </div>
+                            <div v-if="job.rating" class="signoff-fact">
+                                <span>Client rating</span>
+                                <strong>{{ job.rating }} / 5</strong>
                             </div>
                             <div class="signoff-fact">
                                 <span>Crew on the job</span>
@@ -2091,6 +2108,15 @@
                                 <span>Created</span>
                                 <strong>{{ formatDate(job.created_at) }}</strong>
                             </div>
+                            <!-- The record of the client agreeing to the price:
+                                 to the minute, and how, since a dispute turns on
+                                 exactly that. -->
+                            <div class="sidebar-detail-item" v-if="approvalEvidence?.approved">
+                                <span>Quote approved</span>
+                                <strong v-if="approvalEvidence.approved_at">{{ formatDateTime(approvalEvidence.approved_at) }}</strong>
+                                <strong v-else>Before approval times were recorded</strong>
+                                <p v-if="quoteApprovalHow">{{ quoteApprovalHow }}</p>
+                            </div>
                             <div class="sidebar-detail-item" v-if="job.scheduled_date">
                                 <span>Scheduled</span>
                                 <strong>{{ formatDate(job.scheduled_date) }}</strong>
@@ -2399,7 +2425,12 @@
                     <button @click="showApproveCompletion = false" class="close-btn">&times;</button>
                 </div>
                 <div class="modal-body">
-                    <p class="roster-help" style="margin-bottom:0.85rem;">
+                    <p v-if="job.client_signed_off" class="roster-help" style="margin-bottom:0.85rem;">
+                        {{ job.user?.name }} has already confirmed this work, so approving closes
+                        {{ job.request_id }} now and they are not asked again. The completion date is
+                        stamped and the job counts towards every technician on it.
+                    </p>
+                    <p v-else class="roster-help" style="margin-bottom:0.85rem;">
                         {{ job.request_id }} will be sent to {{ job.user?.name }} to verify, and they
                         will be emailed a link. The completion date is stamped now and the job counts
                         towards every technician on it — but it is not filed away until the client confirms.
@@ -2413,7 +2444,7 @@
                 <div class="modal-footer">
                     <button @click="showApproveCompletion = false" class="btn btn-secondary">Cancel</button>
                     <button @click="approveCompletion" class="btn btn-primary" :disabled="savingSignOff">
-                        {{ savingSignOff ? 'Sending…' : 'Approve and send to client' }}
+                        {{ savingSignOff ? 'Saving…' : (job.client_signed_off ? 'Approve and close' : 'Approve and send to client') }}
                     </button>
                 </div>
             </div>
@@ -5811,7 +5842,9 @@ const formatStatus = (status) => {
         'suspended': 'Suspended',
         'reassigned': 'Reassigned',
         'completed': 'Completed',
-        'completed_pending_confirmation': 'Completed - Pending Confirmation',
+        // Waiting on the office, not the client — the old wording sent people
+        // looking for a confirmation the client had already given.
+        'completed_pending_confirmation': 'Done on Site - Awaiting Office Approval',
         'closed': 'Closed',
         'archived': 'Archived',
         'cancelled': 'Cancelled',
@@ -5852,6 +5885,20 @@ const getInitials = (name) => {
     if (!name) return 'T'
     return name.split(' ').map(part => part[0]).join('').toUpperCase().slice(0, 2)
 }
+
+// How the quote was agreed, for the line under its approval time.
+const quoteApprovalHow = computed(() => {
+    const e = props.approvalEvidence
+    if (!e?.approved) return null
+    const who = e.approver_name ? ` by ${e.approver_name}` : ''
+    const revision = e.revision ? ` (revision ${e.revision})` : ''
+    switch (e.channel) {
+        case 'client_portal': return `Approved in the client portal${who}${revision}.`
+        case 'client_payment': return `Taken as approved when the deposit was paid in full${revision}.`
+        case 'admin_proxy': return `Approved on the client's behalf${who}${revision}.${e.note ? ' ' + e.note : ''}`
+        default: return null
+    }
+})
 
 const formatDate = (dateString) => {
     if (!dateString) return 'Not scheduled'

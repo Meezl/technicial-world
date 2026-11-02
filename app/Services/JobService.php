@@ -290,11 +290,33 @@ class JobService
 
             $progress->releaseToClient($serviceRequest, null, $approver->id);
 
-            return $this->transitionState(
+            $handedOver = $this->transitionState(
                 $serviceRequest,
                 ServiceRequest::STATUS_AWAITING_CLIENT_VERIFICATION,
                 'Completion approved by ' . $approver->name . '; sent to the client to verify',
                 ['approved_by' => $approver->id, 'notes' => $notes]
+            );
+
+            // A client who has already confirmed the work, or rated it well
+            // once it was done, is not asked the same question twice. The
+            // job closes on the office's approval as though they had
+            // verified it, because they have.
+            if (!$handedOver->clientHasSignedOff()) {
+                return $handedOver;
+            }
+
+            $handedOver->update([
+                'client_confirmed_completion' => true,
+                'client_confirmation_date' => $handedOver->client_confirmation_date ?? now(),
+                'closed_without_client' => false,
+                'closed_by' => $handedOver->user_id,
+            ]);
+
+            return $this->transitionState(
+                $handedOver,
+                ServiceRequest::STATUS_CLOSED,
+                'Closed on office approval: the client had already confirmed the work',
+                ['approved_by' => $approver->id]
             );
         });
     }
@@ -578,6 +600,10 @@ class JobService
                 // headline figure stops claiming the work is finished.
                 'completed_date' => null,
                 'progress_percentage' => min((int) $serviceRequest->progress_percentage, 99),
+                // Whatever the client confirmed was the work the office has
+                // just turned down. They confirm again once it is right.
+                'client_confirmed_completion' => false,
+                'client_confirmation_date' => null,
             ]);
 
             return $this->transitionState(

@@ -140,6 +140,101 @@ class ClientVerificationTest extends TestCase
             });
     }
 
+    // ---------- client already signed off ----------
+
+    /** Walk it to the lead's sign-off and stop, short of the office. */
+    private function signedOffOnSite(array $s): void
+    {
+        $s['sr']->update(['technician_arrived' => true]);
+
+        $this->actingAs($s['lead']->user)
+            ->post(route('technician.jobs.status', $s['sr']), ['action' => 'completed']);
+
+        $this->assertSame(ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION, $s['sr']->fresh()->status);
+    }
+
+    private function approve(array $s)
+    {
+        return $this->actingAs($s['admin'])
+            ->post(route('admin.jobs.approve-completion', $s['sr']), ['notes' => 'Checked.']);
+    }
+
+    public function test_a_client_who_rated_the_finished_job_is_not_asked_again(): void
+    {
+        Notification::fake();
+        $s = $this->scenario();
+        $this->signedOffOnSite($s);
+
+        $this->actingAs($s['client'])
+            ->post(route('client.rate-job', $s['sr']), ['rating' => 5, 'comments' => 'Sorted quickly.']);
+
+        $this->approve($s)->assertSessionHas('success');
+
+        $sr = $s['sr']->fresh();
+        $this->assertSame(ServiceRequest::STATUS_CLOSED, $sr->status);
+        $this->assertTrue((bool) $sr->client_confirmed_completion);
+        $this->assertFalse((bool) $sr->closed_without_client);
+        $this->assertNotNull($sr->completed_date);
+        Notification::assertNotSentTo($s['client'], JobReadyForVerification::class);
+    }
+
+    public function test_a_client_who_confirmed_the_work_is_not_asked_again(): void
+    {
+        Notification::fake();
+        $s = $this->scenario();
+        $this->signedOffOnSite($s);
+
+        $this->actingAs($s['client'])
+            ->postJson(route('client.confirm-completion', $s['sr']))
+            ->assertOk();
+
+        $this->approve($s);
+
+        $this->assertSame(ServiceRequest::STATUS_CLOSED, $s['sr']->fresh()->status);
+        Notification::assertNotSentTo($s['client'], JobReadyForVerification::class);
+    }
+
+    /** A poor score is a reason to ask, not a sign-off. */
+    public function test_a_low_rating_still_goes_to_the_client_to_verify(): void
+    {
+        Notification::fake();
+        $s = $this->scenario();
+        $this->signedOffOnSite($s);
+
+        $this->actingAs($s['client'])
+            ->post(route('client.rate-job', $s['sr']), ['rating' => 2]);
+
+        $this->approve($s);
+
+        $this->assertSame(ServiceRequest::STATUS_AWAITING_CLIENT_VERIFICATION, $s['sr']->fresh()->status);
+        Notification::assertSentTo($s['client'], JobReadyForVerification::class);
+    }
+
+    /** A rating for the first attempt says nothing about the rework. */
+    public function test_a_rating_from_before_a_send_back_does_not_count(): void
+    {
+        Notification::fake();
+        $s = $this->scenario();
+        $this->signedOffOnSite($s);
+
+        $this->actingAs($s['client'])
+            ->post(route('client.rate-job', $s['sr']), ['rating' => 5]);
+
+        $this->travel(1)->minutes();
+
+        $this->actingAs($s['admin'])
+            ->post(route('admin.jobs.return-for-rework', $s['sr']), ['reason' => 'Flashing on the north side is not sealed.']);
+        $this->assertSame(ServiceRequest::STATUS_IN_PROGRESS, $s['sr']->fresh()->status);
+
+        $this->travel(1)->minutes();
+        $this->actingAs($s['lead']->user)
+            ->post(route('technician.jobs.status', $s['sr']), ['action' => 'completed']);
+
+        $this->approve($s);
+
+        $this->assertSame(ServiceRequest::STATUS_AWAITING_CLIENT_VERIFICATION, $s['sr']->fresh()->status);
+    }
+
     /** The rule: nothing is filed away until the client has had it. */
     public function test_a_job_awaiting_the_client_is_not_archived(): void
     {

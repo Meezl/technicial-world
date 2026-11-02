@@ -147,7 +147,7 @@
                             <strong>{{ request.service_category?.name || 'Service Request' }}</strong>
                             <span>{{ request.job_reference || request.request_id }}</span>
                         </div>
-                        <span :class="['status-badge', statusTone(request.status)]">
+                        <span :class="['status-badge', statusTone(request.status, request)]">
                             {{ formatStatus(request.status, request) }}
                         </span>
                     </Link>
@@ -359,7 +359,7 @@
                                     <strong>{{ request.service_category?.name || 'Service Request' }}</strong>
                                     <span>{{ request.job_reference || request.request_id }}</span>
                                 </div>
-                                <span :class="['status-badge', statusTone(request.status)]">
+                                <span :class="['status-badge', statusTone(request.status, request)]">
                                     {{ formatStatus(request.status, request) }}
                                 </span>
                             </div>
@@ -439,7 +439,7 @@
                                 </td>
                                 <td>{{ formatDate(request.created_at) }}</td>
                                 <td>
-                                    <span :class="['status-badge', statusTone(request.status)]">
+                                    <span :class="['status-badge', statusTone(request.status, request)]">
                                         {{ formatStatus(request.status, request) }}
                                     </span>
                                 </td>
@@ -466,7 +466,7 @@
                                 <strong>{{ request.service_category?.name || 'Service Request' }}</strong>
                                 <span>{{ request.job_reference || request.request_id }}</span>
                             </div>
-                            <span :class="['status-badge', statusTone(request.status)]">
+                            <span :class="['status-badge', statusTone(request.status, request)]">
                                 {{ formatStatus(request.status, request) }}
                             </span>
                         </div>
@@ -507,6 +507,7 @@ import { Link, usePage } from '@inertiajs/vue3'
 import { computed, ref } from 'vue'
 import ClientSidebar from '../../Components/ClientSidebar.vue'
 import ClientBottomNav from '../../Components/ClientBottomNav.vue'
+import { clientNextStep, clientStatusLabel, isQuoteDeclined } from '../../composables/useClientStatus'
 
 const page = usePage()
 
@@ -587,17 +588,9 @@ const heroMessage = computed(() => {
     return 'Submit a request to get a quotation, approve, pay, and track delivery — all from here.'
 })
 
-/**
- * Display the request status. For "awaiting_payment" we split into two
- * cases (#13): if a payment request has been issued the label reads
- * "Awaiting Payment"; if not, "Awaiting Payment Request from TW".
- */
+// Client-facing wording, shared with the request page. See useClientStatus.
 function formatStatus(status, request) {
-    if (status === 'awaiting_payment') {
-        const hasPending = Number(request?.pending_payment_requests_count) > 0
-        return hasPending ? 'Awaiting Payment' : 'Awaiting Payment Request from TW'
-    }
-    return (status || 'pending').replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+    return clientStatusLabel({ ...request, status })
 }
 
 function formatQuoteStatus(status) {
@@ -672,7 +665,9 @@ function quotationSubline(request) {
     }
 }
 
-function statusTone(status) {
+function statusTone(status, request) {
+    if (request && isQuoteDeclined(request)) return 'tone-orange'
+
     const map = {
         pending: 'tone-amber',
         awaiting_quote_generation: 'tone-amber',
@@ -683,7 +678,9 @@ function statusTone(status) {
         assigned: 'tone-green',
         in_progress: 'tone-green',
         completed: 'tone-slate',
-        completed_pending_confirmation: 'tone-slate',
+        completed_pending_confirmation: 'tone-green',
+        awaiting_client_verification: 'tone-amber',
+        client_query_raised: 'tone-orange',
         closed: 'tone-slate',
     }
 
@@ -691,6 +688,8 @@ function statusTone(status) {
 }
 
 function nextStepMessage(request) {
+    const shared = clientNextStep(request)
+    if (shared) return shared
     if (request.status === 'awaiting_quote_approval') return 'Review your quotation and approve it when you are ready.'
     if (request.status === 'awaiting_payment' || request.status === 'payment_pending_approval') return 'Payment confirmation is the next step before scheduling can continue.'
     if (request.status === 'ready_for_assignment') return 'Your request is approved and being prepared for technician assignment.'

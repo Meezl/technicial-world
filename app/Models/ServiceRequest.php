@@ -1651,6 +1651,53 @@ class ServiceRequest extends Model
     /**
      * Check if transition to a new status is valid.
      */
+    /**
+     * Has the client already said this work is done?
+     *
+     * Either in so many words — the confirm button, which a reopen or a
+     * send-back clears — or by rating it well once the work was finished. A
+     * client who has rated the job and approved it should not be sent the
+     * same report a second time to verify.
+     *
+     * A rating only counts if it came after the job last went back to work:
+     * ratings survive a reopen, because they feed a technician's standing,
+     * and a score for the first attempt says nothing about the rework. A low
+     * score is not a sign-off — that client still gets the verification, and
+     * with it the option to raise a concern.
+     */
+    public function clientHasSignedOff(): bool
+    {
+        if ($this->client_confirmed_completion) {
+            return true;
+        }
+
+        if ((int) $this->rating < 3) {
+            return false;
+        }
+
+        $ratedAt = AuditLog::where('auditable_type', self::class)
+            ->where('auditable_id', $this->id)
+            ->where('new_values->event', 'client_rated_job')
+            ->latest('id')
+            ->value('created_at');
+
+        if (!$ratedAt) {
+            return false;
+        }
+
+        $backToWork = JobStateLog::where('service_request_id', $this->id)
+            ->whereIn('to_state', [
+                self::STATUS_IN_PROGRESS,
+                self::STATUS_ASSIGNED,
+                self::STATUS_READY_FOR_ASSIGNMENT,
+                self::STATUS_SUSPENDED,
+            ])
+            ->latest('id')
+            ->value('created_at');
+
+        return !$backToWork || \Illuminate\Support\Carbon::parse($ratedAt)->gt($backToWork);
+    }
+
     public function canTransitionTo(string $newStatus): bool
     {
         $validTransitions = [

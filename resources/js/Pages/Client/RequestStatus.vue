@@ -1169,6 +1169,29 @@
                             </div>
                         </div>
 
+                        <!-- When the client agreed the price, to the minute.
+                             Both parties need the same record of it. -->
+                        <div :class="['timeline-item', { completed: quoteApprovedAt || serviceRequest.rfq_status === 'approved' }]">
+                            <div class="timeline-marker">
+                                <i class="fas fa-file-signature"></i>
+                            </div>
+                            <div class="timeline-content">
+                                <h4>Quote Approved</h4>
+                                <p v-if="quoteApprovedAt">{{ formatDate(quoteApprovedAt) }}</p>
+                                <span class="timeline-description">
+                                    <template v-if="serviceRequest.rfq_status === 'approved'">
+                                        {{ quoteApprovalHow }}
+                                    </template>
+                                    <template v-else-if="serviceRequest.rfq_status === 'rejected'">
+                                        You declined this quotation.
+                                    </template>
+                                    <template v-else>
+                                        Waiting for you to approve the quotation.
+                                    </template>
+                                </span>
+                            </div>
+                        </div>
+
                         <div :class="['timeline-item', { completed: paymentReceived }]">
                             <div class="timeline-marker">
                                 <i class="fas fa-money-bill-wave"></i>
@@ -1331,6 +1354,7 @@ import ClientBottomNav from '../../Components/ClientBottomNav.vue'
 import JobPhotoGallery from '../../Components/JobPhotoGallery.vue'
 import ClientVariationCards from '../../Components/ClientVariationCards.vue'
 import PhotoUploader from '../../Components/PhotoUploader.vue'
+import { clientStatusLabel } from '../../composables/useClientStatus'
 
 const props = defineProps({
     serviceRequest: {
@@ -1800,23 +1824,8 @@ const paidPaymentRequests = computed(() => {
     return (props.serviceRequest.payment_requests || []).filter(pr => pr.status === 'paid' || pr.status === 'completed')
 })
 
-const formatStatus = (status) => {
-    // For awaiting_payment, distinguish "request not yet sent" from
-    // "request sent, awaiting payment" based on whether a pending
-    // PaymentRequest exists for this service request (#13).
-    if (status === 'awaiting_payment') {
-        const hasPending = (props.serviceRequest.payment_requests || []).some(pr => pr.status === 'pending')
-        return hasPending ? 'Awaiting Payment' : 'Awaiting Payment Request from TW'
-    }
-    const statusMap = {
-        'pending': 'Pending Review',
-        'assigned': 'Technician Assigned',
-        'in_progress': 'Work in Progress',
-        'completed': 'Completed',
-        'cancelled': 'Cancelled'
-    }
-    return statusMap[status] || status
-}
+// Client-facing wording, shared with the dashboard. See useClientStatus.
+const formatStatus = (status) => clientStatusLabel({ ...props.serviceRequest, status })
 
 const formatRFQStatus = (status) => {
     const statusMap = {
@@ -2007,6 +2016,23 @@ const getStatusClass = (status) => {
             return 'review'
     }
 }
+
+// When the quotation was agreed: by the client in the portal, by their
+// deposit, or by our office on their behalf.
+const quoteApprovedAt = computed(() =>
+    props.serviceRequest.client_quote_approved_at || props.serviceRequest.proxy_quote_approved_at || null
+)
+
+const quoteApprovalHow = computed(() => {
+    const sr = props.serviceRequest
+    if (sr.proxy_quote_approved_at && !sr.client_quote_approved_at) {
+        return 'Approved on your behalf by our office, as agreed with you.'
+    }
+    if (sr.quote_approval_channel === 'client_payment') {
+        return 'Taken as approved when your deposit was paid in full.'
+    }
+    return 'You approved the quotation in your portal.'
+})
 
 const formatDate = (date) => {
     if (!date) return 'Not yet'

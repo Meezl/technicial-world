@@ -393,7 +393,7 @@ const formatStatus = (status) => {
         'in_progress':                      'In Progress',
         'delayed':                          'Delayed',
         'suspended':                        'Suspended',
-        'completed_pending_confirmation':   'Completed — Pending Confirmation',
+        'completed_pending_confirmation':   'Done on Site — Awaiting Office Approval',
         'completed':                        'Completed',
         'closed':                           'Closed',
         'cancelled':                        'Cancelled',
