@@ -685,6 +685,8 @@ Route::middleware(['auth', 'role:admin,project_manager'])->group(function () {
 Route::middleware(['auth', 'role:admin,project_manager'])->group(function () {
     Route::post('/jobs/{serviceRequest}/variations', [\App\Http\Controllers\Admin\VariationOrderController::class, 'store'])
         ->name('variations.store');
+    Route::put('/variations/{variationOrder}', [\App\Http\Controllers\Admin\VariationOrderController::class, 'update'])
+        ->name('variations.update');
     Route::post('/variations/{variationOrder}/send', [\App\Http\Controllers\Admin\VariationOrderController::class, 'send'])
         ->name('variations.send');
     Route::post('/variations/{variationOrder}/void', [\App\Http\Controllers\Admin\VariationOrderController::class, 'void'])

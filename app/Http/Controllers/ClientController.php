@@ -151,6 +151,9 @@ class ClientController extends Controller
                     'items' => $vo->items->map(fn ($item) => [
                         'id' => $item->id,
                         'description' => $item->description,
+                        'quantity' => (float) $item->quantity,
+                        'unit' => $item->unit,
+                        'unit_price' => (float) $item->unit_price,
                         'total_price' => (float) $item->total_price,
                     ]),
                 ]),

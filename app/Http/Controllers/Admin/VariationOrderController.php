@@ -41,13 +41,7 @@ class VariationOrderController extends Controller
             'internal_notes'  => 'nullable|string|max:2000',
             'additional_days' => 'nullable|integer|min:0|max:365',
 
-            'items'                => 'nullable|array|max:100',
-            'items.*.category'     => ['required_with:items', Rule::in(VariationOrderItem::CATEGORIES)],
-            'items.*.description'  => 'required_with:items|string|max:255',
-            'items.*.quantity'     => 'nullable|numeric',
-            'items.*.unit'         => 'nullable|string|max:20',
-            // Signed: a negative rate is how a deduction is expressed.
-            'items.*.unit_price'   => 'required_with:items|numeric',
+            ...$this->lineRules(),
 
             // Raise and send in one step.
             'send_now' => 'nullable|boolean',
@@ -88,6 +82,51 @@ class VariationOrderController extends Controller
         }
 
         return back()->with('success', "{$vo->vo_number} raised.");
+    }
+
+    /**
+     * Correct a draft, or one the client has not answered yet, in place.
+     * Saving and re-sending tells the client the figures have changed.
+     */
+    public function update(Request $request, VariationOrder $variationOrder)
+    {
+        $data = $request->validate([
+            'reason'          => 'required|string|max:2000',
+            'internal_notes'  => 'nullable|string|max:2000',
+            'additional_days' => 'nullable|integer|min:0|max:365',
+            ...$this->lineRules(),
+            'send_now' => 'nullable|boolean',
+        ]);
+
+        try {
+            $vo = $this->variations->update($variationOrder, $data, $request->user());
+
+            if ($request->boolean('send_now') && !$vo->isZeroIncome()) {
+                $this->variations->sendToClient($vo, $request->user());
+            }
+        } catch (RuntimeException $e) {
+            return back()->withErrors(['reason' => $e->getMessage()])->withInput();
+        }
+
+        return back()->with('success', $request->boolean('send_now')
+            ? "{$vo->vo_number} updated and re-sent to the client."
+            : "{$vo->vo_number} updated.");
+    }
+
+    /** A variation's lines, priced the way a quotation is: quantity × rate. */
+    private function lineRules(): array
+    {
+        return [
+            'items'                => 'nullable|array|max:100',
+            'items.*.category'     => ['required_with:items', Rule::in(VariationOrderItem::CATEGORIES)],
+            'items.*.description'  => 'required_with:items|string|max:255',
+            'items.*.quantity'     => 'nullable|numeric|min:0',
+            'items.*.unit'         => 'nullable|string|max:20',
+            // Signed: a negative rate is how a deduction is expressed.
+            'items.*.unit_price'   => 'required_with:items|numeric',
+            'billing'              => 'nullable|array',
+            'billing.deposit'      => 'nullable|numeric|min:0',
+        ];
     }
 
     public function send(Request $request, VariationOrder $variationOrder)

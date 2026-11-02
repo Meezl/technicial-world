@@ -5,7 +5,7 @@
                 <strong>Variations</strong>
                 <span class="vo-count">{{ variations.length }}</span>
             </div>
-            <button type="button" class="vo-btn vo-btn-primary" @click="showForm = !showForm">
+            <button type="button" class="vo-btn vo-btn-primary" @click="showForm ? closeForm() : openRaise()">
                 <i class="fas" :class="showForm ? 'fa-times' : 'fa-plus'"></i>
                 {{ showForm ? 'Cancel' : 'Raise variation' }}
             </button>
@@ -38,10 +38,22 @@
 
         <!-- Raise form. Deltas are signed: a negative rate is a deduction,
              which is why there is no separate "credit" mode. -->
-        <form v-if="showForm" class="vo-form" @submit.prevent="submit">
+        <form v-if="showForm" ref="formEl" class="vo-form" @submit.prevent="submit">
+            <div v-if="target" class="vo-form-title">
+                <strong>{{ mode === 'edit' ? 'Editing' : 'Revising' }} {{ target.vo_number }}</strong>
+                <span v-if="mode === 'edit' && target.status === 'pending_client'" class="vo-hint">
+                    The client is still deciding on this one. Saving updates what they see;
+                    re-send if they should be told the figures changed.
+                </span>
+                <span v-else-if="mode === 'revise'" class="vo-hint">
+                    The client declined {{ target.vo_number }}. This raises the next revision under
+                    the same number, and their decision on the original stays on record.
+                </span>
+            </div>
+
             <div class="vo-field">
                 <label>Type</label>
-                <select v-model="form.origin">
+                <select v-model="form.origin" :disabled="!!target">
                     <option value="tw">We are raising it</option>
                     <option value="client">Client asked for it</option>
                     <option value="zero_income">Internal only — no client charge</option>
@@ -66,15 +78,25 @@
                     </button>
                 </div>
 
+                <div class="vo-item vo-item-head" aria-hidden="true">
+                    <span>Type</span>
+                    <span>Description</span>
+                    <span>Qty</span>
+                    <span>Unit</span>
+                    <span>Rate</span>
+                    <span class="vo-item-total">Amount</span>
+                    <span></span>
+                </div>
                 <div v-for="(item, i) in form.items" :key="i" class="vo-item">
-                    <select v-model="item.category">
+                    <select v-model="item.category" aria-label="Type">
                         <option value="material">Material</option>
                         <option value="labor">Labour</option>
                         <option value="transport">Transport</option>
                     </select>
-                    <input v-model="item.description" type="text" placeholder="Description" />
-                    <input v-model.number="item.quantity" type="number" step="0.01" placeholder="Qty" />
-                    <input v-model.number="item.unit_price" type="number" step="0.01" placeholder="Rate" />
+                    <input v-model="item.description" type="text" placeholder="Description" aria-label="Description" />
+                    <input v-model.number="item.quantity" type="number" step="0.01" min="0" placeholder="Qty" aria-label="Quantity" />
+                    <input v-model="item.unit" type="text" maxlength="20" placeholder="e.g. 4L can" aria-label="Unit" />
+                    <input v-model.number="item.unit_price" type="number" step="0.01" placeholder="Rate" aria-label="Rate per unit" />
                     <span class="vo-item-total">{{ money(lineTotal(item)) }}</span>
                     <button type="button" class="vo-item-remove" title="Remove line" @click="form.items.splice(i, 1)">
                         <i class="fas fa-trash"></i>
@@ -109,8 +131,9 @@
             </div>
 
             <div class="vo-form-actions">
+                <button v-if="target" type="button" class="vo-btn vo-btn-ghost" @click="closeForm">Cancel</button>
                 <button type="submit" class="vo-btn vo-btn-ghost" :disabled="form.processing" @click="sendNow = false">
-                    Save as draft
+                    {{ saveLabel }}
                 </button>
                 <button
                     v-if="form.origin !== 'zero_income'"
@@ -119,7 +142,7 @@
                     :disabled="form.processing"
                     @click="sendNow = true"
                 >
-                    <i class="fas fa-paper-plane"></i> Save &amp; send to client
+                    <i class="fas fa-paper-plane"></i> {{ sendLabel }}
                 </button>
             </div>
         </form>
@@ -163,12 +186,36 @@
                 <span v-if="vo.additional_days">Time extension: +{{ vo.additional_days }} day{{ vo.additional_days === 1 ? '' : 's' }}</span>
             </div>
 
-            <ul v-if="vo.items && vo.items.length" class="vo-card-items">
-                <li v-for="item in vo.items" :key="item.id">
-                    <span>{{ item.description }}</span>
-                    <span class="vo-card-item-amt">{{ money(Number(item.total_price)) }}</span>
-                </li>
-            </ul>
+            <!-- Laid out like the quotation it amends, so the client can see
+                 how many of a thing and at what rate, not only the line total. -->
+            <div v-if="vo.items && vo.items.length" class="vo-lines-wrap">
+                <table class="vo-lines">
+                    <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th class="num">Qty</th>
+                            <th>Unit</th>
+                            <th class="num">Rate</th>
+                            <th class="num">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="item in sortedItems(vo)" :key="item.id">
+                            <td>{{ item.description }}</td>
+                            <td class="num">{{ qty(item.quantity) }}</td>
+                            <td>{{ item.unit }}</td>
+                            <td class="num">{{ money(Number(item.unit_price)) }}</td>
+                            <td class="num">{{ money(Number(item.total_price)) }}</td>
+                        </tr>
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="4">Total</td>
+                            <td class="num">{{ money(Number(vo.net_amount)) }}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
 
             <!-- Fee changes this variation authorised: the other half of the
                  click-through the product owner asked for. -->
@@ -240,6 +287,22 @@
 
             <div class="vo-card-actions">
                 <button
+                    v-if="canEdit(vo)"
+                    type="button"
+                    class="vo-btn vo-btn-ghost"
+                    @click="openEdit(vo)"
+                >
+                    <i class="fas fa-pen"></i> Edit
+                </button>
+                <button
+                    v-if="canRevise(vo)"
+                    type="button"
+                    class="vo-btn vo-btn-ghost"
+                    @click="openRevise(vo)"
+                >
+                    <i class="fas fa-redo"></i> Revise
+                </button>
+                <button
                     v-if="canSend(vo)"
                     type="button"
                     class="vo-btn vo-btn-primary"
@@ -282,7 +345,7 @@
  * how a client who owed 7,500 ended up being sent a 79,500 quotation to
  * approve.
  */
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { router, useForm } from '@inertiajs/vue3'
 
 const props = defineProps({
@@ -296,6 +359,11 @@ const props = defineProps({
 
 const showForm = ref(false)
 const sendNow = ref(false)
+// 'create', 'edit' or 'revise'; target is the variation being edited or
+// revised, and null when raising a new one.
+const mode = ref('create')
+const target = ref(null)
+const formEl = ref(null)
 
 const variations = computed(() => props.job.variation_orders || [])
 
@@ -324,19 +392,99 @@ const addTask = (vo) => {
     })
 }
 
+const blankItem = (category = 'material') => ({ category, description: '', quantity: 1, unit: '', unit_price: null })
+
 const form = useForm({
     origin: 'tw',
     reason: '',
     additional_days: null,
     deposit: null,
-    items: [{ category: 'labor', description: '', quantity: 1, unit_price: null }],
+    items: [blankItem('labor')],
 })
 
 const lineTotal = (item) => (Number(item.quantity) || 0) * (Number(item.unit_price) || 0)
 const net = computed(() => form.items.reduce((sum, i) => sum + lineTotal(i), 0))
 const netClass = computed(() => (net.value < 0 ? 'is-deduct' : 'is-add'))
 
-const addItem = () => form.items.push({ category: 'material', description: '', quantity: 1, unit_price: null })
+const addItem = () => form.items.push(blankItem())
+
+const sortedItems = (vo) => [...(vo.items || [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+
+// 52 rather than 52.00; 2.5 stays 2.5.
+const qty = (value) => Number(value || 0).toLocaleString('en-KE', { maximumFractionDigits: 2 })
+
+/**
+ * Fill the form from an existing variation, for an edit or a revision.
+ * The deposit comes back off the billing schedule, which is where it lives.
+ */
+const loadInto = (vo) => {
+    const deposit = (vo.billing_schedule || []).find(m => m.label === 'Deposit top-up')
+
+    form.clearErrors()
+    form.origin = vo.origin
+    form.reason = vo.reason
+    form.additional_days = vo.additional_days
+    form.deposit = deposit ? Number(deposit.amount) : null
+    form.items = sortedItems(vo).map(i => ({
+        category: i.category,
+        description: i.description,
+        quantity: Number(i.quantity),
+        unit: i.unit,
+        unit_price: Number(i.unit_price),
+    }))
+    if (!form.items.length) form.items = [blankItem('labor')]
+}
+
+const openForm = async (nextMode, vo = null) => {
+    mode.value = nextMode
+    target.value = vo
+    if (vo) {
+        loadInto(vo)
+    } else {
+        form.reset()
+        form.items = [blankItem('labor')]
+    }
+    showForm.value = true
+    await nextTick()
+    // The form opens above the card that was clicked. Scrolling in the same
+    // frame was swallowed by the browser's scroll anchoring, which left the
+    // page further down than it started, so this waits a beat and jumps.
+    setTimeout(() => {
+        const top = formEl.value?.getBoundingClientRect().top
+        if (top !== undefined) window.scrollTo({ top: window.scrollY + top - 16 })
+    }, 50)
+}
+
+const openRaise = () => openForm('create')
+const openEdit = (vo) => openForm('edit', vo)
+const openRevise = (vo) => openForm('revise', vo)
+
+const closeForm = () => {
+    showForm.value = false
+    mode.value = 'create'
+    target.value = null
+    form.reset()
+    form.clearErrors()
+    form.items = [blankItem('labor')]
+}
+
+// Correctable in place until the client has answered. Approved is final and
+// withdrawn is gone; a declined one is revised so the refusal stays on record.
+const canEdit = (vo) => ['draft', 'pending_client'].includes(vo.status)
+
+const canRevise = (vo) =>
+    vo.status === 'declined' && !variations.value.some(v => v.supersedes_id === vo.id)
+
+const saveLabel = computed(() => {
+    if (mode.value === 'edit') return target.value?.status === 'draft' ? 'Save draft' : 'Save changes'
+    return 'Save as draft'
+})
+
+const sendLabel = computed(() =>
+    mode.value === 'edit' && target.value?.status === 'pending_client'
+        ? 'Save & re-send to client'
+        : 'Save & send to client'
+)
 
 const money = (value) =>
     'KSH ' + Number(value || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -375,24 +523,23 @@ const canSend = (vo) =>
     vo.origin !== 'zero_income' && ['draft', 'pending_client'].includes(vo.status)
 
 const submit = () => {
-    form
-        .transform((data) => ({
-            ...data,
-            send_now: sendNow.value,
-            // Only the lines that actually carry a figure.
-            items: data.origin === 'zero_income'
-                ? []
-                : data.items.filter((i) => i.description && i.unit_price !== null && i.unit_price !== ''),
-            billing: data.deposit ? { deposit: data.deposit } : null,
-        }))
-        .post(route('variations.store', props.job.id), {
-            preserveScroll: true,
-            onSuccess: () => {
-                form.reset()
-                form.items = [{ category: 'labor', description: '', quantity: 1, unit_price: null }]
-                showForm.value = false
-            },
-        })
+    const prepared = form.transform((data) => ({
+        ...data,
+        send_now: sendNow.value,
+        // Only the lines that actually carry a figure.
+        items: data.origin === 'zero_income'
+            ? []
+            : data.items.filter((i) => i.description && i.unit_price !== null && i.unit_price !== ''),
+        billing: data.deposit ? { deposit: data.deposit } : null,
+        supersedes_id: mode.value === 'revise' ? target.value.id : undefined,
+    }))
+    const options = { preserveScroll: true, onSuccess: closeForm }
+
+    if (mode.value === 'edit') {
+        prepared.put(route('variations.update', target.value.id), options)
+    } else {
+        prepared.post(route('variations.store', props.job.id), options)
+    }
 }
 
 const send = (vo) => {
@@ -470,13 +617,18 @@ const voidVo = (vo) => {
 
 .vo-items { display: flex; flex-direction: column; gap: .5rem; }
 .vo-items-head { display: flex; align-items: center; justify-content: space-between; }
-.vo-item { display: grid; grid-template-columns: 6.5rem 1fr 5rem 7rem auto auto; gap: .4rem; align-items: center; }
+.vo-item { display: grid; grid-template-columns: 6.5rem 1fr 4.5rem 6rem 7rem 7rem auto; gap: .4rem; align-items: center; }
+.vo-item-head { font-size: .68rem; font-weight: 600; color: #6B7280; text-transform: uppercase; letter-spacing: .03em; }
+.vo-item-head span:last-child { width: 1.5rem; }
+.vo-form-title { display: flex; flex-direction: column; gap: .2rem; padding-bottom: .6rem; border-bottom: 1px solid #E5E7EB; }
+.vo-form-title strong { font-size: .9rem; color: #111827; }
 .vo-item-total { font-size: .8rem; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .vo-item-remove { border: 0; background: none; color: #9CA3AF; cursor: pointer; padding: .25rem; }
 .vo-item-remove:hover { color: #DC2626; }
 
 @media (max-width: 640px) {
     .vo-item { grid-template-columns: 1fr 1fr; }
+    .vo-item-head { display: none; }
     .vo-item-total { text-align: left; }
 }
 
@@ -505,9 +657,16 @@ const voidVo = (vo) => {
 .vo-card-reason { margin: .5rem 0 .35rem; font-size: .85rem; color: #374151; }
 .vo-card-meta { display: flex; gap: .85rem; flex-wrap: wrap; font-size: .74rem; color: #6B7280; }
 
-.vo-card-items { list-style: none; margin: .6rem 0 0; padding: .5rem .6rem; background: #F9FAFB; border-radius: 6px; }
-.vo-card-items li { display: flex; justify-content: space-between; gap: 1rem; font-size: .78rem; color: #4B5563; padding: .12rem 0; }
-.vo-card-item-amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.vo-lines-wrap { margin-top: .6rem; overflow-x: auto; background: #F9FAFB; border-radius: 6px; }
+.vo-lines { width: 100%; border-collapse: collapse; font-size: .78rem; color: #4B5563; }
+.vo-lines th {
+    text-align: left; padding: .45rem .6rem; font-size: .68rem; font-weight: 600; color: #6B7280;
+    text-transform: uppercase; letter-spacing: .03em; border-bottom: 1px solid #E5E7EB; white-space: nowrap;
+}
+.vo-lines td { padding: .35rem .6rem; border-bottom: 1px solid #F3F4F6; vertical-align: top; }
+.vo-lines td:first-child { min-width: 14rem; }
+.vo-lines .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.vo-lines tfoot td { border-bottom: 0; border-top: 1px solid #E5E7EB; font-weight: 700; color: #111827; }
 
 .vo-fees { margin-top: .6rem; padding: .5rem .6rem; background: #F5F3FF; border-radius: 6px; }
 .vo-fees strong { font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; color: #5B21B6; }

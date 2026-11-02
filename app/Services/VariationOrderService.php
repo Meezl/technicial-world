@@ -78,37 +78,7 @@ class VariationOrderService
                 'created_by'         => $actor->id,
             ]);
 
-            foreach (array_values($data['items'] ?? []) as $i => $item) {
-                if (!isset($item['description'], $item['unit_price'])) {
-                    continue;
-                }
-
-                VariationOrderItem::create([
-                    'variation_order_id' => $vo->id,
-                    'category'   => in_array($item['category'] ?? '', VariationOrderItem::CATEGORIES, true)
-                        ? $item['category']
-                        : VariationOrderItem::CATEGORY_MATERIAL,
-                    'description' => $item['description'],
-                    'quantity'    => $item['quantity'] ?? 1,
-                    'unit'        => $item['unit'] ?? 'pcs',
-                    'unit_price'  => $item['unit_price'],
-                    'sort_order'  => $i,
-                ]);
-            }
-
-            $vo->recalculateTotals();
-            $vo->refresh();
-
-            // A zero-income variation moves technician money only. If it
-            // carries a client-facing figure, someone has mis-scoped it —
-            // fail loudly rather than quietly bill for internal work.
-            // Checked before any schedule is laid out, so the refusal does
-            // not depend on the transaction rolling back.
-            if ($isZeroIncome && abs((float) $vo->net_amount) > 0.001) {
-                throw new RuntimeException(
-                    'A zero-income variation cannot carry a client amount. Raise a normal variation instead.'
-                );
-            }
+            $this->writeItems($vo, $data['items'] ?? []);
 
             $this->buildBillingSchedule($vo, $data['billing'] ?? null);
 
@@ -120,6 +90,124 @@ class VariationOrderService
 
             return $vo;
         });
+    }
+
+    /**
+     * Correct a variation that has not been settled yet.
+     *
+     * Draft and awaiting-client only. Before this the only way to fix a typo
+     * in a rate was to withdraw the variation and raise another, which burnt
+     * a /VO-nn number and left the client looking at a withdrawn card beside
+     * the real one. An approved variation is still final — the ledger and
+     * any invoice were raised from its figures — and a declined one is
+     * re-priced as a revision, so the client's refusal stays on record.
+     *
+     * The variation keeps its number and status. The previous lines go into
+     * the audit log, so what the client was first shown can still be read
+     * back. The billing schedule is laid out again from the new figure: it
+     * cannot have billed anything, because nothing bills until approval.
+     */
+    public function update(VariationOrder $vo, array $data, User $actor): VariationOrder
+    {
+        if (!in_array($vo->status, [VariationOrder::STATUS_DRAFT, VariationOrder::STATUS_PENDING_CLIENT], true)) {
+            throw new RuntimeException(
+                $vo->status === VariationOrder::STATUS_DECLINED
+                    ? 'The client declined this variation. Revise it instead, so their decision stays on record.'
+                    : 'Only a draft or a variation awaiting the client can be edited.'
+            );
+        }
+
+        if (trim($data['reason'] ?? '') === '') {
+            throw new RuntimeException('A variation needs a reason.');
+        }
+
+        return DB::transaction(function () use ($vo, $data, $actor) {
+            $vo = VariationOrder::whereKey($vo->id)->lockForUpdate()->firstOrFail();
+
+            // Re-checked under the lock: the client may have answered while
+            // the office had the form open.
+            if (!in_array($vo->status, [VariationOrder::STATUS_DRAFT, VariationOrder::STATUS_PENDING_CLIENT], true)) {
+                throw new RuntimeException('The client has already answered this variation, so it can no longer be edited.');
+            }
+
+            $before = $this->snapshot($vo);
+
+            $vo->update([
+                'reason'          => $data['reason'],
+                'internal_notes'  => $data['internal_notes'] ?? $vo->internal_notes,
+                'additional_days' => $data['additional_days'] ?? null,
+            ]);
+
+            $vo->items()->delete();
+            $this->writeItems($vo, $data['items'] ?? []);
+
+            ReqBillingMilestone::where('variation_order_id', $vo->id)->delete();
+            $this->buildBillingSchedule($vo, $data['billing'] ?? null);
+
+            AuditLog::log(AuditLog::ACTION_UPDATED, $vo, $before, $this->snapshot($vo->fresh()) + [
+                'edited_by' => $actor->id,
+            ]);
+
+            return $vo->fresh();
+        });
+    }
+
+    /**
+     * Write a variation's lines and total them.
+     *
+     * A zero-income variation moves technician money only. If it carries a
+     * client-facing figure, someone has mis-scoped it — fail loudly rather
+     * than quietly bill for internal work. Checked before any schedule is
+     * laid out, so the refusal does not depend on the transaction rolling
+     * back.
+     */
+    private function writeItems(VariationOrder $vo, array $items): void
+    {
+        foreach (array_values($items) as $i => $item) {
+            if (!isset($item['description'], $item['unit_price'])) {
+                continue;
+            }
+
+            VariationOrderItem::create([
+                'variation_order_id' => $vo->id,
+                'category'   => in_array($item['category'] ?? '', VariationOrderItem::CATEGORIES, true)
+                    ? $item['category']
+                    : VariationOrderItem::CATEGORY_MATERIAL,
+                'description' => $item['description'],
+                'quantity'    => $item['quantity'] ?? 1,
+                'unit'        => trim((string) ($item['unit'] ?? '')) ?: 'pcs',
+                'unit_price'  => $item['unit_price'],
+                'sort_order'  => $i,
+            ]);
+        }
+
+        $vo->recalculateTotals();
+        $vo->refresh();
+
+        if ($vo->isZeroIncome() && abs((float) $vo->net_amount) > 0.001) {
+            throw new RuntimeException(
+                'A zero-income variation cannot carry a client amount. Raise a normal variation instead.'
+            );
+        }
+    }
+
+    /** What a variation said at a moment, for the audit trail of an edit. */
+    private function snapshot(VariationOrder $vo): array
+    {
+        return [
+            'reason'          => $vo->reason,
+            'additional_days' => $vo->additional_days,
+            'net_amount'      => (float) $vo->net_amount,
+            'items'           => $vo->items()->orderBy('sort_order')->get()
+                ->map(fn ($i) => [
+                    'category'    => $i->category,
+                    'description' => $i->description,
+                    'quantity'    => (float) $i->quantity,
+                    'unit'        => $i->unit,
+                    'unit_price'  => (float) $i->unit_price,
+                    'total_price' => (float) $i->total_price,
+                ])->all(),
+        ];
     }
 
     /**

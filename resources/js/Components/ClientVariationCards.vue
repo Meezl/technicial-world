@@ -32,12 +32,37 @@
                 </p>
             </div>
 
-            <ul v-if="vo.items && vo.items.length" class="cvo-items">
-                <li v-for="item in vo.items" :key="item.id">
-                    <span>{{ item.description }}</span>
-                    <span class="cvo-item-amt">{{ money(Number(item.total_price)) }}</span>
-                </li>
-            </ul>
+            <!-- Quantity, unit and rate as well as the amount, so the client
+                 can see how many of a thing they are paying for and at what
+                 price, the way their quotation read. -->
+            <div v-if="vo.items && vo.items.length" class="cvo-items">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th class="num">Qty</th>
+                            <th>Unit</th>
+                            <th class="num">Rate</th>
+                            <th class="num">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="item in vo.items" :key="item.id">
+                            <td>{{ item.description }}</td>
+                            <td class="num">{{ qty(item.quantity) }}</td>
+                            <td>{{ item.unit }}</td>
+                            <td class="num">{{ money(Number(item.unit_price)) }}</td>
+                            <td class="num">{{ money(Number(item.total_price)) }}</td>
+                        </tr>
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td colspan="4">Total</td>
+                            <td class="num">{{ money(Number(vo.net_amount)) }}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
 
             <div class="cvo-totals">
                 <div class="cvo-total-line">
@@ -154,6 +179,8 @@ const projected = (vo) => currentValue.value + Number(vo.net_amount)
 
 const money = (value) =>
     'KSH ' + Number(value || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const qty = (value) => Number(value || 0).toLocaleString('en-KE', { maximumFractionDigits: 2 })
 
 /**
  * Parsed defensively for the same reason the quote approval is: when Laravel
@@ -272,9 +299,16 @@ const decline = async (vo) => {
 .cvo-reason p { margin: .25rem 0 0; font-size: .88rem; color: #374151; line-height: 1.55; }
 .cvo-days { color: #92400E !important; font-size: .8rem !important; }
 
-.cvo-items { list-style: none; margin: .85rem 0 0; padding: .6rem .75rem; background: #F9FAFB; border-radius: 6px; }
-.cvo-items li { display: flex; justify-content: space-between; gap: 1rem; font-size: .8rem; color: #4B5563; padding: .15rem 0; }
-.cvo-item-amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cvo-items { margin: .85rem 0 0; overflow-x: auto; background: #F9FAFB; border-radius: 6px; }
+.cvo-items table { width: 100%; border-collapse: collapse; font-size: .8rem; color: #4B5563; }
+.cvo-items th {
+    text-align: left; padding: .45rem .65rem; font-size: .7rem; font-weight: 600; color: #6B7280;
+    border-bottom: 1px solid #E5E7EB; white-space: nowrap;
+}
+.cvo-items td { padding: .35rem .65rem; border-bottom: 1px solid #F3F4F6; vertical-align: top; }
+.cvo-items td:first-child { min-width: 12rem; }
+.cvo-items .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cvo-items tfoot td { border-bottom: 0; border-top: 1px solid #E5E7EB; font-weight: 700; color: #111827; }
 
 .cvo-totals { margin-top: .9rem; padding: .75rem .85rem; background: #e8f4fd; border-radius: 8px; }
 .cvo-total-line {
