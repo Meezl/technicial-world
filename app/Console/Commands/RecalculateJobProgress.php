@@ -52,11 +52,9 @@ class RecalculateJobProgress extends Command
                 ];
 
                 // A dry run still has to run the recalculation to know the
-                // outcome, and now writes task rows as well as the job, so it
-                // runs inside a transaction that is rolled back.
+                // outcome, so it runs inside a transaction that is rolled back.
                 DB::beginTransaction();
 
-                $progress->syncLeadTaskFromWholeJobReports($job);
                 $progress->recalculate($job->fresh());
                 $job->refresh();
 

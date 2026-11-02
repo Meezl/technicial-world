@@ -26,6 +26,20 @@ use Illuminate\Validation\ValidationException;
 class ProgressService
 {
     /**
+     * Statuses a lead's sign-off has already carried a job past, or that end
+     * it. The rollup never moves a job out of one of these on its own.
+     */
+    private const PAST_SIGN_OFF = [
+        ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION,
+        ServiceRequest::STATUS_AWAITING_CLIENT_VERIFICATION,
+        ServiceRequest::STATUS_CLIENT_QUERY_RAISED,
+        ServiceRequest::STATUS_COMPLETED,
+        ServiceRequest::STATUS_CLOSED,
+        ServiceRequest::STATUS_ARCHIVED,
+        ServiceRequest::STATUS_CANCELLED,
+    ];
+
+    /**
      * Submit a daily progress report (by technician).
      */
     public function submitReport(
@@ -35,6 +49,12 @@ class ProgressService
         array $data,
         array $photos = []
     ): ProgressReport {
+        $data['percent_complete'] = $this->pinnedPercent(
+            $serviceRequest,
+            $data['service_sub_task_id'] ?? null,
+            (int) $data['percent_complete']
+        );
+
         return DB::transaction(function () use ($serviceRequest, $technicianId, $submittedBy, $data, $photos) {
             // Anti-double-submit guard: on slow mobile networks, the user
             // can tap "Submit" twice before the first request returns. If
@@ -400,6 +420,12 @@ class ProgressService
         array $photos = [],
         string $authoredAs = ProgressReport::AS_PROJECT_MANAGER
     ): ProgressReport {
+        $data['percent_complete'] = $this->pinnedPercent(
+            $serviceRequest,
+            $data['service_sub_task_id'] ?? null,
+            (int) $data['percent_complete']
+        );
+
         return DB::transaction(function () use ($serviceRequest, $pmId, $data, $photos, $authoredAs) {
             $report = ProgressReport::create([
                 'service_request_id' => $serviceRequest->id,
@@ -458,6 +484,12 @@ class ProgressService
         bool $releaseBilling = true,
         string $validatedAs = ProgressReport::AS_PROJECT_MANAGER
     ): ProgressReport {
+        $data['validated_percent'] = $this->pinnedPercent(
+            $report->serviceRequest,
+            $report->service_sub_task_id,
+            (int) ($data['validated_percent'] ?? $report->percent_complete)
+        );
+
         return DB::transaction(function () use ($report, $pmId, $data, $adminPhotos, $releaseBilling, $validatedAs) {
             // Default client_visible_notes to the technician's original notes
             // if admin didn't override — preserves the report even when admin
@@ -595,7 +627,7 @@ class ProgressService
      */
     private function syncSubTaskFromReport(ProgressReport $report): void
     {
-        $subTask = $report->subTask ?? $this->leadsOwnTask($report->serviceRequest);
+        $subTask = $report->subTask;
 
         if (!$subTask) {
             return;
@@ -616,50 +648,25 @@ class ProgressService
     }
 
     /**
-     * The task the lead is carrying themselves, on a job split into tasks.
+     * The figure a report may carry.
      *
-     * A whole-job report is the lead's to file, and it is also the only
-     * report they file about their own work — so once the office validates
-     * it, the lead's task moves to that figure the same way a crew member's
-     * task moves with theirs. It moves nobody else's task: those move with
-     * their own reports, and a task nobody has reported stays where it is.
-     * The job's figure is still the average across all of them.
+     * On a job split into tasks, the whole job is the average of its tasks and
+     * nothing else — so a whole-job report carries that average, whatever was
+     * typed. A lead could file 100% over tasks at 40, 60 and 0, and the office
+     * could validate it, leaving a card that said "validated 100%" beside a
+     * job reading 33%. The report is the lead's account of the site in words
+     * and photos; the number comes from the tasks, which the lead moves one at
+     * a time.
      *
-     * Original scope only. Variation work is reported against its own task.
+     * A task report, or any report on a job with no tasks, keeps its figure.
      */
-    private function leadsOwnTask(?ServiceRequest $serviceRequest): ?ServiceSubTask
+    public function pinnedPercent(ServiceRequest $serviceRequest, ?int $subTaskId, int $percent): int
     {
-        if (!$serviceRequest?->lead_technician_id) {
-            return null;
+        if ($subTaskId || !$serviceRequest->isSplitIntoSubTasks()) {
+            return $percent;
         }
 
-        return $serviceRequest->subTasks()
-            ->originalScope()
-            ->where('technician_id', $serviceRequest->lead_technician_id)
-            ->first();
-    }
-
-    /**
-     * Bring the lead's task up to date with the latest validated whole-job
-     * report. For jobs validated before whole-job reports moved the lead's
-     * task — their reports say 100% while the task beside it reads 0%.
-     *
-     * Repair only, from jobs:recalculate-progress. Not part of recalculate():
-     * that runs on every hand edit of a task, and would snap a bar the office
-     * had just set back to the report's figure.
-     */
-    public function syncLeadTaskFromWholeJobReports(ServiceRequest $serviceRequest): void
-    {
-        $latest = $serviceRequest->progressReports()
-            ->where('is_validated', true)
-            ->whereNull('service_sub_task_id')
-            ->orderByDesc('validated_at')
-            ->orderByDesc('id')
-            ->first();
-
-        if ($latest) {
-            $this->syncSubTaskFromReport($latest);
-        }
+        return $this->aggregateSubTaskProgress($serviceRequest);
     }
 
     /**
@@ -748,11 +755,15 @@ class ProgressService
             // whole-job report, and without this the next recompute would
             // declare it finished again while the new work was still being
             // done — the reopen and the rollup fighting each other.
-            if (!in_array($serviceRequest->status, [
-                ServiceRequest::STATUS_COMPLETED,
-                ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION,
-                ServiceRequest::STATUS_CLOSED,
-            ], true) && !$this->hasUnfinishedVariationWork($serviceRequest)) {
+            //
+            // Only from a working status. A job the office has already
+            // approved, one with the client, and anything closed, archived or
+            // cancelled is past this point: re-reading its reports must not
+            // walk it back to awaiting office approval. Listing the finished
+            // ones by hand missed most of them, and a recompute across every
+            // job would have pulled archived work back into the queue.
+            if (!in_array($serviceRequest->status, self::PAST_SIGN_OFF, true)
+                && !$this->hasUnfinishedVariationWork($serviceRequest)) {
                 $updateData['status'] = ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION;
             }
         } elseif (in_array($serviceRequest->status, [

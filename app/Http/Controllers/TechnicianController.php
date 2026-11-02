@@ -1553,6 +1553,7 @@ class TechnicianController extends Controller
         $request->validate([
             'progress_percentage' => 'required|integer|min:0|max:100',
             'status' => 'nullable|in:in_progress,completed',
+            'notes' => 'nullable|string|max:1000',
         ]);
 
         $user = auth()->user();
@@ -1563,28 +1564,24 @@ class TechnicianController extends Controller
         }
 
         $serviceRequest = $serviceSubTask->serviceRequest;
-
-        // The bar belongs to whoever is doing the work, and to nobody else.
-        //
-        // The lead could drag any task's bar on the job. It filed a claim in
-        // that technician's name rather than writing the figure outright, so
-        // nothing was settled without the office — but a draggable bar on
-        // another man's task says plainly that his progress is the lead's to
-        // set, and that is not what the role is. Every task carries its own
-        // progress, the job's figure is the average of them, and the lead's
-        // part in that is to approve a claim or send it back.
-        //
-        // Reporting for a crew member who cannot file for himself is still
-        // open to the lead, through the progress report form, where it is a
-        // deliberate act labelled as filed on his behalf and settled by the
-        // office rather than a bar he can drag.
         $isAssigned = (int) $serviceSubTask->technician_id === (int) $technician->id;
+        $isLead = $serviceRequest->isLeadTechnician($technician->id);
 
-        if (!$isAssigned) {
-            abort(403, $serviceRequest->isLeadTechnician($technician->id)
-                ? 'This task belongs to another technician. Approve or send back what they claim; '
-                    . 'the bar is theirs to move.'
-                : 'Unauthorized');
+        // A technician moves their own bar. The lead moves any bar on the job,
+        // their own included: they are the person on site who can say how far
+        // each piece of work has got, and the job's figure is the average of
+        // what they settle. A crew member's own claim still goes to the lead,
+        // who can approve it, send it back, or correct the bar directly here.
+        if (!$isAssigned && !$isLead) {
+            abort(403, 'Unauthorized');
+        }
+
+        // Correcting somebody else's figure is a judgement about their work,
+        // so it says why — the technician reads it, and so does the office.
+        if ($isLead && !$isAssigned && trim((string) $request->input('notes')) === '') {
+            return back()->with('error',
+                'Say why you are changing ' . ($serviceSubTask->technician?->user?->name ?? 'this technician')
+                . '\'s progress — they and the office both read it.');
         }
 
         // Work bought by a variation is not reportable until the variation is
@@ -1609,22 +1606,17 @@ class TechnicianController extends Controller
             return back()->with('error', 'This job is closed.');
         }
 
-        // The slider used to write straight to the sub-task, which meant a
-        // technician could move the job's headline percentage — and, through
-        // the billing milestones that key off it — with nobody approving the
-        // claim. It now files the same kind of progress report the form does,
-        // and only counts once approved.
-        // Always the assigned technician's own claim now: nobody else reaches
-        // this. Passed as not-on-behalf rather than asking whether they lead,
-        // because a lead moving his own bar is filing for himself like anyone
-        // else.
+        // The slider files the same kind of progress report the form does, so
+        // every movement of a bar has a report behind it and a name on it.
         [$subjectTechnicianId, $authoredAs] = $this->attributeReport(
             $technician,
             $serviceSubTask,
-            false
+            $isLead
         );
 
-        app(ProgressService::class)->submitReport(
+        $progress = app(ProgressService::class);
+
+        $report = $progress->submitReport(
             $serviceRequest,
             $subjectTechnicianId,
             $user->id,
@@ -1636,7 +1628,36 @@ class TechnicianController extends Controller
             ]
         );
 
-        return back()->with('success', 'Progress submitted for approval.');
+        // A crew member's claim waits for the lead.
+        if (!$isLead) {
+            return back()->with('success', 'Progress submitted for approval.');
+        }
+
+        // The lead's figure counts straight away, on their own task and on
+        // anyone else's. It is settled as the lead's sign-off, which moves the
+        // bar and the job's average but not the money: billing still waits on
+        // the office, who see this in their queue like any lead approval.
+        if (!$report->is_validated) {
+            $progress->validate(
+                $report,
+                $user->id,
+                ['validated_percent' => (int) $request->progress_percentage],
+                [],
+                releaseBilling: false,
+                validatedAs: \App\Models\ProgressReport::AS_LEAD
+            );
+
+            $report->forceFill([
+                'approved_by_lead_at' => now(),
+                'lead_reviewed_at' => now(),
+                'lead_approval_note' => $request->input('notes'),
+            ])->save();
+        }
+
+        return back()->with('success', $isAssigned
+            ? "Your task is now at {$request->progress_percentage}%. The office confirms any payment that follows."
+            : ($serviceSubTask->technician?->user?->name ?? 'The task') . "'s progress corrected to {$request->progress_percentage}%. "
+                . 'They see your note, and the office confirms any payment that follows.');
     }
 
     /**

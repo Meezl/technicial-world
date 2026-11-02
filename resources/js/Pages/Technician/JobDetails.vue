@@ -351,12 +351,17 @@
                             @change="(event) => updateTaskProgress(task, event.target.value)"
                         >
 
-                        <!-- A bar that cannot be dragged reads as broken
-                             unless it says why it is not yours to drag. -->
-                        <p v-if="!isMyTask(task)" class="subtask-supervising">
+                        <!-- The lead may correct any bar on the job; say so, and
+                             that it counts at once, rather than leaving a
+                             draggable bar on somebody else's task unexplained. -->
+                        <p v-if="!isMyTask(task) && isLeadTechnician" class="subtask-supervising">
+                            <i class="fas fa-sliders-h"></i>
+                            Move this bar to correct {{ task.technician?.user?.name || 'the technician' }}'s
+                            progress. It counts at once, and they see your reason.
+                        </p>
+                        <p v-else-if="!isMyTask(task)" class="subtask-supervising">
                             <i class="fas fa-eye"></i>
                             {{ task.technician?.user?.name || 'The assigned technician' }} moves this one.
-                            Yours is to approve what they claim, or send it back.
                         </p>
 
                         <!-- A claim counts only once someone signs it off, so
@@ -701,20 +706,21 @@
 
                 <form v-else @submit.prevent="submitProgressReport" class="progress-form">
                     <div class="form-grid">
-                        <label class="form-field">
+                        <!-- On a job split into tasks the whole job is the
+                             average of the tasks, so a whole-job report carries
+                             that figure rather than one typed over it. The
+                             server pins it the same way. -->
+                        <div v-if="reportingWholeSplitJob" class="form-field">
+                            <span>Progress %</span>
+                            <strong class="input input-readonly">{{ subTaskAverage }}%</strong>
+                            <small class="field-note">
+                                The average across the job's {{ originalScopeTasks.length }} tasks. To change
+                                it, move the bars on the tasks above; this report carries your notes and photos.
+                            </small>
+                        </div>
+                        <label v-else class="form-field">
                             <span>Progress %</span>
                             <input v-model.number="progressForm.percent_complete" type="number" min="0" max="100" class="input">
-                            <!-- The job's headline is the average across its
-                                 tasks, so a whole-job figure typed over the top
-                                 of it changes nothing. Said here rather than
-                                 discovered later, when a lead who entered 100%
-                                 wonders why the job still reads 0%. -->
-                            <small v-if="reportingWholeSplitJob" class="field-note">
-                                The job reads {{ subTaskAverage }}% — the average across its
-                                {{ job.sub_tasks.length }} tasks. Move it by signing off your crew's
-                                task reports and filing your own; what you enter here is your account
-                                of the job, not the figure the client sees.
-                            </small>
                         </label>
 
                         <label class="form-field">
@@ -1061,8 +1067,12 @@ const progressForm = ref({
 // What the job actually reads: the average across its tasks. The lead's
 // whole-job report used to override this wherever it was higher, which is how
 // a job came to say "work is fully complete" above two tasks at nothing.
+// Original scope only, as on the server: variation work has its own figure
+// and never moves the job's.
+const originalScopeTasks = computed(() => (props.job.sub_tasks || []).filter(t => !t.variation_order_id))
+
 const subTaskAverage = computed(() => {
-    const tasks = props.job.sub_tasks || []
+    const tasks = originalScopeTasks.value
     if (!tasks.length) return Number(props.job.progress_percentage || 0)
 
     const total = tasks.reduce((sum, task) => sum + Number(task.progress_percentage || 0), 0)
@@ -1070,7 +1080,7 @@ const subTaskAverage = computed(() => {
 })
 
 const reportingWholeSplitJob = computed(() =>
-    Boolean(props.job.sub_tasks?.length) && !progressForm.value.service_sub_task_id,
+    Boolean(originalScopeTasks.value.length) && !progressForm.value.service_sub_task_id,
 )
 
 // Switching between the whole job and one task changes what the figure is
@@ -1184,8 +1194,9 @@ function isMyTask(task) {
 // The bar belongs to whoever is doing the work. A lead supervising a task
 // reads it and rules on what is claimed against it; he does not set it. His
 // own task he moves like anybody else.
+// Your own bar, or — for the lead — any bar on the job.
 function canUpdateTask(task) {
-    return isMyTask(task)
+    return isMyTask(task) || props.isLeadTechnician
 }
 
 const CAPACITY_LABELS = {
@@ -1581,8 +1592,24 @@ function confirmReject() {
 }
 
 function updateTaskProgress(task, value) {
+    let notes = null
+
+    // Correcting somebody else's figure needs a reason they can read.
+    if (!isMyTask(task)) {
+        notes = window.prompt(
+            `Setting ${task.technician?.user?.name || 'this task'} to ${value}%. Why? They and the office will see this.`,
+            '',
+        )
+        if (notes === null || !notes.trim()) {
+            // Cancelled: put the bar back where it was.
+            router.reload({ only: ['job'], preserveScroll: true })
+            return
+        }
+    }
+
     router.post(`/technician/sub-tasks/${task.id}/progress`, {
         progress_percentage: parseInt(value, 10),
+        notes,
     }, {
         preserveScroll: true,
     })
@@ -1922,6 +1949,13 @@ defineOptions({ layout: null })
     font-size: 0.74rem;
     line-height: 1.45;
     color: #64748b;
+}
+
+.input-readonly {
+    display: block;
+    background: #f1f5f9;
+    color: #0f172a;
+    font-weight: 700;
 }
 
 .input {

@@ -843,7 +843,11 @@ class SubTaskTechnicianVisibilityTest extends TestCase
         $this->assertNull($report->fresh()->rejected_at);
     }
 
-    public function test_a_lead_cannot_approve_their_own_sub_task_claim(): void
+    /**
+     * The lead settles their own task by moving its bar — it counts at once —
+     * so there is no separate claim of theirs left for them to approve.
+     */
+    public function test_a_lead_settles_their_own_sub_task_by_moving_its_bar(): void
     {
         $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
         $lead = $this->makeTechnician();
@@ -868,12 +872,8 @@ class SubTaskTechnicianVisibilityTest extends TestCase
 
         $report = ProgressReport::where('service_sub_task_id', $subTask->id)->firstOrFail();
 
-        $this->actingAs($lead->user)
-            ->post(route('technician.progress-report.approve', $report))
-            ->assertForbidden();
-
-        $this->assertFalse($report->fresh()->is_validated);
-        $this->assertSame(0, $subTask->fresh()->progress_percentage);
+        $this->assertTrue($report->fresh()->is_validated);
+        $this->assertSame(90, $subTask->fresh()->progress_percentage);
     }
 
     /**
@@ -1683,10 +1683,13 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             ])
             ->assertRedirect();
 
+        // Filed, carrying the task average rather than the 50% typed: the
+        // job is split into tasks, and none has moved yet.
         $this->assertDatabaseHas('progress_reports', [
             'service_request_id' => $job->id,
             'technician_id' => $lead->id,
-            'percent_complete' => 50,
+            'service_sub_task_id' => null,
+            'percent_complete' => 0,
         ]);
 
         // A lead may also report against someone else's sub-task — normal on

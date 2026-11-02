@@ -1485,7 +1485,16 @@
 
                                 <div v-else-if="!report.is_validated && progressValidationForms[report.id]" class="admin-validation-form">
                                     <div class="form-row">
-                                        <div class="form-group">
+                                        <!-- A whole-job report on a job split into tasks
+                                             carries the task average; the server pins
+                                             it, so a typed figure here would only be
+                                             overwritten. Move a task to change it. -->
+                                        <div v-if="!report.service_sub_task_id && originalScopeTaskCount" class="form-group">
+                                            <label>Validated %</label>
+                                            <strong class="form-control form-control-readonly">{{ normalizedProgress }}%</strong>
+                                            <small class="text-muted">The average across this job's {{ originalScopeTaskCount }} tasks.</small>
+                                        </div>
+                                        <div v-else class="form-group">
                                             <label>Validated %</label>
                                             <input
                                                 v-model.number="progressValidationForms[report.id].validated_percent"
@@ -4454,6 +4463,11 @@ const subTaskProgress = (subTask) =>
 
 const subTaskCount = computed(() => props.job.sub_tasks?.length || 0)
 
+// The tasks the job's own percentage is the average of.
+const originalScopeTaskCount = computed(() =>
+    (props.job.sub_tasks || []).filter(t => !t.variation_order_id).length
+)
+
 // ---- Variation tasks ----
 
 const variationProgress = computed(() => props.variationProgress || {})
@@ -6417,6 +6431,12 @@ defineOptions({
 .job-card-header p,
 .assignment-empty-copy p,
 .overview-item p,
+.form-control-readonly {
+    display: block;
+    background: #f1f5f9;
+    font-weight: 700;
+}
+
 .sidebar-detail-item p,
 .subtask-description,
 .milestone-notes,

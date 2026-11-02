@@ -12,14 +12,14 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 /**
- * The progress bar belongs to whoever is doing the work.
+ * Who moves a task's progress bar.
  *
- * The lead could drag any task's bar on the job. Nothing was settled without
- * the office — it filed a claim in that technician's name rather than writing
- * the figure outright — but a draggable bar on another man's task says that
- * his progress is the lead's to set, and that is not what the role is. Every
- * task carries its own progress, the job's figure is the average of them, and
- * the lead's part is to approve a claim or send it back.
+ * A technician moves their own, as a claim the lead settles. The lead moves
+ * any bar on the job, their own included, and it counts at once: they are
+ * the person on site who can say how far each piece has got, and the job's
+ * figure is the average of what they settle. Correcting somebody else's bar
+ * needs a reason, which the technician and the office both read. Billing
+ * still waits on the office.
  */
 class SubTaskProgressBarOwnershipTest extends TestCase
 {
@@ -71,7 +71,7 @@ class SubTaskProgressBarOwnershipTest extends TestCase
         ]);
     }
 
-    public function test_the_lead_cannot_move_another_technicians_bar(): void
+    public function test_the_lead_corrects_another_technicians_bar_and_it_counts_at_once(): void
     {
         $lead = $this->technician('Lead');
         $painter = $this->technician('Painter');
@@ -80,15 +80,43 @@ class SubTaskProgressBarOwnershipTest extends TestCase
         $paint = $this->task($job, 'Paint Work', $painter, 2);
 
         $this->actingAs($lead->user)
-            ->post("/technician/sub-tasks/{$paint->id}/progress", ['progress_percentage' => 60])
-            ->assertForbidden();
+            ->post("/technician/sub-tasks/{$paint->id}/progress", [
+                'progress_percentage' => 60,
+                'notes' => 'Two coats done on the north wall; east wall still to go.',
+            ])
+            ->assertSessionHasNoErrors();
 
-        // Nothing filed in the painter's name, and nothing moved.
+        $report = ProgressReport::where('service_sub_task_id', $paint->id)->firstOrFail();
+
+        // The painter's work, with the lead named as the one who set it.
+        $this->assertSame($painter->id, (int) $report->technician_id);
+        $this->assertSame($lead->user_id, (int) $report->submitted_by);
+        $this->assertSame(ProgressReport::AS_LEAD, $report->authored_as);
+        $this->assertTrue((bool) $report->is_validated);
+        $this->assertSame(ProgressReport::AS_LEAD, $report->validated_as);
+        $this->assertNotNull($report->approved_by_lead_at, 'Still in the office queue for billing.');
+        $this->assertSame('Two coats done on the north wall; east wall still to go.', $report->lead_approval_note);
+
+        $this->assertSame(60, (int) $paint->fresh()->progress_percentage);
+        $this->assertSame(30, (int) $job->fresh()->progress_percentage, 'Average of 0 and 60.');
+    }
+
+    public function test_correcting_somebody_elses_bar_needs_a_reason(): void
+    {
+        $lead = $this->technician('Lead');
+        $painter = $this->technician('Painter');
+        $job = $this->job($lead);
+        $paint = $this->task($job, 'Paint Work', $painter, 1);
+
+        $this->actingAs($lead->user)
+            ->post("/technician/sub-tasks/{$paint->id}/progress", ['progress_percentage' => 60])
+            ->assertSessionHas('error');
+
         $this->assertSame(0, ProgressReport::where('service_sub_task_id', $paint->id)->count());
         $this->assertSame(0, (int) $paint->fresh()->progress_percentage);
     }
 
-    public function test_the_lead_can_still_move_his_own_bar(): void
+    public function test_the_lead_settles_his_own_bar(): void
     {
         $lead = $this->technician('Lead');
         $painter = $this->technician('Painter');
@@ -97,19 +125,62 @@ class SubTaskProgressBarOwnershipTest extends TestCase
         $this->task($job, 'Paint Work', $painter, 2);
 
         $this->actingAs($lead->user)
-            ->post("/technician/sub-tasks/{$carpentry->id}/progress", ['progress_percentage' => 45])
+            ->post("/technician/sub-tasks/{$carpentry->id}/progress", ['progress_percentage' => 40])
             ->assertSessionHasNoErrors();
 
         $report = ProgressReport::where('service_sub_task_id', $carpentry->id)->firstOrFail();
 
-        // His own claim, filed as himself — not on anybody's behalf.
+        // His own work, filed as himself.
         $this->assertSame($lead->id, (int) $report->technician_id);
         $this->assertSame(ProgressReport::AS_TECHNICIAN, $report->authored_as);
-        $this->assertSame(45, (int) $report->percent_complete);
+        $this->assertTrue((bool) $report->is_validated);
+        $this->assertSame(40, (int) $carpentry->fresh()->progress_percentage);
+    }
 
-        // And it is still a claim: the bar moves when the office settles it.
-        $this->assertFalse((bool) $report->is_validated);
-        $this->assertSame(0, (int) $carpentry->fresh()->progress_percentage);
+    /**
+     * The worked example: tasks at 40, 60 and 0. The job reads 33%, and a
+     * whole-job report — filed by the lead or validated by the office — says
+     * 33% too, whatever figure was typed into it.
+     */
+    public function test_the_job_and_its_whole_job_report_read_the_task_average(): void
+    {
+        $lead = $this->technician('Lead');
+        $b = $this->technician('B');
+        $c = $this->technician('C');
+        $job = $this->job($lead);
+        $taskA = $this->task($job, 'A', $lead, 1);
+        $taskB = $this->task($job, 'B', $b, 2);
+        $this->task($job, 'C', $c, 3);
+
+        $this->actingAs($lead->user)
+            ->post("/technician/sub-tasks/{$taskA->id}/progress", ['progress_percentage' => 40]);
+        $this->actingAs($lead->user)
+            ->post("/technician/sub-tasks/{$taskB->id}/progress", [
+                'progress_percentage' => 60,
+                'notes' => 'Checked on site.',
+            ]);
+
+        $this->assertSame(33, (int) $job->fresh()->progress_percentage);
+
+        $this->actingAs($lead->user)
+            ->post("/technician/jobs/{$job->id}/progress-report", [
+                'percent_complete' => 100,
+                'notes' => 'Whole job update.',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $report = ProgressReport::where('service_request_id', $job->id)
+            ->whereNull('service_sub_task_id')
+            ->firstOrFail();
+        $this->assertSame(33, (int) $report->percent_complete);
+
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        app(\App\Services\ProgressService::class)
+            ->validate($report, $admin->id, ['validated_percent' => 100]);
+
+        $this->assertSame(33, (int) $report->fresh()->validated_percent);
+        $this->assertSame(33, (int) $job->fresh()->progress_percentage);
+        $this->assertSame('in_progress', $job->fresh()->status);
     }
 
     public function test_a_crew_member_still_cannot_move_somebody_elses(): void
