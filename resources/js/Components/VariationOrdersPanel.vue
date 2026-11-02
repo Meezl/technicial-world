@@ -152,9 +152,15 @@
             <p class="vo-card-reason">{{ vo.reason }}</p>
 
             <div class="vo-card-meta">
-                <span v-if="vo.creator">Raised by {{ vo.creator.name }}</span>
-                <span v-if="vo.additional_days">+{{ vo.additional_days }} day{{ vo.additional_days === 1 ? '' : 's' }}</span>
-                <span v-if="vo.approver">Approved by {{ vo.approver.name }}</span>
+                <span v-if="vo.creator || vo.created_at">
+                    Raised<template v-if="vo.creator"> by {{ vo.creator.name }}</template><template v-if="vo.created_at"> on {{ fmtDate(vo.created_at) }}</template>
+                </span>
+                <span v-if="vo.sent_at">Sent to client {{ fmtDate(vo.sent_at) }}</span>
+                <span v-if="vo.approved_at || vo.approver">
+                    Approved<template v-if="vo.approver"> by {{ vo.approver.name }}</template><template v-if="vo.approved_at"> on {{ fmtDate(vo.approved_at) }}</template>
+                </span>
+                <span v-if="vo.declined_at">Declined {{ fmtDate(vo.declined_at) }}</span>
+                <span v-if="vo.additional_days">Time extension: +{{ vo.additional_days }} day{{ vo.additional_days === 1 ? '' : 's' }}</span>
             </div>
 
             <ul v-if="vo.items && vo.items.length" class="vo-card-items">
@@ -334,6 +340,12 @@ const addItem = () => form.items.push({ category: 'material', description: '', q
 
 const money = (value) =>
     'KSH ' + Number(value || 0).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+// e.g. "12 Oct 2026, 14:05" — the time matters when two variations go out the same day.
+const fmtDate = (value) =>
+    value
+        ? new Date(value).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : ''
 
 const amountClass = (entry) => {
     if (entry.type === 'quote') return ''
