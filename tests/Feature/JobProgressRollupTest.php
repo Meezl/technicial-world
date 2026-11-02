@@ -159,6 +159,86 @@ class JobProgressRollupTest extends TestCase
     }
 
     /**
+     * The lead holds a task of their own, and their whole-job report is the
+     * only report they file about it. Once the office validates it, the
+     * lead's task moves; a crew task nobody has reported stays at 0%, and the
+     * job reads the average rather than the lead's 100%.
+     */
+    private function leadAndCrewJob(): array
+    {
+        $lead = $this->makeTechnician('TECH-950');
+        $job = $this->makeJob($lead);
+
+        $leadTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Cabinets and cladding',
+            'technician_id' => $lead->id,
+            'status' => 'assigned',
+            'progress_percentage' => 0,
+            'order' => 1,
+        ]);
+        $crewTask = ServiceSubTask::create([
+            'service_request_id' => $job->id,
+            'title' => 'Aluminium door',
+            'technician_id' => $this->makeTechnician('TECH-951')->id,
+            'status' => 'assigned',
+            'progress_percentage' => 0,
+            'order' => 2,
+        ]);
+
+        return [$lead, $job->fresh(), $leadTask, $crewTask];
+    }
+
+    public function test_validating_the_leads_whole_job_report_moves_the_leads_own_task(): void
+    {
+        [$lead, $job, $leadTask, $crewTask] = $this->leadAndCrewJob();
+
+        $report = ProgressReport::create([
+            'service_request_id' => $job->id,
+            'technician_id' => $lead->id,
+            'submitted_by' => $lead->user_id,
+            'report_date' => now()->toDateString(),
+            'percent_complete' => 100,
+        ]);
+
+        $officer = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        app(ProgressService::class)->validate($report, $officer->id, ['validated_percent' => 100]);
+
+        $this->assertSame(100, (int) $leadTask->fresh()->progress_percentage);
+        $this->assertSame(ServiceSubTask::STATUS_COMPLETED, $leadTask->fresh()->status);
+        $this->assertSame(0, (int) $crewTask->fresh()->progress_percentage);
+
+        $job->refresh();
+        $this->assertSame(50, (int) $job->progress_percentage);
+        $this->assertNotSame(ServiceRequest::STATUS_COMPLETED_PENDING_CONFIRMATION, $job->status);
+    }
+
+    public function test_recalculating_repairs_a_lead_task_left_behind_by_an_earlier_validation(): void
+    {
+        [$lead, $job, $leadTask, $crewTask] = $this->leadAndCrewJob();
+
+        // Validated before whole-job reports moved the lead's task.
+        ProgressReport::create([
+            'service_request_id' => $job->id,
+            'technician_id' => $lead->id,
+            'submitted_by' => $lead->user_id,
+            'report_date' => now()->toDateString(),
+            'percent_complete' => 100,
+            'is_validated' => true,
+            'validated_percent' => 100,
+            'validated_at' => now(),
+        ]);
+
+        $this->artisan('jobs:recalculate-progress', ['--job' => $job->id, '--dry-run' => true])->assertSuccessful();
+        $this->assertSame(0, (int) $leadTask->fresh()->progress_percentage);
+
+        $this->artisan('jobs:recalculate-progress', ['--job' => $job->id])->assertSuccessful();
+        $this->assertSame(100, (int) $leadTask->fresh()->progress_percentage);
+        $this->assertSame(0, (int) $crewTask->fresh()->progress_percentage);
+        $this->assertSame(50, (int) $job->fresh()->progress_percentage);
+    }
+
+    /**
      * Half the work done is half the job, whoever says otherwise. The average
      * is what the client is shown, so a job cannot read ahead of the tasks it
      * is made of.

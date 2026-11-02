@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\ServiceRequest;
 use App\Services\ProgressService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Re-read every job's percentage and status from its validated reports.
@@ -50,13 +51,21 @@ class RecalculateJobProgress extends Command
                     'status'   => $job->status,
                 ];
 
-                $progress->recalculate($job);
+                // A dry run still has to run the recalculation to know the
+                // outcome, and now writes task rows as well as the job, so it
+                // runs inside a transaction that is rolled back.
+                DB::beginTransaction();
+
+                $progress->syncLeadTaskFromWholeJobReports($job);
+                $progress->recalculate($job->fresh());
                 $job->refresh();
 
                 $after = [
                     'progress' => (int) $job->progress_percentage,
                     'status'   => $job->status,
                 ];
+
+                $dryRun ? DB::rollBack() : DB::commit();
 
                 if ($before === $after) {
                     continue;
@@ -69,15 +78,6 @@ class RecalculateJobProgress extends Command
                     $before['status'],
                     $after['status'],
                 ];
-
-                // A dry run still had to run the recalculation to know the
-                // outcome, so put the old values back.
-                if ($dryRun) {
-                    $job->update([
-                        'progress_percentage' => $before['progress'],
-                        'status'              => $before['status'],
-                    ]);
-                }
             }
         });
 

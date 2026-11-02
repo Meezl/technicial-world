@@ -595,7 +595,7 @@ class ProgressService
      */
     private function syncSubTaskFromReport(ProgressReport $report): void
     {
-        $subTask = $report->subTask;
+        $subTask = $report->subTask ?? $this->leadsOwnTask($report->serviceRequest);
 
         if (!$subTask) {
             return;
@@ -613,6 +613,53 @@ class ProgressService
         }
 
         $subTask->update($update);
+    }
+
+    /**
+     * The task the lead is carrying themselves, on a job split into tasks.
+     *
+     * A whole-job report is the lead's to file, and it is also the only
+     * report they file about their own work — so once the office validates
+     * it, the lead's task moves to that figure the same way a crew member's
+     * task moves with theirs. It moves nobody else's task: those move with
+     * their own reports, and a task nobody has reported stays where it is.
+     * The job's figure is still the average across all of them.
+     *
+     * Original scope only. Variation work is reported against its own task.
+     */
+    private function leadsOwnTask(?ServiceRequest $serviceRequest): ?ServiceSubTask
+    {
+        if (!$serviceRequest?->lead_technician_id) {
+            return null;
+        }
+
+        return $serviceRequest->subTasks()
+            ->originalScope()
+            ->where('technician_id', $serviceRequest->lead_technician_id)
+            ->first();
+    }
+
+    /**
+     * Bring the lead's task up to date with the latest validated whole-job
+     * report. For jobs validated before whole-job reports moved the lead's
+     * task — their reports say 100% while the task beside it reads 0%.
+     *
+     * Repair only, from jobs:recalculate-progress. Not part of recalculate():
+     * that runs on every hand edit of a task, and would snap a bar the office
+     * had just set back to the report's figure.
+     */
+    public function syncLeadTaskFromWholeJobReports(ServiceRequest $serviceRequest): void
+    {
+        $latest = $serviceRequest->progressReports()
+            ->where('is_validated', true)
+            ->whereNull('service_sub_task_id')
+            ->orderByDesc('validated_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($latest) {
+            $this->syncSubTaskFromReport($latest);
+        }
     }
 
     /**
