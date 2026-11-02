@@ -1652,6 +1652,29 @@ class ServiceRequest extends Model
      * Check if transition to a new status is valid.
      */
     /**
+     * Whether this job runs under the task-average progress rules: a whole-job
+     * report carries the task average, and the lead sets any task's bar. Only
+     * jobs created from config('progress.task_average_from') do; older jobs
+     * keep the rules they were run under. See config/progress.php.
+     */
+    public function usesTaskAverageRules(): bool
+    {
+        $from = config('progress.task_average_from');
+
+        // No cutoff set means the rules are off everywhere.
+        if (!$from) {
+            return false;
+        }
+
+        // Not saved yet, so it is new by definition.
+        if (!$this->created_at) {
+            return true;
+        }
+
+        return $this->created_at->gte(\Illuminate\Support\Carbon::parse($from, config('app.timezone')));
+    }
+
+    /**
      * Has the client already said this work is done?
      *
      * Either in so many words — the confirm button, which a reopen or a

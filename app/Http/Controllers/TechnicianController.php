@@ -237,6 +237,9 @@ class TechnicianController extends Controller
             // Job-wide actions (closing the job) belong to whoever carries
             // the job; a sub-task holder gets the sub-task controls instead.
             'isLeadTechnician' => $serviceRequest->isLeadTechnician($technician->id),
+            // Whether this job runs under the task-average rules — see
+            // config/progress.php. Older jobs keep the rules they started with.
+            'usesTaskAverageRules' => $serviceRequest->usesTaskAverageRules(),
             'scope' => $this->jobScopeForTechnician($serviceRequest, $technician->id),
             'assignmentFiles' => $this->assignmentFilesFor($serviceRequest, $technician->id),
             // Assignments on this job still waiting for this technician to
@@ -1565,7 +1568,11 @@ class TechnicianController extends Controller
 
         $serviceRequest = $serviceSubTask->serviceRequest;
         $isAssigned = (int) $serviceSubTask->technician_id === (int) $technician->id;
-        $isLead = $serviceRequest->isLeadTechnician($technician->id);
+        // The lead settles bars directly only on jobs under the task-average
+        // rules. On an older job the lead moves their own bar like anyone
+        // else, as a claim, and settles the crew's through their claims.
+        $isLead = $serviceRequest->isLeadTechnician($technician->id)
+            && $serviceRequest->usesTaskAverageRules();
 
         // A technician moves their own bar. The lead moves any bar on the job,
         // their own included: they are the person on site who can say how far

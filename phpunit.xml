@@ -23,6 +23,9 @@
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="CACHE_STORE" value="array"/>
         <env name="DB_CONNECTION" value="sqlite"/>
+        <!-- Pinned so results do not change with the calendar: tests run
+             under the older progress rules unless they opt in. -->
+        <env name="PROGRESS_TASK_AVERAGE_FROM" value="2999-01-01 00:00:00"/>
         <env name="DB_DATABASE" value=":memory:"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>

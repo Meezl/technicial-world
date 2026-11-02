@@ -658,11 +658,13 @@ class ProgressService
      * and photos; the number comes from the tasks, which the lead moves one at
      * a time.
      *
-     * A task report, or any report on a job with no tasks, keeps its figure.
+     * A task report, or any report on a job with no tasks, keeps its figure,
+     * and so does every report on a job created before these rules — see
+     * config/progress.php.
      */
     public function pinnedPercent(ServiceRequest $serviceRequest, ?int $subTaskId, int $percent): int
     {
-        if ($subTaskId || !$serviceRequest->isSplitIntoSubTasks()) {
+        if ($subTaskId || !$serviceRequest->usesTaskAverageRules() || !$serviceRequest->isSplitIntoSubTasks()) {
             return $percent;
         }
 

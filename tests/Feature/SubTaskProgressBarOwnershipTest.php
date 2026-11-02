@@ -25,6 +25,15 @@ class SubTaskProgressBarOwnershipTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Every job in this file is created under the task-average rules,
+        // whatever today's date is. Older jobs are covered at the end.
+        config(['progress.task_average_from' => '2000-01-01']);
+    }
+
     private function technician(string $name): Technician
     {
         return Technician::create([
@@ -231,5 +240,84 @@ class SubTaskProgressBarOwnershipTest extends TestCase
         $this->actingAs($lead->user)
             ->post("/technician/progress-reports/{$report->id}/approve", [])
             ->assertForbidden();
+    }
+
+    // ---------- jobs created before the task-average rules ----------
+
+    /** Older jobs keep the rules they were run under. */
+    public function test_on_an_older_job_the_lead_cannot_move_another_technicians_bar(): void
+    {
+        config(['progress.task_average_from' => '2999-01-01']);
+
+        $lead = $this->technician('Lead');
+        $painter = $this->technician('Painter');
+        $job = $this->job($lead);
+        $paint = $this->task($job, 'Paint Work', $painter, 1);
+
+        $this->actingAs($lead->user)
+            ->post("/technician/sub-tasks/{$paint->id}/progress", [
+                'progress_percentage' => 60,
+                'notes' => 'Checked on site.',
+            ])
+            ->assertForbidden();
+
+        $this->assertSame(0, (int) $paint->fresh()->progress_percentage);
+    }
+
+    public function test_on_an_older_job_the_leads_own_bar_is_still_a_claim(): void
+    {
+        config(['progress.task_average_from' => '2999-01-01']);
+
+        $lead = $this->technician('Lead');
+        $job = $this->job($lead);
+        $carpentry = $this->task($job, 'Carpentry Work', $lead, 1);
+
+        $this->actingAs($lead->user)
+            ->post("/technician/sub-tasks/{$carpentry->id}/progress", ['progress_percentage' => 45])
+            ->assertSessionHasNoErrors();
+
+        $report = ProgressReport::where('service_sub_task_id', $carpentry->id)->firstOrFail();
+        $this->assertFalse((bool) $report->is_validated);
+        $this->assertSame(0, (int) $carpentry->fresh()->progress_percentage);
+    }
+
+    public function test_on_an_older_job_a_whole_job_report_keeps_its_typed_figure(): void
+    {
+        config(['progress.task_average_from' => '2999-01-01']);
+
+        $lead = $this->technician('Lead');
+        $painter = $this->technician('Painter');
+        $job = $this->job($lead);
+        $this->task($job, 'Paint Work', $painter, 1);
+
+        $this->actingAs($lead->user)
+            ->post("/technician/jobs/{$job->id}/progress-report", [
+                'percent_complete' => 80,
+                'notes' => 'Whole job update.',
+            ])
+            ->assertSessionHasNoErrors();
+
+        $report = ProgressReport::where('service_request_id', $job->id)
+            ->whereNull('service_sub_task_id')
+            ->firstOrFail();
+        $this->assertSame(80, (int) $report->percent_complete);
+
+        // The job's own figure is still the task average, as it was before.
+        $this->assertSame(0, (int) $job->fresh()->progress_percentage);
+    }
+
+    /** The line is the job's creation time, read in Nairobi time. */
+    public function test_the_cutoff_is_read_from_the_jobs_creation_time(): void
+    {
+        config(['progress.task_average_from' => '2026-11-03 00:00:00']);
+
+        $lead = $this->technician('Lead');
+        $job = $this->job($lead);
+
+        $job->created_at = \Illuminate\Support\Carbon::parse('2026-11-02 23:59:00', 'Africa/Nairobi');
+        $this->assertFalse($job->usesTaskAverageRules());
+
+        $job->created_at = \Illuminate\Support\Carbon::parse('2026-11-03 00:00:00', 'Africa/Nairobi');
+        $this->assertTrue($job->usesTaskAverageRules());
     }
 }

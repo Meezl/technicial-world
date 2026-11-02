@@ -1489,7 +1489,7 @@
                                              carries the task average; the server pins
                                              it, so a typed figure here would only be
                                              overwritten. Move a task to change it. -->
-                                        <div v-if="!report.service_sub_task_id && originalScopeTaskCount" class="form-group">
+                                        <div v-if="!report.service_sub_task_id && originalScopeTaskCount && job.uses_task_average_rules" class="form-group">
                                             <label>Validated %</label>
                                             <strong class="form-control form-control-readonly">{{ normalizedProgress }}%</strong>
                                             <small class="text-muted">The average across this job's {{ originalScopeTaskCount }} tasks.</small>

@@ -843,12 +843,12 @@ class SubTaskTechnicianVisibilityTest extends TestCase
         $this->assertNull($report->fresh()->rejected_at);
     }
 
-    /**
-     * The lead settles their own task by moving its bar — it counts at once —
-     * so there is no separate claim of theirs left for them to approve.
-     */
-    public function test_a_lead_settles_their_own_sub_task_by_moving_its_bar(): void
+    public function test_a_lead_cannot_approve_their_own_sub_task_claim(): void
     {
+        // A job from before the task-average rules, where the lead's own bar
+        // is a claim like anyone else's. See config/progress.php.
+        config(['progress.task_average_from' => '2999-01-01']);
+
         $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
         $lead = $this->makeTechnician();
 
@@ -872,8 +872,12 @@ class SubTaskTechnicianVisibilityTest extends TestCase
 
         $report = ProgressReport::where('service_sub_task_id', $subTask->id)->firstOrFail();
 
-        $this->assertTrue($report->fresh()->is_validated);
-        $this->assertSame(90, $subTask->fresh()->progress_percentage);
+        $this->actingAs($lead->user)
+            ->post(route('technician.progress-report.approve', $report))
+            ->assertForbidden();
+
+        $this->assertFalse($report->fresh()->is_validated);
+        $this->assertSame(0, $subTask->fresh()->progress_percentage);
     }
 
     /**
@@ -1621,6 +1625,10 @@ class SubTaskTechnicianVisibilityTest extends TestCase
      */
     public function test_a_lead_with_no_sub_task_of_their_own_still_has_the_job(): void
     {
+        // A job from before the task-average rules, where a whole-job report
+        // keeps the figure typed into it. See config/progress.php.
+        config(['progress.task_average_from' => '2999-01-01']);
+
         $client = User::factory()->create(['role' => User::ROLE_CLIENT]);
         $lead = $this->makeTechnician();
         $subTaskHolder = $this->makeTechnician();
@@ -1683,13 +1691,10 @@ class SubTaskTechnicianVisibilityTest extends TestCase
             ])
             ->assertRedirect();
 
-        // Filed, carrying the task average rather than the 50% typed: the
-        // job is split into tasks, and none has moved yet.
         $this->assertDatabaseHas('progress_reports', [
             'service_request_id' => $job->id,
             'technician_id' => $lead->id,
-            'service_sub_task_id' => null,
-            'percent_complete' => 0,
+            'percent_complete' => 50,
         ]);
 
         // A lead may also report against someone else's sub-task — normal on

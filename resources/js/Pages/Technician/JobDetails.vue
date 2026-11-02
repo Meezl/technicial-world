@@ -354,7 +354,7 @@
                         <!-- The lead may correct any bar on the job; say so, and
                              that it counts at once, rather than leaving a
                              draggable bar on somebody else's task unexplained. -->
-                        <p v-if="!isMyTask(task) && isLeadTechnician" class="subtask-supervising">
+                        <p v-if="!isMyTask(task) && leadSetsBars" class="subtask-supervising">
                             <i class="fas fa-sliders-h"></i>
                             Move this bar to correct {{ task.technician?.user?.name || 'the technician' }}'s
                             progress. It counts at once, and they see your reason.
@@ -362,6 +362,7 @@
                         <p v-else-if="!isMyTask(task)" class="subtask-supervising">
                             <i class="fas fa-eye"></i>
                             {{ task.technician?.user?.name || 'The assigned technician' }} moves this one.
+                            <template v-if="isLeadTechnician">Yours is to approve what they claim, or send it back.</template>
                         </p>
 
                         <!-- A claim counts only once someone signs it off, so
@@ -710,7 +711,7 @@
                              average of the tasks, so a whole-job report carries
                              that figure rather than one typed over it. The
                              server pins it the same way. -->
-                        <div v-if="reportingWholeSplitJob" class="form-field">
+                        <div v-if="reportingWholeSplitJob && usesTaskAverageRules" class="form-field">
                             <span>Progress %</span>
                             <strong class="input input-readonly">{{ subTaskAverage }}%</strong>
                             <small class="field-note">
@@ -721,6 +722,14 @@
                         <label v-else class="form-field">
                             <span>Progress %</span>
                             <input v-model.number="progressForm.percent_complete" type="number" min="0" max="100" class="input">
+                            <!-- Older jobs: the figure is typed, but the job's
+                                 headline is still the task average. -->
+                            <small v-if="reportingWholeSplitJob" class="field-note">
+                                The job reads {{ subTaskAverage }}% — the average across its
+                                {{ originalScopeTasks.length }} tasks. Move it by signing off your crew's
+                                task reports and filing your own; what you enter here is your account
+                                of the job, not the figure the client sees.
+                            </small>
                         </label>
 
                         <label class="form-field">
@@ -987,6 +996,8 @@ const props = defineProps({
     job: { type: Object, required: true },
     compensationSummary: { type: Object, default: null },
     isLeadTechnician: { type: Boolean, default: false },
+    // Jobs created under the task-average rules; see config/progress.php.
+    usesTaskAverageRules: { type: Boolean, default: false },
     scope: { type: Object, default: () => ({}) },
     assignmentFiles: { type: Array, default: () => [] },
     commencementBlocker: { type: String, default: null },
@@ -1194,9 +1205,12 @@ function isMyTask(task) {
 // The bar belongs to whoever is doing the work. A lead supervising a task
 // reads it and rules on what is claimed against it; he does not set it. His
 // own task he moves like anybody else.
-// Your own bar, or — for the lead — any bar on the job.
+// Your own bar, or — for the lead on a job under the task-average rules —
+// any bar on the job.
+const leadSetsBars = computed(() => props.isLeadTechnician && props.usesTaskAverageRules)
+
 function canUpdateTask(task) {
-    return isMyTask(task) || props.isLeadTechnician
+    return isMyTask(task) || leadSetsBars.value
 }
 
 const CAPACITY_LABELS = {

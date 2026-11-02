@@ -440,6 +440,7 @@ class AdminDashboardController extends Controller
         // the client has already confirmed the work. The sign-off card says so
         // before the office presses the button.
         $job->setAttribute('client_signed_off', $job->clientHasSignedOff());
+        $job->setAttribute('uses_task_average_rules', $job->usesTaskAverageRules());
 
         // Who approved the quote and exactly when, named rather than an id,
         // so the timing card reads as a record of it.
