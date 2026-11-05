@@ -1139,6 +1139,41 @@ class ServiceRequest extends Model
     }
 
     /**
+     * Where a request sits before anyone has agreed to pay for it.
+     *
+     * A corporate request in one of these, without an approved quotation, is
+     * still the office's to review and price — an RFQ, not a job.
+     */
+    public const PRE_JOB_STATUSES = [
+        self::STATUS_PENDING,
+        self::STATUS_DRAFT_RFQ,
+        self::STATUS_AWAITING_PM_ASSIGNMENT,
+        self::STATUS_AWAITING_TECH_AVAILABILITY,
+        self::STATUS_AWAITING_CLIENT_DATE_RESPONSE,
+        self::STATUS_AWAITING_QUOTE_GENERATION,
+        self::STATUS_AWAITING_QUOTE_APPROVAL,
+    ];
+
+    /**
+     * Leave out corporate requests that are still RFQs.
+     *
+     * A caretaker's request goes to the RFQ queue first, so the office can
+     * review it, adjust it and price it before it is forwarded to the
+     * company's verifier. It belongs on the job list once the chain has
+     * approved it — or once the office has started it ahead of approval, which
+     * moves its status past the pre-job ones and so lets it through here too.
+     */
+    public function scopeExceptCorporateRfqs($query)
+    {
+        return $query->where(function ($q) {
+            $q->where('segment', '!=', self::SEGMENT_CORPORATE)
+                ->orWhereNull('segment')
+                ->orWhere('rfq_status', self::RFQ_STATUS_APPROVED)
+                ->orWhereNotIn('status', self::PRE_JOB_STATUSES);
+        });
+    }
+
+    /**
      * Everything one client-side person may see.
      *
      * The query-shaped twin of isVisibleToClient(). Both exist because a list

@@ -171,6 +171,65 @@ class CorporateSegmentTest extends TestCase
         $this->assertSame(1, $props['statusSummary']['total']);
     }
 
+    // ==================== RFQ first, job second ====================
+
+    public function test_an_unquoted_corporate_request_stays_off_the_job_list(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $retail = $this->makeRequest();
+        $pending = $this->makeRequest(['segment' => ServiceRequest::SEGMENT_CORPORATE]);
+        $quoted = $this->makeRequest([
+            'segment' => ServiceRequest::SEGMENT_CORPORATE,
+            'status' => ServiceRequest::STATUS_AWAITING_QUOTE_APPROVAL,
+            'rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED,
+        ]);
+        $approved = $this->makeRequest([
+            'segment' => ServiceRequest::SEGMENT_CORPORATE,
+            'status' => ServiceRequest::STATUS_READY_FOR_ASSIGNMENT,
+            'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
+        ]);
+        // Started by the office ahead of the client's sign-off.
+        $runningAhead = $this->makeRequest([
+            'segment' => ServiceRequest::SEGMENT_CORPORATE,
+            'status' => ServiceRequest::STATUS_IN_PROGRESS,
+            'rfq_status' => ServiceRequest::RFQ_STATUS_QUOTED,
+        ]);
+
+        $ids = collect($this->actingAs($admin)
+            ->get(route('admin.jobs'))
+            ->assertOk()
+            ->viewData('page')['props']['jobs']['data'])->pluck('id')->all();
+
+        $this->assertContains($retail->id, $ids, 'Retail is unchanged.');
+        $this->assertNotContains($pending->id, $ids, 'Still the office\'s to review in the RFQ queue.');
+        $this->assertNotContains($quoted->id, $ids, 'Waiting on the verifier or approver.');
+        $this->assertContains($approved->id, $ids);
+        $this->assertContains($runningAhead->id, $ids);
+    }
+
+    public function test_the_rfq_page_offers_the_corporate_queue_while_the_module_is_on(): void
+    {
+        config(['corporate.enabled' => true]);
+
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $this->makeRequest();
+        $corporate = $this->makeRequest(['segment' => ServiceRequest::SEGMENT_CORPORATE]);
+
+        $props = $this->actingAs($admin)
+            ->get(route('admin.rfq', ['segment' => ServiceRequest::SEGMENT_CORPORATE]))
+            ->assertOk()
+            ->viewData('page')['props'];
+
+        $this->assertSame(
+            [ServiceRequest::SEGMENT_RETAIL, ServiceRequest::SEGMENT_CORPORATE],
+            $props['filters']['segments']
+        );
+        $this->assertSame([$corporate->id], collect($props['rfqs']['data'])->pluck('id')->all());
+        // The tiles describe the queue on screen, not both of them.
+        $this->assertSame(1, $props['stats']['total']);
+        $this->assertSame(1, $props['stats']['corporatePending']);
+    }
+
     // ==================== The feature flag ====================
 
     public function test_the_module_is_off_by_default(): void

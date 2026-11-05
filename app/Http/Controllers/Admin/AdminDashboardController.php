@@ -276,6 +276,9 @@ class AdminDashboardController extends Controller
                 // to be able to say which one. Null on every retail row.
                 'organisation:id,name', 'property:id,name,code',
             ])
+            // A corporate request is reviewed and priced in the RFQ queue
+            // first, and only becomes a job once its approval chain says yes.
+            ->exceptCorporateRfqs()
             ->orderBy('created_at', 'desc');
 
         // Search Filter
@@ -3639,6 +3642,11 @@ class AdminDashboardController extends Controller
             // So the list can badge a job whose quote is half-priced, and the
             // modal can offer to pick it back up.
             'quotationDraft.savedBy:id,name',
+            // Corporate rows are named by company and building, and the row
+            // says whether the quotation goes to a verifier before the
+            // approver. Null on every retail row.
+            'organisation:id,name,approval_workflow',
+            'property:id,name,code',
         ]);
 
         // Approved variations raise the contract above the original quote, so
@@ -3657,10 +3665,15 @@ class AdminDashboardController extends Controller
         // brief is explicit that corporate requests arrive in their own
         // segment and are not lumped with retail.
         //
-        // Defaulted rather than forced: an admin can still ask for the
-        // corporate rows with ?segment=corporate, so nothing becomes
-        // unreachable in the window before the corporate queue itself ships.
+        // Defaulted rather than forced: the page offers a Retail / Corporate
+        // switch while the module is on, and a corporate request lands here
+        // first — before it is a job — so the office can review, adjust and
+        // price it before it is forwarded to the company's verifier.
+        $segments = \App\Support\CorporateModule::availableSegments();
         $segment = $request->input('segment', ServiceRequest::SEGMENT_RETAIL);
+        if (!array_key_exists($segment, ServiceRequest::SEGMENTS)) {
+            $segment = ServiceRequest::SEGMENT_RETAIL;
+        }
         $query->inSegment($segment);
 
         // Filter the queue down to one building. No-op when absent.
@@ -3736,17 +3749,27 @@ class AdminDashboardController extends Controller
         $perPage = in_array($perPage, [10, 15, 25, 50]) ? $perPage : 15;
         $rfqs = $query->paginate($perPage)->withQueryString();
 
-        // Calculate RFQ statistics (always unfiltered)
+        // Calculate RFQ statistics — unfiltered, but for the segment on
+        // screen, so the tiles above the list agree with the list below it.
+        $inSegment = fn () => ServiceRequest::query()->inSegment($segment);
         $stats = [
-            'pending' => ServiceRequest::where('rfq_status', 'pending')->count(),
-            'quoted' => ServiceRequest::where('rfq_status', 'quoted')->count(),
-            'approved' => ServiceRequest::where('rfq_status', 'approved')->count(),
-            'rejected' => ServiceRequest::where('rfq_status', 'rejected')->count(),
-            'total' => ServiceRequest::count(),
-            'totalValue' => ServiceRequest::where('rfq_status', 'approved')->sum('quote_amount'),
+            'pending' => $inSegment()->where('rfq_status', 'pending')->count(),
+            'quoted' => $inSegment()->where('rfq_status', 'quoted')->count(),
+            'approved' => $inSegment()->where('rfq_status', 'approved')->count(),
+            'rejected' => $inSegment()->where('rfq_status', 'rejected')->count(),
+            'total' => $inSegment()->count(),
+            'totalValue' => $inSegment()->where('rfq_status', 'approved')->sum('quote_amount'),
             // Feeds the count badge on the "Needs Action" filter pill so
             // admins can see the queue depth without toggling the filter.
-            'needsAction' => ServiceRequest::needsAdminAction()->count(),
+            'needsAction' => $inSegment()->needsAdminAction()->count(),
+            // The badge on the Corporate switch: requests from management
+            // companies the office has not yet quoted, whichever view is open.
+            'corporatePending' => in_array(ServiceRequest::SEGMENT_CORPORATE, $segments, true)
+                ? ServiceRequest::corporate()
+                    ->where('rfq_status', ServiceRequest::RFQ_STATUS_PENDING)
+                    ->whereNotIn('status', ServiceRequest::TERMINAL_STATUSES)
+                    ->count()
+                : 0,
         ];
 
         return Inertia::render('Admin/RFQ', [
@@ -3763,6 +3786,7 @@ class AdminDashboardController extends Controller
                 'status' => $request->input('status', 'all'),
                 'origin' => $request->input('origin', 'all'),
                 'segment' => $segment,
+                'segments' => $segments,
                 'property' => $request->input('property'),
                 'sort' => $sortOrder,
                 'per_page' => $perPage,

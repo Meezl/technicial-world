@@ -126,6 +126,25 @@
                     <!-- Primary row: search + Needs Action + advanced toggle.
                          Always visible on every viewport. -->
                     <div class="toolbar-primary">
+                        <!-- Retail / Corporate. Corporate requests arrive here
+                             first so the office can review, adjust and price
+                             them before they go to the company's verifier. -->
+                        <div v-if="segmentOptions.length > 1" class="segment-switch" role="tablist" aria-label="Client segment">
+                            <button
+                                v-for="option in segmentOptions"
+                                :key="option.value"
+                                type="button"
+                                role="tab"
+                                :aria-selected="localSegment === option.value"
+                                :class="['segment-switch-btn', { 'segment-switch-btn-on': localSegment === option.value }]"
+                                @click="setSegment(option.value)"
+                            >
+                                <i :class="option.icon"></i>
+                                <span>{{ option.label }}</span>
+                                <span v-if="option.count" class="segment-switch-count">{{ option.count }}</span>
+                            </button>
+                        </div>
+
                         <label class="search-shell">
                             <i class="fas fa-search search-shell-icon"></i>
                             <input
@@ -272,10 +291,18 @@
                                             <span v-if="rfq.quotation_draft" class="origin-badge draft-badge" title="A quotation is part-priced on this request">
                                                 <i class="fas fa-pen-ruler"></i> Draft
                                             </span>
+                                            <span v-if="rfq.segment === 'corporate'" class="origin-badge corporate-badge" :title="corporateWorkflowTitle(rfq)">
+                                                <i class="fas fa-building"></i> {{ corporateWorkflowLabel(rfq) }}
+                                            </span>
                                         </div>
                                     </td>
                                     <td>
-                                        <div class="client-info">
+                                        <div v-if="rfq.segment === 'corporate'" class="client-info">
+                                            <strong>{{ rfq.organisation?.name || 'Management company' }}</strong>
+                                            <span class="cell-subtext">{{ corporatePropertyLabel(rfq) }}</span>
+                                            <span class="cell-subtext">Raised by {{ rfq.user?.name || 'N/A' }}</span>
+                                        </div>
+                                        <div v-else class="client-info">
                                             <strong>{{ rfq.user?.name || 'N/A' }}</strong>
                                             <span class="cell-subtext">{{ rfq.user?.email || 'No email' }}</span>
                                         </div>
@@ -330,6 +357,14 @@
                                             >
                                                 <i :class="rfq.quotation_draft ? 'fas fa-pen-to-square' : 'fas fa-file-invoice-dollar'"></i>
                                             </button>
+                                            <Link
+                                                v-if="rfq.segment === 'corporate' && rfq.rfq_status === 'pending'"
+                                                :href="`/admin/compose/${rfq.id}`"
+                                                class="btn btn-sm btn-info"
+                                                title="Review the items the client picked from the rate schedule"
+                                            >
+                                                <i class="fas fa-list-check"></i>
+                                            </Link>
                                             <button
                                                 v-if="rfq.rfq_status === 'approved' && !isRfqFullyPaid(rfq)"
                                                 @click="initiatePaymentRequest(rfq)"
@@ -406,7 +441,8 @@
                             <div class="mobile-rfq-grid">
                                 <div>
                                     <span>Client</span>
-                                    <strong>{{ rfq.user?.name || 'N/A' }}</strong>
+                                    <strong v-if="rfq.segment === 'corporate'">{{ rfq.organisation?.name || 'Management company' }} · {{ corporatePropertyLabel(rfq) }}</strong>
+                                    <strong v-else>{{ rfq.user?.name || 'N/A' }}</strong>
                                 </div>
                                 <div>
                                     <span>Submitted</span>
@@ -1593,6 +1629,35 @@ const localOrigin = ref(props.filters.origin || 'all')
 const localSort = ref(props.filters.sort || 'newest')
 const localPerPage = ref(props.filters.per_page || 15)
 const localNeedsAction = ref(Boolean(props.filters.needs_action))
+const localSegment = ref(props.filters.segment || 'retail')
+
+const segmentOptions = computed(() => (props.filters.segments || ['retail']).map((value) => (
+    value === 'corporate'
+        ? { value, label: 'Corporate', icon: 'fas fa-building', count: props.stats?.corporatePending || 0 }
+        : { value, label: 'Retail', icon: 'fas fa-user', count: 0 }
+)))
+
+const setSegment = (value) => {
+    if (localSegment.value === value) return
+    localSegment.value = value
+    applyFilters()
+}
+
+const corporatePropertyLabel = (rfq) => {
+    const p = rfq.property
+    if (!p) return 'No property'
+    return p.code ? `${p.name} (${p.code})` : p.name
+}
+
+const corporateWorkflowLabel = (rfq) => (
+    rfq.organisation?.approval_workflow === 'two_stage' ? 'Corporate · 2-stage' : 'Corporate'
+)
+
+const corporateWorkflowTitle = (rfq) => (
+    rfq.organisation?.approval_workflow === 'two_stage'
+        ? 'Once quoted, this goes to the company\'s verifier, then their approver'
+        : 'Once quoted, this goes to the company\'s approver'
+)
 
 // Advanced filters (status/origin/sort/per_page) are collapsed on mobile by
 // default so the primary bar (search + Needs Action) stays quiet. Expanded
@@ -1805,6 +1870,7 @@ const buildFilterQuery = (extra = {}) => ({
     sort: localSort.value !== 'newest' ? localSort.value : undefined,
     per_page: localPerPage.value !== 15 ? localPerPage.value : undefined,
     needs_action: localNeedsAction.value ? 1 : undefined,
+    segment: localSegment.value !== 'retail' ? localSegment.value : undefined,
     ...extra,
 })
 
@@ -1837,7 +1903,8 @@ const clearFilters = () => {
     localSort.value = 'newest'
     localPerPage.value = 15
     localNeedsAction.value = false
-    router.get('/admin/rfq', {}, { preserveState: true, preserveScroll: true, replace: true })
+    // The segment is which queue you are in, not a filter on it.
+    router.get('/admin/rfq', localSegment.value !== 'retail' ? { segment: localSegment.value } : {}, { preserveState: true, preserveScroll: true, replace: true })
 }
 
 // --- Computed ---
@@ -2641,6 +2708,55 @@ defineOptions({ layout: null })
 .toolbar-primary > .search-shell { flex: 1 1 320px; min-width: 220px; }
 .toolbar-primary > .needs-action-pill { flex: 0 0 auto; }
 .toolbar-primary > .advanced-toggle-btn { flex: 0 0 auto; }
+.toolbar-primary > .segment-switch { flex: 0 0 auto; }
+
+/* Retail / Corporate queue switch. */
+.segment-switch {
+    display: inline-flex;
+    padding: 4px;
+    min-height: 48px;
+    background: #f1f5f9;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    gap: 4px;
+}
+.segment-switch-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0 0.9rem;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: #475569;
+    font-weight: 700;
+    font-size: 0.86rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.segment-switch-btn-on {
+    background: #fff;
+    color: #0f172a;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+.segment-switch-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 0.35rem;
+    border-radius: 999px;
+    background: #4f46e5;
+    color: #fff;
+    font-size: 0.72rem;
+}
+.corporate-badge {
+    background: #EEF2FF;
+    color: #3730A3;
+    border: 1px solid #C7D2FE;
+    margin-left: 0.4rem;
+}
 
 /* Advanced-filters row: status + origin + sort + per-page. Always visible
    on desktop; collapses on mobile behind the Filters toggle button. */

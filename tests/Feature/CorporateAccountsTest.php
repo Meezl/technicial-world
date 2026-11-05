@@ -469,8 +469,8 @@ class CorporateAccountsTest extends TestCase
         $flats = $org->properties()->create(['name' => 'Jitegemea Flats']);
         $court = $org->properties()->create(['name' => 'Riverside Court']);
 
-        $atFlats = $this->corporateRequest($org, ['property_id' => $flats->id]);
-        $atCourt = $this->corporateRequest($org, ['property_id' => $court->id]);
+        $atFlats = $this->corporateJob($org, ['property_id' => $flats->id]);
+        $atCourt = $this->corporateJob($org, ['property_id' => $court->id]);
         $retail = $this->makeRequest();
 
         $rows = $this->actingAs($this->admin)
@@ -489,7 +489,7 @@ class CorporateAccountsTest extends TestCase
     {
         $org = $this->organisation();
         $property = $org->properties()->create(['name' => 'Jitegemea Flats']);
-        $this->corporateRequest($org, ['property_id' => $property->id]);
+        $this->corporateJob($org, ['property_id' => $property->id]);
         $this->makeRequest();
 
         $rows = $this->actingAs($this->admin)
@@ -505,7 +505,7 @@ class CorporateAccountsTest extends TestCase
     {
         $org = $this->organisation();
         $property = $org->properties()->create(['name' => 'Jitegemea Flats']);
-        $atFlats = $this->corporateRequest($org, ['property_id' => $property->id]);
+        $atFlats = $this->corporateJob($org, ['property_id' => $property->id]);
         $this->makeRequest();
 
         $rows = $this->actingAs($this->admin)
@@ -539,6 +539,18 @@ class CorporateAccountsTest extends TestCase
         return $this->makeRequest(array_merge([
             'segment' => ServiceRequest::SEGMENT_CORPORATE,
             'client_organisation_id' => $org->id,
+        ], $attributes));
+    }
+
+    /**
+     * A corporate request that has become a job. Until its quotation is
+     * approved it is an RFQ and stays off the job list.
+     */
+    private function corporateJob(ClientOrganisation $org, array $attributes = []): ServiceRequest
+    {
+        return $this->corporateRequest($org, array_merge([
+            'status' => ServiceRequest::STATUS_READY_FOR_ASSIGNMENT,
+            'rfq_status' => ServiceRequest::RFQ_STATUS_APPROVED,
         ], $attributes));
     }
 }

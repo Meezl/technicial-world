@@ -344,19 +344,15 @@ class ProgressService
                 'released_by' => $pmId,
             ]);
 
-            // A management company gets one report a day covering every job,
-            // not one per job as it is released. Releasing still does the same
-            // thing — the reports become the client's to see — but the telling
-            // is batched by CorporateDigestService, which is the whole point:
-            // a company with a dozen buildings under way would otherwise get a
-            // dozen emails a day and read none of them.
+            // One email, after the response is sent, carrying the whole batch,
+            // to the account the request is filed under.
             //
-            // Retail is unchanged: one email per release, as before.
-            if ($serviceRequest->isCorporate()) {
-                return $reports->count();
-            }
-
-            // One email, after the response is sent, carrying the whole batch.
+            // For a management company that is the requester who raised it.
+            // Their signatories still get the portfolio-wide picture once a day
+            // from CorporateDigestService — that digest deliberately leaves the
+            // requesters out, so without this the person who logged the job
+            // heard nothing at all when the office validated and released its
+            // progress, which is the complaint this answers.
             $reportIds = $reports->pluck('id')->all();
             $srId = $serviceRequest->id;
             app()->terminating(function () use ($reportIds, $srId) {

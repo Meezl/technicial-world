@@ -148,7 +148,7 @@ class CorporateDailyReportTest extends TestCase
         Mail::assertNotSent(\App\Mail\CorporateDailyReport::class, fn($m) => $m->hasTo('caretaker@acme.co.ke'));
     }
 
-    public function test_releasing_reports_on_a_corporate_job_sends_no_email_of_its_own(): void
+    public function test_releasing_reports_on_a_corporate_job_emails_the_requester(): void
     {
         $job = $this->job();
         ProgressReport::create([
@@ -170,8 +170,12 @@ class CorporateDailyReportTest extends TestCase
 
         // The release still happens — the report becomes the client's to see.
         $this->assertNotNull(ProgressReport::first()->released_to_client_at);
-        // But the telling waits for the daily digest.
-        Mail::assertNotSent(\App\Mail\ProgressBatchReleased::class);
+        // And the person who raised the job hears about it there and then —
+        // the digest leaves requesters out, so this is their only email.
+        Mail::assertSent(\App\Mail\ProgressBatchReleased::class, 1);
+        Mail::assertSent(\App\Mail\ProgressBatchReleased::class, fn($m) => $m->hasTo('caretaker@acme.co.ke'));
+        // The signatories still get it once, in the daily digest.
+        Mail::assertNotSent(\App\Mail\ProgressBatchReleased::class, fn($m) => $m->hasTo('boss@acme.co.ke'));
     }
 
     public function test_a_retail_job_still_emails_on_release_exactly_as_before(): void
