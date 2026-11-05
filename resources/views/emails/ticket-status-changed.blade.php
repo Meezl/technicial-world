@@ -27,6 +27,7 @@
     <div class="content">
         <p>Hello {{ $ticket->filer_name }},</p>
         <p>Your ticket <strong>{{ $ticket->ticket_ref }}</strong> has been updated to <strong>{{ $ticket->statusLabel() }}</strong>.</p>
+        <p style="color:#6b7280;font-size:13px;">Filed {{ $ticket->created_at?->timezone(config('app.timezone'))->format('D j M Y, g:ia') }}.</p>
 
         @if($log->note)
         <p><strong>Update from our team:</strong></p>
@@ -48,7 +49,7 @@
 
         <div class="meta">
             Subject: {{ $ticket->subject }}<br>
-            Updated: {{ $log->created_at->format('d M Y H:i') }}
+            Updated: {{ $log->created_at->timezone(config('app.timezone'))->format('D j M Y, g:ia') }}
         </div>
     </div>
 

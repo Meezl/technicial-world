@@ -31,6 +31,7 @@
         </div>
 
         <table class="meta-table">
+            <tr><th>Submitted</th><td>{{ $serviceRequest->created_at?->timezone(config('app.timezone'))->format('D j M Y, g:ia') }}</td></tr>
             <tr><th>Service</th><td>{{ $serviceRequest->serviceCategory->name ?? 'Not specified' }}</td></tr>
             <tr><th>Location</th><td>{{ $serviceRequest->location }}</td></tr>
             <tr><th>Urgency</th><td>{{ ucfirst($serviceRequest->urgency) }}</td></tr>

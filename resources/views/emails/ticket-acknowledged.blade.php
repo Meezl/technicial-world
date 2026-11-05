@@ -32,6 +32,7 @@
 
         <table class="meta-table">
             <tr><th>Subject</th><td>{{ $ticket->subject }}</td></tr>
+            <tr><th>Filed at</th><td>{{ $ticket->created_at?->timezone(config('app.timezone'))->format('D j M Y, g:ia') }}</td></tr>
             <tr><th>Category</th><td>{{ ucfirst($ticket->category) }}</td></tr>
             <tr><th>Urgency</th><td>{!! $ticket->urgencyLabel() !!}</td></tr>
             @if($ticket->location)

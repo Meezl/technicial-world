@@ -112,6 +112,9 @@ class NewServiceRequestNotification extends Notification implements ShouldQueue
         $message
             ->line('**Request Details:**')
             ->line('Request ID: ' . $sr->request_id)
+            // When the client raised it, to the minute — reminders arrive
+            // hours later and the office needs the original time to hand.
+            ->line('Raised: ' . $this->raisedAt())
             ->line('Urgency: ' . $urgency)
             ->line('Service Category: ' . ($sr->serviceCategory->name ?? 'Not specified'))
             ->line('Client: ' . ($sr->user->name ?? 'Unknown'))
@@ -143,6 +146,7 @@ class NewServiceRequestNotification extends Notification implements ShouldQueue
             'urgency' => $sr->urgency,
             'location' => $sr->location,
             'reminder' => $this->reminder,
+            'raised_at' => $sr->created_at?->toIso8601String(),
             'message' => $this->isReminder()
                 ? "{$sr->request_id} still not acted on after {$this->waitingFor()}"
                 : 'New service request from ' . ($sr->user->name ?? 'a client'),
@@ -201,6 +205,14 @@ class NewServiceRequestNotification extends Notification implements ShouldQueue
         return $due
             ? "{$sr->request_id} ({$urgency}) — response due " . $due->format('g:ia D')
             : "Reminder: {$sr->request_id} is waiting on the office";
+    }
+
+    /** "Wed 4 Nov 2026, 2:49pm", in Nairobi time. */
+    private function raisedAt(): string
+    {
+        return $this->serviceRequest->created_at
+            ? $this->serviceRequest->created_at->timezone(config('app.timezone'))->format('D j M Y, g:ia')
+            : 'Not recorded';
     }
 
     private function waitingFor(): string

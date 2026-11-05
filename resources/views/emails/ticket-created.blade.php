@@ -40,7 +40,7 @@
             <tr><th>Category</th><td>{{ ucfirst($ticket->category) }}</td></tr>
             <tr><th>Urgency</th><td>{!! $ticket->urgencyLabel() !!}</td></tr>
             <tr><th>Account</th><td>{{ $ticket->user_id ? 'Registered client (#' . $ticket->user_id . ')' : 'Guest (no account)' }}</td></tr>
-            <tr><th>Filed at</th><td>{{ $ticket->created_at->format('d M Y H:i') }}</td></tr>
+            <tr><th>Filed at</th><td>{{ $ticket->created_at->timezone(config('app.timezone'))->format('D j M Y, g:ia') }}</td></tr>
         </table>
 
         <h4 style="margin:18px 0 6px;">Description</h4>
