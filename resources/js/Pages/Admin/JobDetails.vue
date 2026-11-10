@@ -1694,6 +1694,24 @@
                         />
                     </article>
 
+                    <article id="client-payments" class="job-shell-card">
+                        <div class="job-card-header">
+                            <div>
+                                <span class="section-kicker">Finance</span>
+                                <h3>Client payments</h3>
+                                <p>What the client has been billed, what they have paid, and what is still waiting.</p>
+                            </div>
+                        </div>
+
+                        <ClientPaymentsPanel
+                            :job="job"
+                            :bills="clientBills"
+                            :billing="billingSummary"
+                            :gating="gating"
+                            :blocker="paymentRequestBlocker"
+                        />
+                    </article>
+
                     <article class="job-shell-card">
                         <div class="job-card-header">
                             <div>
@@ -3494,6 +3512,7 @@ import AdminSidebar from '../../Components/AdminSidebar.vue'
 import ImageLightbox from '../../Components/ImageLightbox.vue'
 import VariationOrdersPanel from '../../Components/VariationOrdersPanel.vue'
 import RefundsPanel from '../../Components/RefundsPanel.vue'
+import ClientPaymentsPanel from '../../Components/ClientPaymentsPanel.vue'
 import JobDocumentsPanel from '../../Components/JobDocumentsPanel.vue'
 import ProgressReportActions from '../../Components/ProgressReportActions.vue'
 import RemovedReportsPanel from '../../Components/RemovedReportsPanel.vue'
@@ -3536,6 +3555,14 @@ const props = defineProps({
     },
     billingSummary: {
         type: Object,
+        default: null
+    },
+    clientBills: {
+        type: Array,
+        default: () => []
+    },
+    paymentRequestBlocker: {
+        type: String,
         default: null
     },
     variationLedger: {

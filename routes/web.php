@@ -327,6 +327,7 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
     // Payment Approvals (offline payments)
     Route::post('/payments/{payment}/approve', [\App\Http\Controllers\PaymentController::class, 'approveOfflinePayment'])->name('admin.payments.approve');
     Route::post('/payments/{payment}/reject', [\App\Http\Controllers\PaymentController::class, 'rejectOfflinePayment'])->name('admin.payments.reject');
+    Route::post('/payments/{paymentRequest}/resend', [AdminDashboardController::class, 'resendPaymentRequest'])->name('admin.payments.resend');
     Route::post('/payments/{paymentRequest}/confirm', [\App\Http\Controllers\PaymentController::class, 'confirmOfflinePayment'])->name('admin.payments.confirm');
 
     // Compensation Amendment Approval
