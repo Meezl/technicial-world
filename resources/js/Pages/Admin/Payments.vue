@@ -26,31 +26,44 @@
 
                 <div class="payments-filter-card">
                     <div class="filter-copy">
-                        <span class="section-kicker">Filters</span>
-                        <h3>Focus the payment workspace</h3>
-                        <p>Filter by service request or technician to review collections, payouts, and spend for a specific job.</p>
+                        <span class="section-kicker">Search &amp; filters</span>
+                        <h3>Find a payment</h3>
+                        <p>Results update as you type or pick — no need to press anything.</p>
                     </div>
 
-                    <div class="filter-grid">
-                        <label class="filter-field">
-                            <span>Service Request</span>
-                            <select v-model="selectedSR" class="status-filter">
-                                <option value="">All Service Requests</option>
-                                <option v-for="sr in serviceRequests" :key="sr.id" :value="sr.id">
-                                    {{ sr.request_id }} - {{ truncate(sr.description, 40) }}
-                                </option>
-                            </select>
-                        </label>
+                    <!-- Same search shell and behaviour as Jobs and RFQ
+                         Management: live, partial, case-insensitive, sent to
+                         the server 400ms after the last keystroke. -->
+                    <label class="payments-search-shell">
+                        <i class="fas fa-search payments-search-icon"></i>
+                        <input
+                            v-model="searchQuery"
+                            type="text"
+                            placeholder="Search client, REQ no., payment ID, M-Pesa receipt, phone…"
+                            @input="onSearchInput"
+                            @keydown.enter.prevent="applyFiltersNow"
+                        >
+                        <i v-if="loadingResults" class="fas fa-circle-notch fa-spin payments-search-spinner"></i>
+                        <button v-if="searchQuery" type="button" class="payments-search-clear" @click="clearSearch" aria-label="Clear search" title="Clear search">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </label>
 
-                        <label class="filter-field">
+                    <div class="filter-grid">
+                        <div class="filter-field filter-field-wide">
+                            <span>Client</span>
+                            <SearchSelect v-model="selectedClient" :options="clientOptions" placeholder="All clients — type a name, phone or company" />
+                        </div>
+
+                        <div class="filter-field">
+                            <span>Service Request</span>
+                            <SearchSelect v-model="selectedSR" :options="serviceRequestOptions" placeholder="All — type REQ no. or client" />
+                        </div>
+
+                        <div class="filter-field">
                             <span>Technician</span>
-                            <select v-model="selectedTechnician" class="status-filter">
-                                <option value="">All Technicians</option>
-                                <option v-for="t in technicians" :key="t.id" :value="t.id">
-                                    {{ t.user?.name }} ({{ t.technician_id }})
-                                </option>
-                            </select>
-                        </label>
+                            <SearchSelect v-model="selectedTechnician" :options="technicianOptions" placeholder="All — type name or tech no." align-right />
+                        </div>
 
                         <label class="filter-field">
                             <span>From</span>
@@ -64,16 +77,7 @@
 
                     <div v-if="activeFilterChips.length" class="filter-chip-row">
                         <span v-for="chip in activeFilterChips" :key="chip" class="filter-chip">{{ chip }}</span>
-                    </div>
-
-                    <div class="filter-actions">
-                        <button @click="filterByFilters" class="btn btn-primary btn-sm filter-button">
-                            <i class="fas fa-filter"></i>
-                            Apply filters
-                        </button>
-                        <button v-if="activeFilterChips.length" @click="clearFilters" class="btn btn-secondary btn-sm filter-button filter-button-secondary">
-                            Clear
-                        </button>
+                        <button @click="clearFilters" type="button" class="filter-clear-all">Clear all</button>
                     </div>
                 </div>
             </section>
@@ -410,7 +414,7 @@
                                     <tr v-for="p in allClientPayments" :key="p.id">
                                         <td><strong>{{ p.payment_id || p.payment_request_id || '-' }}</strong></td>
                                         <td>{{ p.service_request?.request_id || '-' }}</td>
-                                        <td>{{ p.user?.name || '-' }}</td>
+                                        <td>{{ p.service_request?.organisation?.name || p.user?.name || p.service_request?.user?.name || '-' }}</td>
                                         <td>KSH {{ formatCurrency(p.amount) }}</td>
                                         <td>{{ formatPaymentMethod(p.payment_method || p.type) }}</td>
                                         <td>
@@ -871,7 +875,8 @@
 
 <script setup>
 import AdminSidebar from '../../Components/AdminSidebar.vue'
-import { ref, computed } from 'vue'
+import SearchSelect from '../../Components/SearchSelect.vue'
+import { ref, computed, watch } from 'vue'
 import { router } from '@inertiajs/vue3'
 import axios from 'axios'
 
@@ -887,6 +892,7 @@ const props = defineProps({
     serviceRequests: { type: Array, default: () => [] },
     technicians: { type: Array, default: () => [] },
     filters: { type: Object, default: () => ({}) },
+    clients: { type: Array, default: () => [] },
 })
 
 const selectedSR = ref(props.filters?.service_request_id || '')
@@ -894,6 +900,8 @@ const selectedSR = ref(props.filters?.service_request_id || '')
 const selectedTechnician = ref(props.filters?.technician_id ? Number(props.filters.technician_id) : '')
 const fromDate = ref(props.filters?.from || '')
 const toDate = ref(props.filters?.to || '')
+const selectedClient = ref(props.filters?.client || '')
+const searchQuery = ref(props.filters?.search || '')
 // Auto-show technician tab when a technician filter is active with no SR filter (#43)
 const activeTab = ref(props.filters?.technician_id && !props.filters?.service_request_id ? 'technician' : 'client')
 const showPaymentDetailModal = ref(false)
@@ -977,6 +985,15 @@ const activeFilterChips = computed(() => {
     if (selectedTechnician.value) {
         chips.push(selectedTechnicianLabel.value)
     }
+
+    if (selectedClient.value) {
+        const match = props.clients.find(c => c.value === selectedClient.value)
+        chips.push(`Client: ${match?.label || 'selected client'}`)
+    }
+
+    if (props.filters?.search) chips.push(`Search: “${props.filters.search}”`)
+    if (fromDate.value) chips.push(`From ${fromDate.value}`)
+    if (toDate.value) chips.push(`To ${toDate.value}`)
 
     return chips
 })
@@ -1207,22 +1224,75 @@ const submitOfflineApproval = async () => {
 // ---- Filter ----
 // #43 — wire the date range through to the controller so the filter
 // actually narrows results.
-const filterByFilters = () => {
+// ---- Search & filters ----
+// Options for the type-to-search pickers. The sublabel carries what ops type
+// but the label does not show, so a REQ can be found by its client's name.
+const serviceRequestOptions = computed(() => props.serviceRequests.map(sr => ({
+    value: sr.id,
+    label: sr.request_id,
+    sublabel: [sr.organisation?.name || sr.user?.name, truncate(sr.description, 50)].filter(Boolean).join(' — '),
+})))
+
+const technicianOptions = computed(() => props.technicians.map(t => ({
+    value: t.id,
+    label: t.user?.name || t.technician_id,
+    sublabel: [t.technician_id, t.user?.phone, t.specialization].filter(Boolean).join(' · '),
+})))
+
+const clientOptions = computed(() => props.clients)
+
+const loadingResults = ref(false)
+
+const currentParams = () => {
     const params = {}
+    if (searchQuery.value.trim()) params.search = searchQuery.value.trim()
+    if (selectedClient.value) params.client = selectedClient.value
     if (selectedSR.value) params.service_request_id = selectedSR.value
     if (selectedTechnician.value) params.technician_id = selectedTechnician.value
     if (fromDate.value) params.from = fromDate.value
     if (toDate.value) params.to = toDate.value
-
-    router.get('/admin/payments', params, { preserveState: true, preserveScroll: true })
+    return params
 }
 
+let searchDebounce = null
+const applyFiltersNow = () => {
+    if (searchDebounce) { clearTimeout(searchDebounce); searchDebounce = null }
+    router.get('/admin/payments', currentParams(), {
+        preserveState: true,
+        preserveScroll: true,
+        replace: true,
+        onStart: () => { loadingResults.value = true },
+        onFinish: () => { loadingResults.value = false },
+    })
+}
+
+// Typing waits 400ms after the last key, like RFQ Management, so a REQ
+// number typed quickly is one request, not eight.
+const onSearchInput = () => {
+    if (searchDebounce) clearTimeout(searchDebounce)
+    searchDebounce = setTimeout(applyFiltersNow, 400)
+}
+
+const clearSearch = () => {
+    searchQuery.value = ''
+    applyFiltersNow()
+}
+
+// Picking a client, job, technician or date applies straight away.
+watch([selectedClient, selectedSR, selectedTechnician, fromDate, toDate], applyFiltersNow)
+
 const clearFilters = () => {
+    if (searchDebounce) { clearTimeout(searchDebounce); searchDebounce = null }
+    const hadOnlySearch = !selectedClient.value && !selectedSR.value && !selectedTechnician.value && !fromDate.value && !toDate.value
+    searchQuery.value = ''
+    selectedClient.value = ''
     selectedSR.value = ''
     selectedTechnician.value = ''
     fromDate.value = ''
     toDate.value = ''
-    router.get('/admin/payments', {}, { preserveState: true, preserveScroll: true })
+    // The watcher sends the empty query when any picker changed; a search on
+    // its own changes none of them, so send it here.
+    if (hadOnlySearch) applyFiltersNow()
 }
 
 const viewPaymentDetails = (payment) => {
@@ -1466,11 +1536,33 @@ const getTabCount = (tabKey) => {
     font-weight: 700;
 }
 
-.filter-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
+.filter-field-wide { grid-column: 1 / -1; }
+
+.filter-clear-all {
+    border: 0; background: none; padding: 0.5rem 0.25rem; cursor: pointer;
+    color: #64748b; font-size: 0.82rem; font-weight: 600; text-decoration: underline;
 }
+
+/* Matches .jobs-search-shell on Jobs and .search-shell on RFQ Management. */
+.payments-search-shell {
+    display: flex; align-items: center; gap: 0.6rem;
+    border: 1px solid #cbd5e1; border-radius: 999px; padding: 0 0.5rem 0 1rem;
+    background: #fff; min-height: 46px; margin: 0;
+}
+.payments-search-shell:focus-within { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15); }
+.payments-search-icon { color: #94a3b8; flex-shrink: 0; }
+.payments-search-spinner { color: #94a3b8; font-size: 0.85rem; }
+.payments-search-shell > input {
+    flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; box-shadow: none;
+    font-size: 0.92rem; color: #0f172a; padding: 0.6rem 0;
+}
+.payments-search-shell > input::placeholder { color: #94a3b8; }
+.payments-search-clear {
+    border: 0; background: rgba(148, 163, 184, 0.2); color: #475569; cursor: pointer;
+    width: 28px; height: 28px; min-width: 0; padding: 0; line-height: 1;
+    border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.payments-search-clear:hover { background: rgba(148, 163, 184, 0.35); color: #0f172a; }
 
 .filter-button {
     min-width: 8rem;
