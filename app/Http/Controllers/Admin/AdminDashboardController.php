@@ -474,6 +474,15 @@ class AdminDashboardController extends Controller
             // They are summed only in the total_* lines — the contract cap
             // must never see an attendance fee.
             'billingSummary' => app(\App\Services\BillingService::class)->summary($serviceRequest),
+            // Every bill raised to the client on this job, labelled by kind,
+            // so the office can see what is waiting and send it again — a bill
+            // reopened by an M-Pesa reversal otherwise shows nowhere.
+            'clientBills' => $this->clientBills($serviceRequest),
+            'paymentRequestBlocker' => match (true) {
+                $serviceRequest->isCorporate() => 'Corporate jobs are billed in batches against the client\'s float, not job by job.',
+                $serviceRequest->rfq_status !== ServiceRequest::RFQ_STATUS_APPROVED => 'Payments can be requested once the client has approved the quotation.',
+                default => null,
+            },
             // The running total behind the quotation form: original quote,
             // every variation, and the value after each one.
             'variationLedger' => app(\App\Services\VariationOrderService::class)->ledger($serviceRequest),
@@ -4664,6 +4673,86 @@ class AdminDashboardController extends Controller
     /**
      * Request payment from client for an approved service request.
      */
+    /**
+     * The client's bills on a job for the job page, newest first, each with
+     * the kind of money it is and how it was settled.
+     */
+    private function clientBills(ServiceRequest $serviceRequest): array
+    {
+        $reconciliation = app(\App\Services\MpesaReconciliationService::class);
+        $bills = PaymentRequest::where('service_request_id', $serviceRequest->id)
+            ->with('requestedBy:id,name')
+            ->orderByDesc('created_at')->orderByDesc('id')
+            ->get();
+
+        $milestones = \App\Models\ReqBillingMilestone::whereIn('payment_request_id', $bills->pluck('id'))
+            ->pluck('label', 'payment_request_id');
+
+        $lastSent = \App\Models\ActionReminder::where('remindable_type', (new PaymentRequest)->getMorphClass())
+            ->whereIn('remindable_id', $bills->pluck('id'))
+            ->where('kind', \App\Models\ActionReminder::KIND_PAYMENT)
+            ->selectRaw('remindable_id, MAX(awaiting_since) as sent_at')
+            ->groupBy('remindable_id')
+            ->pluck('sent_at', 'remindable_id');
+
+        return $bills->map(fn(PaymentRequest $b) => [
+            'id'           => $b->id,
+            'code'         => $b->payment_request_id,
+            'label'        => $reconciliation->labelFor($b, $milestones[$b->id] ?? null),
+            'amount'       => (float) $b->amount,
+            'status'       => $b->status,
+            'method'       => $b->payment_method,
+            'receipt'      => $b->mpesa_receipt_number ?: ($b->bank_reference ?: $b->cheque_number),
+            'paid_at'      => $b->paid_at?->toIso8601String(),
+            'raised_at'    => $b->created_at?->toIso8601String(),
+            'last_sent_at' => isset($lastSent[$b->id]) ? \Carbon\Carbon::parse($lastSent[$b->id])->toIso8601String() : null,
+            'requested_by' => $b->requestedBy?->name,
+            'reopened'     => $b->isPending() && str_contains((string) $b->notes, 'reversed by'),
+            'notes'        => $b->notes,
+        ])->values()->all();
+    }
+
+    /**
+     * Send a waiting bill to the client again — after an M-Pesa reversal
+     * reopened it, or when they say they never received it. Restarts the
+     * 12-hour reminder clock.
+     */
+    public function resendPaymentRequest(Request $request, PaymentRequest $paymentRequest)
+    {
+        if (!$paymentRequest->isPending()) {
+            return back()->with('error', "{$paymentRequest->payment_request_id} is not waiting for payment.");
+        }
+
+        $client = $paymentRequest->user ?? $paymentRequest->serviceRequest?->user;
+        if (!$client) {
+            return back()->with('error', 'This bill has no client to send it to.');
+        }
+
+        try {
+            $client->notify($paymentRequest->is_deposit
+                ? new \App\Notifications\DepositRequestNotification($paymentRequest)
+                : new PaymentRequestNotification($paymentRequest));
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Resending payment request failed', [
+                'payment_request_id' => $paymentRequest->id,
+                'error' => $e->getMessage(),
+            ]);
+            return back()->with('error', 'The bill could not be sent: ' . $e->getMessage());
+        }
+
+        \App\Models\ActionReminder::openFor($paymentRequest, \App\Models\ActionReminder::KIND_PAYMENT);
+        \App\Models\AuditLog::log('payment_request.resent', $paymentRequest, null, [
+            'amount' => (float) $paymentRequest->amount,
+        ]);
+
+        return back()->with('success', sprintf(
+            '%s (KES %s) sent to %s.',
+            $paymentRequest->payment_request_id,
+            number_format((float) $paymentRequest->amount, 2),
+            $client->name
+        ));
+    }
+
     public function requestPayment(Request $request, ServiceRequest $serviceRequest)
     {
         $request->validate([
