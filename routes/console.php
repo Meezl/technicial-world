@@ -49,3 +49,10 @@ Schedule::command('reminders:send-actions')
     ->everyThirtyMinutes()
     ->withoutOverlapping()
     ->runInBackground();
+
+// Paybill money that arrived before its bill, or against a mistyped account
+// number later corrected, is applied as soon as there is a bill for it.
+Schedule::command('mpesa:rematch')
+    ->hourly()
+    ->withoutOverlapping()
+    ->runInBackground();

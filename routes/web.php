@@ -433,6 +433,10 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->group(function () {
 
     // M-Pesa Transactions
     Route::resource('mpesa-transactions', \App\Http\Controllers\Admin\MpesaTransactionController::class)->except(['create', 'store']);
+    Route::get('mpesa-transactions/{mpesaTransaction}/match-options', [\App\Http\Controllers\Admin\MpesaTransactionController::class, 'matchOptions'])->name('admin.mpesa-transactions.match-options');
+    Route::post('mpesa-transactions/{mpesaTransaction}/reverse', [\App\Http\Controllers\Admin\MpesaTransactionController::class, 'reverse'])->name('admin.mpesa-transactions.reverse');
+    Route::post('mpesa-transactions/{mpesaTransaction}/correct', [\App\Http\Controllers\Admin\MpesaTransactionController::class, 'correct'])->name('admin.mpesa-transactions.correct');
+    Route::post('mpesa-transactions/{mpesaTransaction}/dismiss', [\App\Http\Controllers\Admin\MpesaTransactionController::class, 'dismiss'])->name('admin.mpesa-transactions.dismiss');
     Route::post('mpesa-transactions/{mpesaTransaction}/reconcile', [\App\Http\Controllers\Admin\MpesaTransactionController::class, 'reconcile'])->name('admin.mpesa-transactions.reconcile');
     Route::post('mpesa/register-c2b-urls', [\App\Http\Controllers\Admin\MpesaTransactionController::class, 'registerC2BUrls'])->name('admin.mpesa.register-c2b');
     Route::get('mpesa/diagnose', [\App\Http\Controllers\Admin\MpesaTransactionController::class, 'diagnoseMpesa'])->name('admin.mpesa.diagnose');

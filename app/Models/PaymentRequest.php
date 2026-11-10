@@ -44,6 +44,26 @@ class PaymentRequest extends Model
         static::created(function (self $paymentRequest) {
             if ($paymentRequest->status === self::STATUS_PENDING) {
                 ActionReminder::openFor($paymentRequest, ActionReminder::KIND_PAYMENT);
+
+                // The client may already have paid this on the paybill before
+                // the bill existed. Settle it from that money once the bill is
+                // committed, so nobody has to notice the receipt by hand.
+                $serviceRequestId = $paymentRequest->service_request_id;
+                if ($serviceRequestId) {
+                    \Illuminate\Support\Facades\DB::afterCommit(function () use ($serviceRequestId) {
+                        try {
+                            $serviceRequest = ServiceRequest::find($serviceRequestId);
+                            if ($serviceRequest && MpesaTransaction::openPaybill()->where('service_request_id', $serviceRequestId)->exists()) {
+                                app(\App\Services\MpesaReconciliationService::class)->applyWaitingReceipts($serviceRequest);
+                            }
+                        } catch (\Throwable $e) {
+                            \Illuminate\Support\Facades\Log::warning('Applying waiting M-Pesa receipts failed', [
+                                'service_request_id' => $serviceRequestId,
+                                'error' => $e->getMessage(),
+                            ]);
+                        }
+                    });
+                }
             }
         });
 
