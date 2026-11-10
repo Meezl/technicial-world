@@ -2497,31 +2497,11 @@
                 </div>
                 <div class="modal-body">
                     <div class="form-group">
-                        <label>Technician *</label>
-                        <input
-                            v-if="availableForCrew.length > 8"
-                            v-model="crewSearch"
-                            type="search"
-                            class="form-control"
-                            placeholder="Search by name, trade or technician number…"
-                            style="margin-bottom:0.5rem;"
-                        >
-                        <select v-model="crewForm.technician_id" class="form-control">
-                            <option value="">Select a technician or gang member…</option>
-                            <!-- The one picker gang members appear in. Labelled,
-                                 because who is a tradesman and who is not
-                                 changes what the office can ask of them. -->
-                            <option v-for="tech in matchingForCrew" :key="tech.id" :value="tech.id">
-                                {{ tech.user?.name }}<template v-if="tech.specialization"> — {{ tech.specialization }}</template>
-                                <template v-if="tech.kind === 'gang_member'"> (gang member)</template>
-                            </option>
-                        </select>
-                        <small class="roster-help" v-if="!availableForCrew.length">
-                            Everyone on the books is already on this job.
-                        </small>
-                        <small class="roster-help" v-else-if="crewSearch && !matchingForCrew.length">
-                            Nobody matches “{{ crewSearch }}”.
-                        </small>
+                        <label>Who is joining the crew? *</label>
+                        <!-- The one picker gang members appear in. Type-ahead
+                             like Jobs and RFQ Management, and several can be
+                             picked at once — a gang is rarely one person. -->
+                        <CrewPicker v-model="crewForm.technician_ids" :options="availableForCrew" />
                     </div>
 
                     <!-- Their record, as the system already holds it. Nothing
@@ -2589,7 +2569,34 @@
                          profile, so it follows them to the next job. -->
                     <div v-if="selectedCrewTechnician && !selectedCrewTechnician.national_id" class="form-group">
                         <label>ID number <span class="roster-optional">(saved to their profile)</span></label>
-                        <input v-model="crewForm.national_id" type="text" class="form-control" placeholder="e.g. 37853277">
+                        <input v-model="crewForm.national_ids[selectedCrewTechnician.id]" type="text" class="form-control" placeholder="e.g. 37853277">
+                    </div>
+
+                    <!-- Several at once: one line each, with the ID asked for
+                         only against whoever is missing it. -->
+                    <div v-if="selectedCrewTechnicians.length > 1" class="form-group">
+                        <label>Adding {{ selectedCrewTechnicians.length }} people</label>
+                        <ul class="crew-batch">
+                            <li v-for="tech in selectedCrewTechnicians" :key="tech.id"
+                                :class="{ 'crew-batch-done': crewProgress.done.includes(tech.id), 'crew-batch-failed': crewProgress.failedId === tech.id }">
+                                <div class="crew-batch-who">
+                                    <strong>{{ tech.user?.name }}</strong>
+                                    <span>
+                                        <template v-if="tech.kind === 'gang_member'">Gang member</template>
+                                        <template v-else>{{ tech.specialization || tech.trade || 'Technician' }}</template>
+                                        <template v-if="tech.technician_id"> · #{{ tech.technician_id }}</template>
+                                        <template v-if="tech.national_id"> · ID {{ tech.national_id }}</template>
+                                    </span>
+                                </div>
+                                <i v-if="crewProgress.done.includes(tech.id)" class="fas fa-check crew-batch-tick"></i>
+                                <input v-else-if="!tech.national_id" v-model="crewForm.national_ids[tech.id]" type="text"
+                                    class="form-control crew-batch-id" placeholder="ID number (optional)">
+                            </li>
+                        </ul>
+                        <small class="roster-help">
+                            Each gets their own row on the attendance list with the role and dates below.
+                            An ID typed here is saved to that person's profile.
+                        </small>
                     </div>
 
                     <!-- A technician can be put on the crew and given one of
@@ -2598,7 +2605,7 @@
                          "Carpentry" sub-task and somebody on its gate list
                          doing carpentry. Not offered to a gang member, who
                          carries no task, nor when every task is already held. -->
-                    <div v-if="crewAssignableSubTasks.length && !crewIsGangMember" class="form-group">
+                    <div v-if="crewAssignableSubTasks.length && selectedCrewTechnician && !crewIsGangMember" class="form-group">
                         <label>Task on this job <span class="roster-optional">(optional)</span></label>
                         <select v-model="crewForm.service_sub_task_id" class="form-control" @change="onCrewSubTaskPicked">
                             <option value="">No task — crew only</option>
@@ -2627,7 +2634,7 @@
                          so there is no figure to take. Saying that instead of
                          offering a field the save would refuse is the whole
                          difference between an explanation and an error. -->
-                    <div v-if="crewIsGangMember" class="form-group">
+                    <div v-if="crewAllGangMembers" class="form-group">
                         <label>Agreed fee</label>
                         <p class="roster-help" style="margin:0;">
                             Not applicable. A gang member is paid off-system by whoever brought them,
@@ -2639,7 +2646,11 @@
                         <label>Agreed fee <span class="roster-optional">(optional)</span></label>
                         <input v-model="crewForm.agreed_compensation" type="number" step="0.01" min="0"
                             class="form-control" placeholder="Leave blank if paid through the lead">
-                        <small class="roster-help">
+                        <small class="roster-help" v-if="selectedCrewTechnicians.length > 1">
+                            Applied to each technician you are adding. Gang members among them are
+                            recorded with no fee — they are paid off-system by whoever brought them.
+                        </small>
+                        <small class="roster-help" v-else>
                             Left blank, this person is recorded as paid through the technician who
                             brought them, and nothing is allocated against the labour budget.
                         </small>
@@ -2668,11 +2679,21 @@
                             <i class="fas fa-plus"></i> Add a day
                         </button>
                     </div>
+                    <p v-if="crewProgress.error" class="crew-batch-error">
+                        <i class="fas fa-triangle-exclamation"></i> {{ crewProgress.error }}
+                    </p>
                 </div>
                 <div class="modal-footer">
-                    <button @click="showCrewModal = false" class="btn btn-secondary">Cancel</button>
+                    <button @click="showCrewModal = false" class="btn btn-secondary">
+                        {{ crewProgress.done.length ? 'Close' : 'Cancel' }}
+                    </button>
                     <button @click="submitCrewMember" class="btn btn-primary" :disabled="!crewFormReady || savingCrew">
-                        {{ savingCrew ? 'Adding…' : 'Add to crew' }}
+                        <template v-if="savingCrew && selectedCrewTechnicians.length > 1">
+                            Adding {{ Math.min(crewProgress.done.length + 1, selectedCrewTechnicians.length) }} of {{ selectedCrewTechnicians.length }}…
+                        </template>
+                        <template v-else-if="savingCrew">Adding…</template>
+                        <template v-else-if="selectedCrewTechnicians.length > 1">Add {{ selectedCrewTechnicians.length }} to crew</template>
+                        <template v-else>Add to crew</template>
                     </button>
                 </div>
             </div>
@@ -3478,6 +3499,7 @@ import ProgressReportActions from '../../Components/ProgressReportActions.vue'
 import RemovedReportsPanel from '../../Components/RemovedReportsPanel.vue'
 import ProgressStateLegend from '../../Components/ProgressStateLegend.vue'
 import PhotoUploader from '../../Components/PhotoUploader.vue'
+import CrewPicker from '../../Components/CrewPicker.vue'
 import { Link, usePage } from '@inertiajs/vue3'
 import { ref, computed, reactive, watch } from 'vue'
 import { router } from '@inertiajs/vue3'
@@ -4044,46 +4066,61 @@ const returnForRework = () => {
 const showCrewModal = ref(false)
 const savingCrew = ref(false)
 
-const crewSearch = ref('')
-
 const crewForm = reactive({
-    technician_id: '',
+    // Several can be added in one go — a gang is rarely one person.
+    technician_ids: [],
     service_sub_task_id: '',
     role_on_job: '',
-    national_id: '',
+    // Typed against whoever has no ID on file, keyed by technician id.
+    national_ids: {},
     agreed_compensation: null,
     expected_start: '',
     expected_end: '',
     attendance_dates: [],
 })
 
-/** The record the system already holds on whoever is selected. */
-const selectedCrewTechnician = computed(
-    () => (props.technicians || []).find(t => String(t.id) === String(crewForm.technician_id)) || null
+// Where a batch has got to, so a refusal part-way says who made it on and
+// who did not, and pressing the button again carries on from there.
+const crewProgress = reactive({ done: [], failedId: null, error: '' })
+
+const technicianById = (id) =>
+    (props.technicians || []).find(t => String(t.id) === String(id)) || null
+
+/** The records the system already holds on everyone selected, in picked order. */
+const selectedCrewTechnicians = computed(() =>
+    crewForm.technician_ids.map(technicianById).filter(Boolean)
 )
 
-// Production carries far more technicians than a dropdown reads well, so the
-// list narrows once it is long enough to be a nuisance.
-const matchingForCrew = computed(() => {
-    const term = crewSearch.value.trim().toLowerCase()
-    if (!term) return availableForCrew.value
+/** The one person selected, when it is one — the full record card is shown for them. */
+const selectedCrewTechnician = computed(() =>
+    selectedCrewTechnicians.value.length === 1 ? selectedCrewTechnicians.value[0] : null
+)
 
-    return availableForCrew.value.filter(t =>
-        [t.user?.name, t.specialization, t.trade, t.technician_id, t.location]
-            .filter(Boolean)
-            .some(field => String(field).toLowerCase().includes(term))
-    )
-})
+const crewAllGangMembers = computed(() =>
+    selectedCrewTechnicians.value.length > 0
+    && selectedCrewTechnicians.value.every(t => t.kind === 'gang_member')
+)
 
 // Their trade is the obvious first guess at what they are here to do, and it
 // is the field the client reads. Only ever a default — the moment it is
 // edited, or another technician picked, it stops being overwritten.
 const roleTouched = ref(false)
 
-watch(() => crewForm.technician_id, () => {
+watch(() => crewForm.technician_ids[0], () => {
     if (roleTouched.value) return
-    const tech = selectedCrewTechnician.value
+    const tech = technicianById(crewForm.technician_ids[0])
     crewForm.role_on_job = tech?.specialization || tech?.trade || ''
+})
+
+// A task goes to one person. Once a second is picked, the task choice goes.
+watch(selectedCrewTechnician, (tech) => {
+    if (tech && tech.kind !== 'gang_member') return
+    if (!crewForm.service_sub_task_id) return
+    crewForm.service_sub_task_id = ''
+    if (!roleTouched.value) {
+        const first = technicianById(crewForm.technician_ids[0])
+        crewForm.role_on_job = first?.specialization || first?.trade || ''
+    }
 })
 
 // Anybody not already on the job. Offering somebody who is already on it
@@ -4103,46 +4140,90 @@ const availableForCrew = computed(() => {
 })
 
 const crewFormReady = computed(() =>
-    Boolean(crewForm.technician_id) && crewForm.role_on_job.trim().length > 0
+    crewForm.technician_ids.length > 0 && crewForm.role_on_job.trim().length > 0
 )
 
 const openCrewModal = () => {
-    crewSearch.value = ''
     roleTouched.value = false
     Object.assign(crewForm, {
-        technician_id: '',
+        technician_ids: [],
         service_sub_task_id: '',
         role_on_job: '',
-        national_id: '',
+        national_ids: {},
         agreed_compensation: null,
         // Default to the job's own window so the common case needs no typing.
         expected_start: toDateInput(props.job.commencement_at),
         expected_end: toDateInput(props.job.target_completion_at),
         attendance_dates: [],
     })
+    Object.assign(crewProgress, { done: [], failedId: null, error: '' })
     showCrewModal.value = true
 }
 
-const submitCrewMember = () => {
-    if (!crewFormReady.value || savingCrew.value) return
-    savingCrew.value = true
+/**
+ * One post, as a promise of the refusal (or null). The server answers a
+ * refusal with a redirect and an error flash rather than a validation error,
+ * so both are read. State is kept so the modal stays open between people.
+ */
+const postCrewStep = (url, data) => new Promise((resolve) => {
+    let settled = false
+    const settle = (err) => { if (!settled) { settled = true; resolve(err) } }
+    router.post(url, data, {
+        preserveScroll: true,
+        preserveState: true,
+        onSuccess: (page) => settle(page.props.flash?.error || null),
+        onError: (errors) => settle(Object.values(errors || {})[0] || 'That could not be saved.'),
+        onFinish: () => settle('The server could not be reached. Nothing more was added.'),
+    })
+})
 
+const addOneToCrew = async (tech) => {
     // An ID typed here belongs to the technician, not to this job, so it is
     // written to their profile first and follows them to the next one.
-    const needsId = crewForm.national_id
-        && selectedCrewTechnician.value
-        && !selectedCrewTechnician.value.national_id
-
-    if (needsId) {
-        router.post(
-            `/admin/technicians/${crewForm.technician_id}/identity`,
-            { national_id: crewForm.national_id },
-            { preserveScroll: true, onSuccess: addToCrew, onError: () => { savingCrew.value = false } }
-        )
-        return
+    const typedId = String(crewForm.national_ids[tech.id] || '').trim()
+    if (typedId && !tech.national_id) {
+        const err = await postCrewStep(`/admin/technicians/${tech.id}/identity`, { national_id: typedId })
+        if (err) return err
     }
 
-    addToCrew()
+    const isGang = tech.kind === 'gang_member'
+    const single = selectedCrewTechnicians.value.length === 1
+
+    return postCrewStep(`/admin/jobs/${props.job.id}/crew`, {
+        technician_id: tech.id,
+        role_on_job: crewForm.role_on_job,
+        service_sub_task_id: single && !isGang ? (crewForm.service_sub_task_id || null) : null,
+        agreed_compensation: isGang ? null : (crewForm.agreed_compensation || null),
+        expected_start: crewForm.expected_start || null,
+        expected_end: crewForm.expected_end || null,
+        attendance_dates: crewForm.attendance_dates.filter(Boolean),
+    })
+}
+
+const submitCrewMember = async () => {
+    if (!crewFormReady.value || savingCrew.value) return
+    savingCrew.value = true
+    crewProgress.error = ''
+    crewProgress.failedId = null
+
+    // One at a time, through the same route a single add uses, so every rule
+    // the server applies to one person applies to each of them.
+    const queue = selectedCrewTechnicians.value.filter(t => !crewProgress.done.includes(t.id))
+    for (const tech of queue) {
+        const err = await addOneToCrew(tech)
+        if (err) {
+            crewProgress.failedId = tech.id
+            crewProgress.error = crewProgress.done.length
+                ? `${crewProgress.done.length} added. Stopped at ${tech.user?.name}: ${err}`
+                : err
+            savingCrew.value = false
+            return
+        }
+        crewProgress.done.push(tech.id)
+    }
+
+    savingCrew.value = false
+    showCrewModal.value = false
 }
 
 const crewIsGangMember = computed(() => selectedCrewTechnician.value?.kind === 'gang_member')
@@ -4165,22 +4246,6 @@ const onCrewSubTaskPicked = () => {
         .find(t => String(t.id) === String(crewForm.service_sub_task_id))
 
     crewForm.role_on_job = task ? task.title : ''
-}
-
-const addToCrew = () => {
-    router.post(`/admin/jobs/${props.job.id}/crew`, {
-        technician_id: crewForm.technician_id,
-        role_on_job: crewForm.role_on_job,
-        service_sub_task_id: crewForm.service_sub_task_id || null,
-        agreed_compensation: crewIsGangMember.value ? null : (crewForm.agreed_compensation || null),
-        expected_start: crewForm.expected_start || null,
-        expected_end: crewForm.expected_end || null,
-        attendance_dates: crewForm.attendance_dates.filter(Boolean),
-    }, {
-        preserveScroll: true,
-        onSuccess: () => { showCrewModal.value = false },
-        onFinish: () => { savingCrew.value = false },
-    })
 }
 
 /**
@@ -8495,6 +8560,17 @@ defineOptions({
 }
 
 .roster-help { display: block; margin-top: 4px; font-size: 0.78rem; color: #64748B; line-height: 1.4; }
+.crew-batch { list-style: none; margin: 0; padding: 0; border: 1px solid #E2E8F0; border-radius: 10px; }
+.crew-batch li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; }
+.crew-batch li + li { border-top: 1px solid #F1F5F9; }
+.crew-batch-who { display: flex; flex-direction: column; min-width: 0; }
+.crew-batch-who strong { font-size: 0.88rem; color: #0F172A; }
+.crew-batch-who span { font-size: 0.75rem; color: #64748B; }
+.crew-batch-id { max-width: 180px; padding: 4px 8px; font-size: 0.8rem; }
+.crew-batch-done { background: #F0FDF4; }
+.crew-batch-failed { background: #FEF2F2; }
+.crew-batch-tick { color: #16A34A; }
+.crew-batch-error { margin: 0.5rem 0 0; font-size: 0.82rem; color: #B91C1C; }
 
 .roster-empty {
     margin: 0.5rem 0 0;
