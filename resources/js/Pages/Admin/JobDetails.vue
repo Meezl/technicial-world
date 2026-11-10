@@ -6519,16 +6519,18 @@ defineOptions({
     color: #0f172a;
 }
 
-.hero-action-copy p,
-.job-card-header p,
-.assignment-empty-copy p,
-.overview-item p,
+/* The read-only progress figure only. It once sat at the head of the list
+   below, which put a grey box behind every card's secondary text. */
 .form-control-readonly {
     display: block;
     background: #f1f5f9;
     font-weight: 700;
 }
 
+.hero-action-copy p,
+.job-card-header p,
+.assignment-empty-copy p,
+.overview-item p,
 .sidebar-detail-item p,
 .subtask-description,
 .milestone-notes,
