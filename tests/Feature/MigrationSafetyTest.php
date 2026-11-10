@@ -166,6 +166,10 @@ class MigrationSafetyTest extends TestCase
             // admin filed it on. Touches only is_pm_authored rows with no
             // stamp, and sets it from created_at, so nothing moves twice.
             '2026_10_02_000000_post_office_authored_reports_to_office',
+            // Fills the match-tracking columns it adds to mpesa_transactions
+            // from the existing `reconciled` flag and payment link. Writes
+            // only to those new columns; amounts and links are untouched.
+            '2026_11_10_000000_track_how_mpesa_receipts_were_matched',
         ];
 
         $this->assertSame(

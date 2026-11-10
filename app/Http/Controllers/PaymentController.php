@@ -10,6 +10,7 @@ use App\Services\JobConversionService;
 use App\Models\MpesaTransaction;
 use App\Notifications\PaymentRejectedNotification;
 use App\Services\MpesaService;
+use App\Services\MpesaReconciliationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -190,6 +191,21 @@ class PaymentController extends Controller
 
         if (!$paymentRequest) {
             Log::error('M-Pesa callback: Payment request not found', ['checkout_request_id' => $result['checkout_request_id']]);
+            return response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted']);
+        }
+
+        // The paybill notification for this same receipt may have landed first
+        // and already been applied — possibly to a different bill on the REQ.
+        // Applying it again here would count the money twice.
+        $receipt = $result['mpesa_receipt_number'] ?? null;
+        if ($receipt && $paymentRequest->isPending() && MpesaTransaction::where('source', MpesaTransaction::SOURCE_C2B)
+            ->where('receipt_number', $receipt)
+            ->where('allocated_amount', '>', 0)
+            ->exists()) {
+            Log::info('M-Pesa callback: receipt already applied from the paybill notification', [
+                'payment_request_id' => $paymentRequest->id,
+                'receipt' => $receipt,
+            ]);
             return response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted']);
         }
 
@@ -672,142 +688,25 @@ class PaymentController extends Controller
         $payload = $request->all();
         Log::info('M-Pesa C2B confirmation received', ['data' => $payload]);
 
-        // Daraja sends these field names — see the C2B spec.
-        $transId      = $payload['TransID']          ?? null;  // M-Pesa receipt number
-        $transAmount  = (float)($payload['TransAmount'] ?? 0);
-        $billRef      = trim((string)($payload['BillRefNumber'] ?? ''));
-        $msisdn       = $payload['MSISDN']           ?? null;
-        $transTime    = $payload['TransTime']        ?? null;  // YYYYMMDDHHMMSS
-        $firstName    = $payload['FirstName']        ?? '';
-        $middleName   = $payload['MiddleName']       ?? '';
-        $lastName     = $payload['LastName']         ?? '';
-        $payerName    = trim(implode(' ', array_filter([$firstName, $middleName, $lastName])));
-
-        // Always log first
-        $mpesaTxn = MpesaTransaction::create([
-            'source'           => MpesaTransaction::SOURCE_C2B,
-            'receipt_number'   => $transId,
-            'amount'           => $transAmount,
-            'phone_number'     => $msisdn,
-            'bill_ref_number'  => $billRef,
-            'payer_name'       => $payerName,
-            'transaction_date' => $transTime,
-            'status'           => MpesaTransaction::STATUS_COMPLETED,
-            'result_desc'      => 'Direct paybill payment',
-            'reconciled'       => false,
-        ]);
-
-        // Try to find a matching PaymentRequest. BillRefNumber should be the
-        // service request's request_id (e.g. REQ-20260413-A003), but we also
-        // accept the PaymentRequest's payment_request_id as a fallback.
-        $serviceRequest = $billRef
-            ? ServiceRequest::where('request_id', $billRef)->first()
-            : null;
-
-        $paymentRequest = null;
-        if ($serviceRequest) {
-            $paymentRequest = PaymentRequest::where('service_request_id', $serviceRequest->id)
-                ->where('status', PaymentRequest::STATUS_PENDING)
-                ->orderBy('created_at', 'asc')
-                ->first();
-        }
-
-        if (!$paymentRequest && $billRef) {
-            $paymentRequest = PaymentRequest::where('payment_request_id', $billRef)
-                ->where('status', PaymentRequest::STATUS_PENDING)
-                ->first();
-            $serviceRequest = $paymentRequest?->serviceRequest;
-        }
-
-        if (!$paymentRequest) {
-            Log::warning('M-Pesa C2B: no matching pending payment request', [
-                'bill_ref'     => $billRef,
-                'amount'       => $transAmount,
-                'mpesa_txn_id' => $mpesaTxn->id,
-            ]);
-            // Acknowledge to Safaricom — we accepted the money even if we
-            // can't auto-link it. Admin will reconcile from the M-Pesa
-            // Transactions page.
-            return response()->json([
-                'ResultCode' => 0,
-                'ResultDesc' => 'Accepted (unmatched — awaiting admin reconciliation)',
-            ]);
-        }
-
-        // Amount must cover the request (allow overpayment, reject underpayment)
-        if ($transAmount + 0.01 < (float) $paymentRequest->amount) {
-            Log::warning('M-Pesa C2B: underpayment', [
-                'expected' => $paymentRequest->amount,
-                'received' => $transAmount,
-                'bill_ref' => $billRef,
-            ]);
-            $mpesaTxn->update([
-                'payment_request_id' => $paymentRequest->id,
-                'result_desc'        => sprintf(
-                    'Underpayment: received KES %s, request expected KES %s',
-                    number_format($transAmount, 2),
-                    number_format($paymentRequest->amount, 2)
-                ),
-            ]);
-            return response()->json([
-                'ResultCode' => 0,
-                'ResultDesc' => 'Accepted (underpayment — awaiting admin reconciliation)',
-            ]);
-        }
-
-        // Reconcile: mark the request paid + create Payment record
+        // Matching rules live in one place so the webhook, the ops screen and
+        // the hourly sweep can never disagree — see MpesaReconciliationService.
         try {
-            $paymentRequest->markAsPaid(PaymentRequest::METHOD_MPESA, [
-                'mpesa_transaction_id' => $transId,
-                'mpesa_receipt_number' => $transId,
-                'phone_number'         => $msisdn,
-            ]);
-
-            Payment::recordCompleted([
-                'payment_request_id'   => $paymentRequest->id,
-                'service_request_id'   => $paymentRequest->service_request_id,
-                'user_id'              => $paymentRequest->user_id,
-                'amount'               => $transAmount,
-                'payment_method'       => Payment::METHOD_MPESA,
-                'mpesa_transaction_id' => $transId,
-                'mpesa_receipt_number' => $transId,
-                'phone_number'         => $msisdn,
-                'paybill_number'       => config('services.mpesa.shortcode'),
-                'account_reference'    => $serviceRequest?->request_id ?? $billRef,
-                'paid_at'              => now(),
-                'notes'                => 'Auto-reconciled from direct paybill payment by ' . ($payerName ?: 'customer'),
-            ]);
-
-            // Advance the service request so a technician can be assigned
-            if ($serviceRequest) {
-                app(JobConversionService::class)->tryConvert($serviceRequest, null, 'mpesa_c2b');
-            }
-
-            $mpesaTxn->update([
-                'payment_request_id' => $paymentRequest->id,
-                'reconciled'         => true,
-                'result_desc'        => 'Auto-reconciled to payment request ' . $paymentRequest->payment_request_id,
-            ]);
-
-            Log::info('M-Pesa C2B auto-reconciliation succeeded', [
-                'payment_request_id' => $paymentRequest->id,
-                'service_request'    => $serviceRequest?->request_id,
-                'receipt'            => $transId,
-            ]);
+            $txn = app(MpesaReconciliationService::class)->ingestC2B($payload);
+            $desc = match ($txn->match_status) {
+                MpesaTransaction::MATCH_MATCHED   => 'Accepted',
+                MpesaTransaction::MATCH_DUPLICATE => 'Accepted (duplicate of STK push)',
+                default                           => 'Accepted (awaiting reconciliation)',
+            };
         } catch (\Throwable $e) {
-            Log::error('M-Pesa C2B reconciliation failed', [
-                'error'        => $e->getMessage(),
-                'bill_ref'     => $billRef,
-                'mpesa_txn_id' => $mpesaTxn->id,
-            ]);
-            $mpesaTxn->update([
-                'result_desc' => 'Reconciliation failed: ' . $e->getMessage(),
-            ]);
+            // Never bounce a confirmation: the money has already moved, and a
+            // non-zero reply only makes Safaricom retry.
+            Log::error('M-Pesa C2B confirmation could not be recorded', ['error' => $e->getMessage(), 'data' => $payload]);
+            $desc = 'Accepted';
         }
 
         return response()->json([
             'ResultCode' => 0,
-            'ResultDesc' => 'Accepted',
+            'ResultDesc' => $desc,
         ]);
     }
 }

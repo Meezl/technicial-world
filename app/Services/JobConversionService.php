@@ -429,12 +429,24 @@ class JobConversionService
             return null;
         }
 
+        // A deposit paid in part is split into a paid bill and a pending one
+        // for the rest (see MpesaReconciliationService). What is still owed is
+        // the figure to compare against — asking for the whole deposit again
+        // would bill the client twice for the part they already sent.
         $existing = $this->depositRequest($serviceRequest);
+        $paidTowardDeposit = $existing && $existing->status === PaymentRequest::STATUS_PENDING
+            ? (float) PaymentRequest::where('service_request_id', $serviceRequest->id)
+                ->deposit()
+                ->where('status', PaymentRequest::STATUS_PAID)
+                ->sum('amount')
+            : 0.0;
+        $stillOwed = round($required - $paidTowardDeposit, 2);
+
         if ($existing) {
             // Already settled, or already sitting in the client's portal for
             // this same figure. Either way there is nothing to send.
             if ($existing->status === PaymentRequest::STATUS_PAID
-                || abs((float) $existing->amount - $required) < 0.01) {
+                || abs((float) $existing->amount - $stillOwed) < 0.01) {
                 return null;
             }
 
@@ -449,7 +461,7 @@ class JobConversionService
         // may already be paid, and asking for the full new figure on top of it
         // would breach the contract cap the billing service enforces.
         $remaining = $this->billing->billableRemaining($serviceRequest);
-        $amount = round(min($required, $remaining), 2);
+        $amount = round(min($stillOwed, $remaining), 2);
         if ($amount <= 0) {
             return null;
         }
