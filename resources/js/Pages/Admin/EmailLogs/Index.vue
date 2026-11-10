@@ -82,6 +82,9 @@
                                 preserve-scroll
                             />
                         </div>
+                        <div class="pagination-info">
+                            Showing {{ emails.from?.toLocaleString() }}–{{ emails.to?.toLocaleString() }} of {{ emails.total?.toLocaleString() }}
+                        </div>
                     </div>
                 </div>
             </section>
@@ -120,3 +123,72 @@ const formatDate = (s) => s ? new Date(s).toLocaleDateString('en-KE', { day: '2-
 const formatTime = (s) => s ? new Date(s).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' }) : ''
 const shortClass = (c) => (c || '—').split('\\').pop()
 </script>
+
+<style scoped>
+.pagination-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    padding: 1rem;
+    border-top: 1px solid var(--border-color, #e5e7eb);
+}
+
+.pagination {
+    display: flex;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.page-link {
+    min-width: 2.25rem;
+    height: 2.25rem;
+    padding: 0 0.75rem;
+    border: 1px solid var(--border-color, #e5e7eb);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--text-color, #374151);
+    text-decoration: none;
+    font-size: 0.875rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.page-link:hover:not(.disabled):not(.active) {
+    background: #f8f9fa;
+    border-color: var(--primary-color, #2563eb);
+    color: var(--primary-color, #2563eb);
+}
+
+.page-link.active {
+    background: var(--primary-color, #2563eb);
+    border-color: var(--primary-color, #2563eb);
+    color: #fff;
+    font-weight: 600;
+}
+
+.page-link.disabled {
+    color: var(--text-muted, #9ca3af);
+    background: #f8f9fa;
+    cursor: default;
+    opacity: 0.6;
+}
+
+/* The "..." separator shouldn't look like a button */
+.page-link.disabled:not(:first-child):not(:last-child) {
+    border-color: transparent;
+    background: transparent;
+    min-width: auto;
+    padding: 0 0.25rem;
+}
+
+.pagination-info {
+    color: var(--text-muted, #6b7280);
+    font-size: 0.875rem;
+}
+</style>

@@ -34,6 +34,7 @@ class EmailLogController extends Controller
 
         $emails = $query->orderByDesc('sent_at')
             ->paginate(25)
+            ->onEachSide(1)
             ->withQueryString();
 
         return Inertia::render('Admin/EmailLogs/Index', [
