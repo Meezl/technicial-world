@@ -27,7 +27,7 @@ class RematchMpesaReceipts extends Command
             ->where('created_at', '>=', now()->subDays((int) $this->option('days')))
             ->orderBy('id')
             ->each(function (MpesaTransaction $txn) use ($reconciliation, &$matched) {
-                if ($txn->unapplied_amount <= 0) {
+                if ($txn->unapplied_amount <= 0 || $txn->match_method === MpesaTransaction::METHOD_REVERSED) {
                     return;
                 }
 

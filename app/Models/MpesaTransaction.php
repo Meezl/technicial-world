@@ -59,6 +59,9 @@ class MpesaTransaction extends Model
     /** Ops decided it is not ours to apply (wrong paybill, refunded, test). */
     const MATCH_DISMISSED = 'dismissed';
 
+    /** Set on a receipt ops reversed: only a manual match may apply it again. */
+    const METHOD_REVERSED = 'reversed';
+
     /** Still waiting on somebody — the ops queue. */
     const OPEN_MATCH_STATUSES = [self::MATCH_UNMATCHED, self::MATCH_NEEDS_REVIEW];
 
