@@ -162,6 +162,10 @@ class MpesaReconciliationService
      */
     public function autoMatch(MpesaTransaction $txn): void
     {
+        if ($txn->match_method === MpesaTransaction::METHOD_REVERSED) {
+            return;
+        }
+
         $serviceRequest = $txn->service_request_id
             ? ServiceRequest::find($txn->service_request_id)
             : $this->resolveServiceRequest($txn->bill_ref_number);
@@ -202,6 +206,7 @@ class MpesaReconciliationService
 
         $waiting = MpesaTransaction::openPaybill()
             ->where('service_request_id', $serviceRequest->id)
+            ->where(fn($q) => $q->whereNull('match_method')->orWhere('match_method', '!=', MpesaTransaction::METHOD_REVERSED))
             ->orderBy('id')
             ->get();
 
@@ -406,10 +411,13 @@ class MpesaReconciliationService
                 'payment_request_id' => null,
                 'service_request_id' => $locked->service_request_id ?? $bills->first()?->service_request_id,
                 'match_status'       => MpesaTransaction::MATCH_UNMATCHED,
-                'match_method'       => 'manual',
+                // Marked so nothing automatic puts it back: not the hourly
+                // sweep, which would re-read the account number, and not a new
+                // bill on the REQ. Only ops matching it by hand moves it now.
+                'match_method'       => MpesaTransaction::METHOD_REVERSED,
                 'matched_by'         => $by->id,
                 'matched_at'         => now(),
-                'match_note'         => "Match reversed by {$by->name}: {$reason}. It had been put on " . implode('; ', $reopened) . '.',
+                'match_note'         => "Match reversed by {$by->name}: {$reason}. It had been put on " . implode('; ', $reopened) . '. Waiting for ops to match it by hand.',
             ]);
 
             AuditLog::log('mpesa.reversed', $locked, ['bills' => $reopened], ['reason' => $reason], $by->id);

@@ -417,6 +417,33 @@ class MpesaPaybillMatchingTest extends TestCase
         $this->assertStringContainsString('Client paid for a different job', $txn->match_note);
     }
 
+    public function test_a_reversed_receipt_is_never_put_back_automatically(): void
+    {
+        $sr = $this->job(10000, 3000);
+        $deposit = $this->bill($sr, 3000, true);
+        $txn = $this->paybill($sr->request_id, 3000);
+
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $this->actingAs($admin)
+            ->post(route('admin.mpesa-transactions.reverse', $txn), ['reason' => 'Paid against the wrong job'])
+            ->assertSessionHas('success');
+
+        // A new bill on the REQ, and the hourly sweep, both leave it alone.
+        $this->bill($sr, 7000);
+        $this->artisan('mpesa:rematch')->assertSuccessful();
+
+        $this->assertSame(PaymentRequest::STATUS_PENDING, $deposit->fresh()->status);
+        $txn->refresh();
+        $this->assertSame(MpesaTransaction::MATCH_UNMATCHED, $txn->match_status);
+        $this->assertEquals(3000, $txn->unapplied_amount);
+
+        // Ops can still match it by hand.
+        $this->actingAs($admin)
+            ->post(route('admin.mpesa-transactions.reconcile', $txn), ['service_request_id' => $sr->id])
+            ->assertSessionHas('success');
+        $this->assertSame(PaymentRequest::STATUS_PAID, $deposit->fresh()->status);
+    }
+
     public function test_a_reversal_is_refused_once_the_rest_of_a_split_bill_has_been_paid(): void
     {
         $sr = $this->job(10000, 3000);

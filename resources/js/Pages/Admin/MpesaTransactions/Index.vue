@@ -580,6 +580,7 @@ const statusOf = (tx) => {
         case 'dismissed':
             return { label: 'Dismissed', cls: 'pill-grey', sub: tx.matched_by ? `by ${tx.matched_by}` : null }
         default:
+            if (tx.match_method === 'reversed') return { label: 'Reversed', cls: 'pill-amber', sub: 'Match by hand' }
             return { label: 'Unmatched', cls: 'pill-red', sub: tx.bill_ref_number ? 'Unknown account no.' : 'No account no.' }
     }
 }
