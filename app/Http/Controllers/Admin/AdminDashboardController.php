@@ -3393,6 +3393,51 @@ class AdminDashboardController extends Controller
         $serviceRequestId = $request->input('service_request_id');
         $technicianId = $request->input('technician_id');
 
+        // Free text, matched the way Jobs and RFQ Management match: partial,
+        // case-insensitive, against the references ops actually quote — REQ
+        // number, payment ID, M-Pesa receipt, phone — and the client's name.
+        $search = trim((string) $request->input('search', ''));
+        $like = '%' . $search . '%';
+
+        // A client is either a person ("user:12") or a corporate account
+        // ("org:3"); money is filed against both kinds.
+        [$clientKind, $clientKey] = array_pad(explode(':', (string) $request->input('client', ''), 2), 2, null);
+        $clientKey = is_numeric($clientKey) ? (int) $clientKey : null;
+        if (!in_array($clientKind, ['user', 'org'], true) || !$clientKey) {
+            $clientKind = $clientKey = null;
+        }
+
+        $personMatches = function ($q) use ($like) {
+            $q->where('name', 'like', $like)
+              ->orWhere('email', 'like', $like)
+              ->orWhere('phone', 'like', $like);
+        };
+
+        // Anything filed against a job matches on the job and on its client.
+        $srMatches = function ($q) use ($like, $personMatches) {
+            $q->where('request_id', 'like', $like)
+              ->orWhere('description', 'like', $like)
+              ->orWhereHas('user', $personMatches)
+              ->orWhereHas('organisation', fn ($oq) => $oq->where('name', 'like', $like));
+        };
+
+        $srForClient = function ($q) use ($clientKind, $clientKey) {
+            $clientKind === 'org'
+                ? $q->where('client_organisation_id', $clientKey)
+                : $q->where('user_id', $clientKey);
+        };
+
+        // Payments and payment requests carry their own payer as well as the job's.
+        $clientMoneyFilter = function ($query) use ($clientKind, $clientKey, $srForClient) {
+            if (!$clientKind) return;
+            $query->where(function ($q) use ($clientKind, $clientKey, $srForClient) {
+                $q->whereHas('serviceRequest', $srForClient);
+                if ($clientKind === 'user') {
+                    $q->orWhere('user_id', $clientKey);
+                }
+            });
+        };
+
         // #43 — parse the date filter sent from the Admin Payments page.
         // Apply it against the "money moved" column on each table so the
         // filter actually narrows results when the user changes the
@@ -3412,9 +3457,18 @@ class AdminDashboardController extends Controller
         };
 
         // Client payments
-        $paymentsQuery = Payment::with(['serviceRequest', 'user']);
+        $paymentsQuery = Payment::with(['serviceRequest.user:id,name,email,phone', 'serviceRequest.organisation:id,name', 'user']);
         if ($serviceRequestId) {
             $paymentsQuery->where('service_request_id', $serviceRequestId);
+        }
+        $clientMoneyFilter($paymentsQuery);
+        if ($search !== '') {
+            $paymentsQuery->where(function ($q) use ($like, $personMatches, $srMatches) {
+                foreach (['payment_id', 'payment_request_id', 'mpesa_receipt_number', 'mpesa_transaction_id', 'phone_number', 'account_reference', 'notes'] as $col) {
+                    $q->orWhere($col, 'like', $like);
+                }
+                $q->orWhereHas('user', $personMatches)->orWhereHas('serviceRequest', $srMatches);
+            });
         }
         if ($technicianId && !$serviceRequestId) {
             $paymentsQuery->whereHas('serviceRequest', $techSrFilter);
@@ -3424,9 +3478,18 @@ class AdminDashboardController extends Controller
         $payments = $paymentsQuery->orderBy('created_at', 'desc')->get();
 
         // Payment requests
-        $paymentRequestsQuery = PaymentRequest::with(['serviceRequest', 'user']);
+        $paymentRequestsQuery = PaymentRequest::with(['serviceRequest.user:id,name,email,phone', 'serviceRequest.organisation:id,name', 'user']);
         if ($serviceRequestId) {
             $paymentRequestsQuery->where('service_request_id', $serviceRequestId);
+        }
+        $clientMoneyFilter($paymentRequestsQuery);
+        if ($search !== '') {
+            $paymentRequestsQuery->where(function ($q) use ($like, $personMatches, $srMatches) {
+                foreach (['payment_request_id', 'mpesa_receipt_number', 'mpesa_transaction_id', 'phone_number', 'cheque_number', 'bank_reference', 'notes'] as $col) {
+                    $q->orWhere($col, 'like', $like);
+                }
+                $q->orWhereHas('user', $personMatches)->orWhereHas('serviceRequest', $srMatches);
+            });
         }
         if ($technicianId && !$serviceRequestId) {
             $paymentRequestsQuery->whereHas('serviceRequest', $techSrFilter);
@@ -3436,9 +3499,21 @@ class AdminDashboardController extends Controller
         $paymentRequests = $paymentRequestsQuery->orderBy('created_at', 'desc')->get();
 
         // Technician payments
-        $techPaymentsQuery = TechnicianPayment::with(['technician.user', 'serviceRequest']);
+        $techPaymentsQuery = TechnicianPayment::with(['technician.user', 'serviceRequest.user:id,name', 'serviceRequest.organisation:id,name']);
         if ($serviceRequestId) {
             $techPaymentsQuery->where('service_request_id', $serviceRequestId);
+        }
+        if ($clientKind) {
+            $techPaymentsQuery->whereHas('serviceRequest', $srForClient);
+        }
+        if ($search !== '') {
+            $techPaymentsQuery->where(function ($q) use ($like, $personMatches, $srMatches) {
+                foreach (['payment_id', 'transaction_reference', 'notes'] as $col) {
+                    $q->orWhere($col, 'like', $like);
+                }
+                $q->orWhereHas('technician', fn ($tq) => $tq->where('technician_id', 'like', $like)->orWhereHas('user', $personMatches))
+                  ->orWhereHas('serviceRequest', $srMatches);
+            });
         }
         if ($technicianId) {
             $techPaymentsQuery->where('technician_id', $technicianId);
@@ -3448,9 +3523,20 @@ class AdminDashboardController extends Controller
         $technicianPayments = $techPaymentsQuery->orderBy('created_at', 'desc')->get();
 
         // Expenditures
-        $expendituresQuery = Expenditure::with(['serviceRequest', 'recordedBy']);
+        $expendituresQuery = Expenditure::with(['serviceRequest.user:id,name', 'serviceRequest.organisation:id,name', 'recordedBy']);
         if ($serviceRequestId) {
             $expendituresQuery->where('service_request_id', $serviceRequestId);
+        }
+        if ($clientKind) {
+            $expendituresQuery->whereHas('serviceRequest', $srForClient);
+        }
+        if ($search !== '') {
+            $expendituresQuery->where(function ($q) use ($like, $srMatches) {
+                foreach (['expenditure_id', 'description', 'vendor', 'receipt_reference', 'notes'] as $col) {
+                    $q->orWhere($col, 'like', $like);
+                }
+                $q->orWhereHas('serviceRequest', $srMatches);
+            });
         }
         if ($from) { $expendituresQuery->where('created_at', '>=', $from); }
         if ($to)   { $expendituresQuery->where('created_at', '<=', $to); }
@@ -3482,10 +3568,30 @@ class AdminDashboardController extends Controller
         }
 
         // Service requests list for filter dropdown and payments modal
-        $serviceRequests = ServiceRequest::with('subTasks:id,service_request_id,technician_id')
-            ->select('id', 'request_id', 'description', 'technician_id', 'lead_technician_id')
+        $serviceRequests = ServiceRequest::with([
+                'subTasks:id,service_request_id,technician_id',
+                'user:id,name',
+                'organisation:id,name',
+            ])
+            ->select('id', 'request_id', 'description', 'technician_id', 'lead_technician_id', 'user_id', 'client_organisation_id')
             ->orderBy('created_at', 'desc')
             ->get();
+
+        // Everyone money can be filed against: people who have raised a job,
+        // and the corporate accounts jobs are raised for.
+        $clients = User::query()
+            ->whereIn('id', ServiceRequest::query()->whereNotNull('user_id')->select('user_id'))
+            ->orderBy('name')
+            ->get(['id', 'name', 'email', 'phone'])
+            ->map(fn ($u) => ['value' => 'user:' . $u->id, 'label' => $u->name, 'sublabel' => collect([$u->phone, $u->email])->filter()->implode(' · ')])
+            ->concat(
+                \App\Models\ClientOrganisation::query()
+                    ->whereIn('id', ServiceRequest::query()->whereNotNull('client_organisation_id')->select('client_organisation_id'))
+                    ->orderBy('name')
+                    ->get(['id', 'name', 'phone', 'billing_email'])
+                    ->map(fn ($o) => ['value' => 'org:' . $o->id, 'label' => $o->name, 'sublabel' => 'Corporate account' . ($o->phone ? ' · ' . $o->phone : '')])
+            )
+            ->values();
 
         // Technicians list for payment modal
         $technicians = Technician::technicians()->with('user')->orderBy('created_at', 'desc')->get();
@@ -3499,9 +3605,12 @@ class AdminDashboardController extends Controller
             'budgetSummary' => $budgetSummary,
             'serviceRequests' => $serviceRequests,
             'technicians' => $technicians,
+            'clients' => $clients,
             'filters' => [
                 'service_request_id' => $serviceRequestId,
                 'technician_id' => $technicianId,
+                'client' => $clientKind ? $clientKind . ':' . $clientKey : null,
+                'search' => $search,
                 'from' => $from?->toDateString(),
                 'to' => $to?->toDateString(),
             ],
